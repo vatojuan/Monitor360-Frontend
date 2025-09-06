@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Favicon / PWA -->
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Colores de la app -->
+    <meta name="theme-color" content="#00c896" />
+    <meta name="background-color" content="#1a1a2e" />
+
+    <title>Monitor360</title>
+
+    <!-- Kill-switch de Service Worker en DESARROLLO (antes de cualquier bundle) -->
+    <script>
+      ;(function () {
+        try {
+          const isLocal =
+            location.hostname === 'localhost' ||
+            location.hostname === '127.0.0.1' ||
+            location.hostname.endsWith('.local')
+          if (!('serviceWorker' in navigator)) return
+
+          if (isLocal) {
+            // 1) Desregistrar todos los SW previos
+            navigator.serviceWorker
+              .getRegistrations()
+              .then((regs) => regs.forEach((r) => r.unregister().catch(() => {})))
+              .catch(() => {})
+
+            // 2) Limpiar caches creadas por SW viejos
+            if (window.caches?.keys) {
+              caches
+                .keys()
+                .then((keys) => Promise.all(keys.map((k) => caches.delete(k).catch(() => false))))
+                .catch(() => {})
+            }
+
+            // 3) Bloquear futuros register() mientras estés en dev
+            const sw = navigator.serviceWorker
+            if (sw && typeof sw.register === 'function') {
+              const noop = function () {
+                console.log('🧯 DEV: navigator.serviceWorker.register() bloqueado desde index.html')
+                return Promise.resolve({ unregister: () => Promise.resolve(true) })
+              }
+              try {
+                sw.register = noop
+              } catch (_) {}
+            }
+            console.log('🧹 SW deshabilitado en desarrollo (kill-switch index.html)')
+          }
+        } catch (_) {}
+      })()
+    </script>
+  </head>
+
+  <body>
+    <div id="app"></div>
+
+    <!-- Carga de la app -->
+    <script type="module" src="/src/main.js"></script>
+
+    <!--
+      IMPORTANTE:
+      - No registramos el Service Worker desde index.html.
+      - En producción, el registro lo maneja src/main.js (condicionado a PROD).
+      - Esto evita que se registre en desarrollo y rompa HMR/auth.
+    -->
+  </body>
+</html>
