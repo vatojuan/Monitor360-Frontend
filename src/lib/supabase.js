@@ -1,5 +1,6 @@
 // src/lib/supabase.js
 import { createClient } from '@supabase/supabase-js'
+import api from './api' // 👈 importa tu cliente Axios
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENV de Vite (frontend)
@@ -62,3 +63,15 @@ export async function waitForSession({ timeoutMs = 8000, requireAuth = false } =
 export function onAuthStateChange(cb) {
   return supabase.auth.onAuthStateChange(cb)
 }
+
+// 👇 NUEVO: mantener Axios sincronizado con Supabase
+supabase.auth.onAuthStateChange((_event, session) => {
+  if (session?.access_token) {
+    api.defaults.headers.common['Authorization'] = `Bearer ${session.access_token}`
+    if (import.meta.env.DEV) {
+      console.debug('[supabase] Refrescado access_token')
+    }
+  } else {
+    delete api.defaults.headers.common['Authorization']
+  }
+})
