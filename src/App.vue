@@ -22,17 +22,13 @@ const hideChrome = computed(() => route.meta?.hideChrome === true)
 const live = reactive({
   connected: false,
   lastMsgIso: null, // ISO de la última actualización (batch o update)
-  lastPingMs: null, // latency_ms de sensor ping
-  lastSensorId: null, // último sensor_id que actualizó
 })
 
 // Tooltip del chip de estado
 const liveTooltip = computed(() => {
   const parts = []
   parts.push(live.connected ? 'WS: conectado' : 'WS: reconectando')
-  if (live.lastPingMs != null) parts.push(`ping: ${Math.round(live.lastPingMs)} ms`)
   if (live.lastMsgIso) parts.push(`última: ${new Date(live.lastMsgIso).toLocaleString()}`)
-  if (live.lastSensorId != null) parts.push(`sensor_id: ${live.lastSensorId}`)
   return parts.join(' · ')
 })
 
@@ -65,7 +61,6 @@ function startWsStatePolling() {
       const state = ws?.readyState
       live.connected = state === WebSocket.OPEN
     } catch (err) {
-      // si algo falla leyendo el estado, marcamos desconectado y seguimos
       live.connected = false
       if (import.meta?.env?.DEV) {
         console.debug('[WS] state poll error:', err?.message || err)
@@ -113,21 +108,11 @@ onMounted(async () => {
   // Polling del estado de conexión (cubre rotaciones de socket)
   startWsStatePolling()
 
-  // Listener de mensajes en vivo
+  // Listener de mensajes en vivo (solo para actualizar la hora)
   offWsListener = addWsListener((msg) => {
     if (!msg || typeof msg !== 'object') return
-
-    // Última marca de tiempo (preferimos timestamp del mensaje)
     const ts = (typeof msg.timestamp === 'string' && msg.timestamp) || new Date().toISOString()
     live.lastMsgIso = ts
-
-    // Si es ping, reflejamos latency y sensor_id
-    if (msg.sensor_type === 'ping' && Object.prototype.hasOwnProperty.call(msg, 'sensor_id')) {
-      live.lastSensorId = msg.sensor_id
-      if (Object.prototype.hasOwnProperty.call(msg, 'latency_ms')) {
-        live.lastPingMs = msg.latency_ms
-      }
-    }
   })
 })
 
@@ -181,11 +166,9 @@ onBeforeUnmount(() => {
             aria-label="Estado tiempo real"
           >
             <span class="dot" />
-            <span class="label">{{ live.connected ? 'Tiempo real' : 'Reconectando…' }}</span>
-            <span v-if="live.lastPingMs != null" class="sep">•</span>
-            <span v-if="live.lastPingMs != null" class="metric"
-              >ping {{ Math.round(live.lastPingMs) }} ms</span
-            >
+            <span class="label">
+              {{ live.connected ? 'Tiempo real' : 'Reconectando…' }}
+            </span>
             <span v-if="live.lastMsgIso" class="sep">•</span>
             <span v-if="live.lastMsgIso" class="metric">
               {{ new Date(live.lastMsgIso).toLocaleTimeString() }}
