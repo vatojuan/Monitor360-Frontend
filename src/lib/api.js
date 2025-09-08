@@ -1,12 +1,6 @@
-// src/lib/api.js
 import axios from 'axios'
-import { API_BASE_URL } from './supabase'
+import { API_BASE_URL, supabase } from './supabase'
 
-/**
- * Normaliza la base del backend:
- * - Acepta con o sin /api
- * - Evita dobles barras
- */
 function ensureApiBase(url) {
   const u = (url || 'http://127.0.0.1:8000').trim().replace(/\/+$/, '')
   return /\/api$/i.test(u) ? u : `${u}/api`
@@ -17,11 +11,18 @@ const api = axios.create({
   timeout: 20000,
 })
 
-/**
- * REQUEST INTERCEPTOR
- * - Asegura que siempre haya Accept: application/json
- * - El header Authorization ya se setea en supabase.js con onAuthStateChange
- */
+// 👇 sincronizar token aquí
+supabase.auth.onAuthStateChange((_event, session) => {
+  if (session?.access_token) {
+    api.defaults.headers.common['Authorization'] = `Bearer ${session.access_token}`
+    if (import.meta.env.DEV) {
+      console.debug('[supabase] Refrescado access_token')
+    }
+  } else {
+    delete api.defaults.headers.common['Authorization']
+  }
+})
+
 api.interceptors.request.use(
   async (config) => {
     config.headers = config.headers || {}
@@ -33,10 +34,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error),
 )
 
-/**
- * RESPONSE INTERCEPTOR
- * - Si 401, simplemente rechaza (supabase.js actualizará el token automáticamente)
- */
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
