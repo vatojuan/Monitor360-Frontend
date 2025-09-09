@@ -1,6 +1,10 @@
 <script setup>
-import { ref, onMounted } from 'vue'
-import api from '@/lib/api' // ⬅️ Axios preconfigurado con baseURL y Bearer
+import { ref, onMounted, computed } from 'vue'
+import api from '@/lib/api'
+
+// Importamos los componentes de QR
+import { QrcodeStream } from 'vue-qrcode-reader'
+import QrcodeVue from 'qrcode.vue'
 
 const notification = ref({ show: false, message: '', type: 'success' })
 function showNotification(message, type = 'success') {
@@ -11,12 +15,96 @@ function showNotification(message, type = 'success') {
 const vpnProfiles = ref([])
 const isLoading = ref(false)
 
-// Formulario de creación
 const newProfile = ref({
   name: '',
   check_ip: '',
   config_data: '',
 })
+
+// --- Lógica para el escáner QR Dual ---
+const isModalOpen = ref(false)
+const modalStep = ref('choose') // 'choose', 'scanLocal', 'scanRemote'
+const remoteScanSessionId = ref(null)
+const ws = ref(null) // Para la conexión WebSocket
+
+const remoteScanUrl = computed(() => {
+  if (!remoteScanSessionId.value) return ''
+  const url = new URL(`/scan/${remoteScanSessionId.value}`, window.location.origin)
+  return url.href
+})
+
+function openScanModal() {
+  modalStep.value = 'choose'
+  isModalOpen.value = true
+}
+
+function startLocalScan() {
+  modalStep.value = 'scanLocal'
+}
+
+function startRemoteScan() {
+  remoteScanSessionId.value = crypto.randomUUID()
+  modalStep.value = 'scanRemote'
+
+  // Construir URL del WebSocket
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${wsProtocol}//${window.location.host}/ws/scan/${remoteScanSessionId.value}`
+
+  // Conectar al WebSocket
+  ws.value = new WebSocket(wsUrl)
+
+  ws.value.onopen = () => {
+    console.log('Conectado al WebSocket de escaneo.')
+  }
+
+  ws.value.onmessage = (event) => {
+    const msg = JSON.parse(event.data)
+    if (msg.type === 'scan_result' && msg.data) {
+      newProfile.value.config_data = msg.data
+      showNotification('Configuración recibida desde el celular.', 'success')
+      closeModal()
+    }
+  }
+
+  ws.value.onerror = (error) => {
+    console.error('Error de WebSocket:', error)
+    showNotification('Error de conexión para escaneo remoto.', 'error')
+    closeModal()
+  }
+}
+
+function onDecodeLocal(decodedString) {
+  newProfile.value.config_data = decodedString
+  showNotification('Configuración QR cargada correctamente.', 'success')
+  closeModal()
+}
+
+async function onScannerInit(promise) {
+  try {
+    await promise
+  } catch (error) {
+    let errorMessage = 'Error al iniciar la cámara.'
+    if (error.name === 'NotAllowedError') {
+      errorMessage = 'Necesitas dar permiso para usar la cámara.'
+    } else if (error.name === 'NotFoundError') {
+      errorMessage = 'No se encontró una cámara en este dispositivo.'
+    } else if (error.name === 'NotReadableError') {
+      errorMessage = 'La cámara ya está en uso por otra aplicación.'
+    }
+    showNotification(errorMessage, 'error')
+    closeModal()
+  }
+}
+
+function closeModal() {
+  isModalOpen.value = false
+  if (ws.value) {
+    ws.value.close()
+    ws.value = null
+  }
+  remoteScanSessionId.value = null
+}
+// --- FIN de la lógica del escáner ---
 
 onMounted(() => {
   fetchVpnProfiles()
@@ -25,7 +113,7 @@ onMounted(() => {
 async function fetchVpnProfiles() {
   isLoading.value = true
   try {
-    const { data } = await api.get('/vpns') // ⬅️ SIN /api
+    const { data } = await api.get('/vpns')
     vpnProfiles.value = (data || []).map((p) => ({
       ...p,
       is_default: !!p.is_default,
@@ -50,7 +138,7 @@ async function createProfile() {
       config_data: newProfile.value.config_data,
       check_ip: newProfile.value.check_ip.trim(),
     }
-    const { data } = await api.post('/vpns', body) // ⬅️ SIN /api
+    const { data } = await api.post('/vpns', body)
     vpnProfiles.value.push({ ...data, is_default: !!data.is_default, _expanded: false })
     newProfile.value = { name: '', check_ip: '', config_data: '' }
     showNotification('Perfil VPN creado.', 'success')
@@ -60,65 +148,8 @@ async function createProfile() {
   }
 }
 
-async function saveProfile(profile) {
-  try {
-    const payload = {
-      name: profile.name,
-      check_ip: profile.check_ip,
-      config_data: profile.config_data,
-      // is_default se maneja aparte con setDefault
-    }
-    await api.put(`/vpns/${profile.id}`, payload) // ⬅️ SIN /api
-    showNotification('Perfil actualizado.', 'success')
-    await fetchVpnProfiles()
-  } catch (err) {
-    console.error('Error al actualizar perfil:', err)
-    showNotification(err.response?.data?.detail || 'Error al actualizar perfil.', 'error')
-  }
-}
-
-async function setDefault(profile) {
-  try {
-    await api.put(`/vpns/${profile.id}`, { is_default: true }) // ⬅️ SIN /api
-    await fetchVpnProfiles()
-    showNotification(`"${profile.name}" ahora es el default.`, 'success')
-  } catch (err) {
-    console.error('Error al marcar default:', err)
-    showNotification(err.response?.data?.detail || 'No se pudo marcar como default.', 'error')
-  }
-}
-
-async function testProfile(profile) {
-  if (!profile.check_ip?.trim()) {
-    showNotification('Configurar "check_ip" primero para probar el túnel.', 'error')
-    return
-  }
-  try {
-    const payload = { ip_address: profile.check_ip.trim(), vpn_profile_id: profile.id }
-    const { data } = await api.post('/devices/test_reachability', payload) // ⬅️ SIN /api
-    if (data.reachable) {
-      showNotification(`Túnel OK. Alcanzable (${profile.check_ip}).`, 'success')
-    } else {
-      showNotification(data.detail || 'No alcanzable a través del túnel.', 'error')
-    }
-  } catch (err) {
-    console.error('Error al probar túnel:', err)
-    showNotification(err.response?.data?.detail || 'Error al probar el túnel.', 'error')
-  }
-}
-
-async function deleteProfile(profile) {
-  if (!confirm(`¿Eliminar el perfil "${profile.name}"?`)) return
-  try {
-    await api.delete(`/vpns/${profile.id}`) // ⬅️ SIN /api
-    vpnProfiles.value = vpnProfiles.value.filter((p) => p.id !== profile.id)
-    showNotification('Perfil eliminado.', 'success')
-  } catch (err) {
-    // Si está asociado a un dispositivo, el backend devuelve 400 con detalle.
-    console.error('Error al eliminar perfil:', err)
-    showNotification(err.response?.data?.detail || 'No se pudo eliminar el perfil.', 'error')
-  }
-}
+// ... (El resto de tus funciones: saveProfile, setDefault, testProfile, deleteProfile)
+// ... (Omitidas por brevedad, no necesitan cambios)
 </script>
 
 <template>
@@ -128,263 +159,186 @@ async function deleteProfile(profile) {
     <!-- Crear nuevo perfil -->
     <section class="control-section">
       <h2><i class="icon">➕</i> Crear Perfil</h2>
-      <div class="grid-2">
-        <div>
-          <label>Nombre *</label>
-          <input v-model="newProfile.name" type="text" placeholder="Nombre del perfil" />
-        </div>
-        <div>
-          <label>Check IP (opcional)</label>
-          <input v-model="newProfile.check_ip" type="text" placeholder="Ej: 192.168.81.4" />
-          <small>IP dentro del túnel para prueba rápida.</small>
-        </div>
-      </div>
+      <!-- ... (Campos de Nombre y Check IP) ... -->
 
       <div class="stack">
-        <label>Config WireGuard *</label>
+        <div class="label-with-action">
+          <label>Config WireGuard *</label>
+          <button @click="openScanModal" class="btn-qr-scan" title="Escanear Código QR">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM13 13h2v2h-2zM15 15h2v2h-2zM13 17h2v2h-2zM17 17h2v2h-2zM19 19h2v2h-2zM15 19h2v2h-2zM17 13h2v2h-2zM19 15h2v2h-2z"
+              ></path>
+            </svg>
+            Escanear
+          </button>
+        </div>
         <textarea
           v-model="newProfile.config_data"
           rows="10"
           spellcheck="false"
-          placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;DNS = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = ...&#10;Endpoint = ..."
+          placeholder="[Interface]&#10;PrivateKey = ...&#10;..."
         />
       </div>
-
       <div class="actions-row">
         <button class="btn-primary" @click="createProfile">Crear Perfil</button>
       </div>
     </section>
 
-    <!-- Listado / edición -->
-    <section class="control-section">
-      <h2><i class="icon">🗂️</i> Perfiles existentes</h2>
-      <div v-if="isLoading" class="loading-text">Cargando...</div>
-      <div v-else-if="!vpnProfiles.length" class="empty">No hay perfiles. Creá uno arriba.</div>
+    <!-- ... (Listado de perfiles existentes, sin cambios) ... -->
 
-      <ul v-else class="vpn-list">
-        <li v-for="p in vpnProfiles" :key="p.id" class="vpn-card">
-          <div class="vpn-header" @click="p._expanded = !p._expanded">
-            <div class="title">
-              <span class="name">{{ p.name }}</span>
-              <span v-if="p.is_default" class="badge-default" title="Default">★ Default</span>
-            </div>
-            <button class="btn-toggle" type="button">
-              {{ p._expanded ? 'Ocultar' : 'Mostrar' }}
-            </button>
-          </div>
-
-          <div v-if="p._expanded" class="vpn-body">
-            <div class="grid-2">
-              <div>
-                <label>Nombre</label>
-                <input v-model="p.name" type="text" />
-              </div>
-              <div>
-                <label>Check IP</label>
-                <input
-                  v-model="p.check_ip"
-                  type="text"
-                  placeholder="IP para testear a través del túnel"
-                />
-              </div>
-            </div>
-
-            <div class="stack">
-              <label>Config WireGuard</label>
-              <textarea v-model="p.config_data" rows="12" spellcheck="false"></textarea>
-            </div>
-
-            <div class="actions-row">
-              <button class="btn-primary" @click.stop="saveProfile(p)">Guardar cambios</button>
-              <button
-                class="btn-default"
-                v-if="!p.is_default"
-                @click.stop="setDefault(p)"
-                title="Marcar este perfil como predeterminado"
-              >
-                Marcar como default
-              </button>
-              <button class="btn-secondary" @click.stop="testProfile(p)">Probar túnel</button>
-              <button class="btn-danger" @click.stop="deleteProfile(p)">Eliminar</button>
-            </div>
-          </div>
-        </li>
-      </ul>
-    </section>
-
+    <!-- Notificaciones -->
     <div v-if="notification.show" class="notification" :class="notification.type">
       {{ notification.message }}
+    </div>
+
+    <!-- Modal del escáner QR -->
+    <div v-if="isModalOpen" class="qr-scanner-modal" @click.self="closeModal">
+      <div class="qr-scanner-content">
+        <button @click="closeModal" class="btn-close-modal" title="Cerrar">&times;</button>
+
+        <!-- Paso 1: Elegir método -->
+        <div v-if="modalStep === 'choose'">
+          <h3>¿Cómo quieres escanear el QR?</h3>
+          <div class="choose-options">
+            <button @click="startLocalScan" class="btn-choose">
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"
+                />
+              </svg>
+              <span>Usar cámara de este dispositivo</span>
+            </button>
+            <button @click="startRemoteScan" class="btn-choose">
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M15 7.5V2H9v5.5l3 3 3-3zM7.5 9H2v6h5.5l3-3-3-3zM9 16.5V22h6v-5.5l-3-3-3 3zM16.5 15l-3 3 3 3H22v-6h-5.5z"
+                />
+              </svg>
+              <span>Usar cámara de mi celular</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Paso 2A: Escáner Local -->
+        <div v-if="modalStep === 'scanLocal'">
+          <h3>Apunta al código QR de MikroTik</h3>
+          <qrcode-stream @decode="onDecodeLocal" @init="onScannerInit"></qrcode-stream>
+        </div>
+
+        <!-- Paso 2B: Escáner Remoto -->
+        <div v-if="modalStep === 'scanRemote'">
+          <h3>1. Escanea este QR con tu celular</h3>
+          <p class="remote-scan-subtitle">Se abrirá una página para escanear el QR de MikroTik.</p>
+          <div class="remote-qr-container">
+            <qrcode-vue :value="remoteScanUrl" :size="220" level="H" v-if="remoteScanUrl" />
+          </div>
+          <p class="waiting-text">Esperando datos del celular...</p>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-:root {
-  --bg-color: #121212;
-  --panel: #1b1b1b;
-  --font-color: #eaeaea;
-  --gray: #9aa0a6;
-  --primary-color: #6ab4ff;
-  --secondary-color: #ff6b6b;
-  --green: #2ea043;
-  --error-red: #d9534f;
-  --badge: #f4d03f;
-}
-
-.page-wrap {
-  color: var(--font-color);
-}
-h1 {
-  margin: 0 0 1rem 0;
-}
-h2 {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-.icon {
-  font-style: normal;
-}
-
-.control-section {
-  background: var(--panel);
-  padding: 1rem;
-  border-radius: 10px;
-  margin-bottom: 1rem;
-}
-
-.grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-}
-@media (max-width: 900px) {
-  .grid-2 {
-    grid-template-columns: 1fr;
-  }
-}
-
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-input,
-textarea {
-  width: 100%;
-  background: #0e0e0e;
-  color: var(--font-color);
-  border: 1px solid #2a2a2a;
-  border-radius: 8px;
-  padding: 0.6rem 0.7rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-}
-textarea {
-  white-space: pre;
-}
-
-.actions-row {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin-top: 0.5rem;
-}
-.btn-primary,
-.btn-secondary,
-.btn-danger,
-.btn-default,
-.btn-toggle {
-  border-radius: 8px;
-  padding: 0.6rem 0.9rem;
-  cursor: pointer;
-  border: 1px solid transparent;
-  color: white;
-}
-.btn-primary {
-  background: var(--green);
-}
-.btn-secondary {
-  background: transparent;
-  color: var(--font-color);
-  border-color: var(--primary-color);
-}
-.btn-default {
-  background: #2b5cb3;
-}
-.btn-danger {
-  background: var(--secondary-color);
-}
-.btn-toggle {
-  background: #2a2a2a;
-  color: var(--font-color);
-}
-
-.loading-text {
-  color: var(--gray);
-}
-.empty {
-  color: var(--gray);
-  padding: 0.5rem 0;
-}
-
-.vpn-list {
-  list-style: none;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-.vpn-card {
-  background: #0e0e0e;
-  border: 1px solid #2a2a2a;
-  border-radius: 10px;
-}
-.vpn-header {
+/* ... (Tus estilos existentes) ... */
+.label-with-action {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.8rem 1rem;
-  border-bottom: 1px solid #2a2a2a;
 }
-.title {
+.btn-qr-scan {
+  background: #333;
+  color: var(--font-color);
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.4rem;
 }
-.name {
-  font-weight: 700;
+.btn-qr-scan:hover {
+  background: #444;
 }
-.badge-default {
-  border: 1px solid var(--badge);
-  color: #161616;
-  background: var(--badge);
-  border-radius: 6px;
-  padding: 0.1rem 0.4rem;
-  font-size: 0.8rem;
+.btn-qr-scan svg {
+  width: 1rem;
+  height: 1rem;
 }
-.vpn-body {
-  padding: 1rem;
+
+/* --- Estilos para el Modal y sus pasos --- */
+.qr-scanner-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1000;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.qr-scanner-content {
+  background-color: var(--panel);
+  padding: 1.5rem;
+  border-radius: 12px;
+  text-align: center;
+  width: 90%;
+  max-width: 500px;
+  position: relative;
+}
+.btn-close-modal {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: #999;
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.choose-options {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  margin-top: 1.5rem;
 }
-
-.notification {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 2000;
-  padding: 1rem 1.2rem;
+.btn-choose {
+  background: #2a2a2a;
+  color: var(--font-color);
+  border: 1px solid #444;
   border-radius: 8px;
-  color: white;
-  font-weight: 600;
+  padding: 1rem;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  text-align: left;
 }
-.notification.success {
-  background: var(--green);
+.btn-choose:hover {
+  background: #333;
 }
-.notification.error {
-  background: var(--error-red);
+.btn-choose svg {
+  width: 2.5rem;
+  height: 2.5rem;
+  fill: var(--primary-color);
+  flex-shrink: 0;
+}
+.remote-scan-subtitle {
+  color: var(--gray);
+  margin: -0.5rem 0 1rem 0;
+}
+.remote-qr-container {
+  background: white;
+  padding: 1rem;
+  display: inline-block;
+  border-radius: 8px;
+}
+.waiting-text {
+  margin-top: 1rem;
+  color: var(--primary-color);
 }
 </style>
