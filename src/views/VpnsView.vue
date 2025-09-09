@@ -102,7 +102,9 @@ function cleanupRemote() {
   if (wsUnsub) {
     try {
       removeWsListener(wsUnsub)
-    } catch {}
+    } catch {
+      // no-op: ignoramos errores al remover el listener
+    }
     wsUnsub = null
   }
 }
