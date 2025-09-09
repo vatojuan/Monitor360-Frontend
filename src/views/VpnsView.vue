@@ -1,12 +1,33 @@
 <script setup>
-import { ref, onMounted, computed, shallowRef } from 'vue'
-import api from '@/lib/api'
-
-// Importamos el componente para generar QR
+import { ref, nextTick, onBeforeUnmount, onMounted } from 'vue'
+import { QrcodeStream } from 'vue-qrcode-reader'
 import QrcodeVue from 'qrcode.vue'
+import api from '@/lib/api'
+import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
 
-// El componente QrcodeStream se importará dinámicamente
-const QrStreamComponent = shallowRef(null)
+// === Estado del modal ===
+const scanOpen = ref(false)
+const step = ref('choose')
+
+// === Local (Opción A)
+const localActive = ref(false)
+const localError = ref('')
+const localStreamKey = ref(0)
+const localPaused = ref(false)
+
+// === Remoto (Opción B)
+const pairing = ref(null) // { id, url, expires_in }
+let wsUnsub = null
+
+// === Formulario creación VPN ===
+const newProfile = ref({
+  name: '',
+  check_ip: '',
+  config_data: '',
+})
+
+const vpnProfiles = ref([])
+const isLoading = ref(false)
 
 const notification = ref({ show: false, message: '', type: 'success' })
 function showNotification(message, type = 'success') {
@@ -14,112 +35,81 @@ function showNotification(message, type = 'success') {
   setTimeout(() => (notification.value.show = false), 4000)
 }
 
-const vpnProfiles = ref([])
-const isLoading = ref(false)
-
-// Formulario de creación
-const newProfile = ref({
-  name: '',
-  check_ip: '',
-  config_data: '',
-})
-
-// --- Lógica para el escáner QR Dual ---
-const isModalOpen = ref(false)
-const modalStep = ref('choose') // 'choose', 'scanLocal', 'scanRemote'
-const remoteScanSessionId = ref(null)
-const ws = ref(null) // Para la conexión WebSocket
-
-const remoteScanUrl = computed(() => {
-  if (!remoteScanSessionId.value) return ''
-  const origin = window.location.origin
-  const url = new URL(`/scan/${remoteScanSessionId.value}`, origin)
-  return url.href
-})
-
+// --- Modal QR ---
 function openScanModal() {
-  modalStep.value = 'choose'
-  isModalOpen.value = true
+  scanOpen.value = true
+  step.value = 'choose'
+  localError.value = ''
+  localActive.value = false
+  localPaused.value = false
+  pairing.value = null
 }
 
-function startLocalScan() {
-  modalStep.value = 'scanLocal'
+function closeScanModal() {
+  scanOpen.value = false
+  cleanupRemote()
 }
 
-function startRemoteScan() {
-  remoteScanSessionId.value = crypto.randomUUID()
-  modalStep.value = 'scanRemote'
-
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${wsProtocol}//${window.location.host}/ws/scan/${remoteScanSessionId.value}`
-
-  ws.value = new WebSocket(wsUrl)
-
-  ws.value.onopen = () => {
-    console.log('Conectado al WebSocket de escaneo.')
-  }
-
-  ws.value.onmessage = (event) => {
-    const msg = JSON.parse(event.data)
-    if (msg.type === 'scan_result' && msg.data) {
-      newProfile.value.config_data = msg.data
-      showNotification('Configuración recibida desde el celular.', 'success')
-      closeModal()
-    }
-  }
-
-  ws.value.onerror = (error) => {
-    console.error('Error de WebSocket:', error)
-    showNotification('Error de conexión para escaneo remoto.', 'error')
-    closeModal()
-  }
+function applyConfigAndClose(text) {
+  newProfile.value.config_data = text?.trim() || ''
+  closeScanModal()
+  showNotification('Configuración cargada desde QR', 'success')
 }
 
-function onDecodeLocal(decodedString) {
-  newProfile.value.config_data = decodedString
-  showNotification('Configuración QR cargada correctamente.', 'success')
-  closeModal()
+// === Opción A ===
+async function chooseLocal() {
+  step.value = 'local'
+  await nextTick()
+  localStreamKey.value++
+  localActive.value = true
+  localPaused.value = false
+  localError.value = ''
 }
 
-async function onScannerInit(promise) {
+async function onLocalInit(promise) {
   try {
     await promise
-  } catch (error) {
-    let errorMessage = 'Error al iniciar la cámara.'
-    if (error.name === 'NotAllowedError') {
-      errorMessage = 'Necesitas dar permiso para usar la cámara.'
-    } else if (error.name === 'NotFoundError') {
-      errorMessage = 'No se encontró una cámara en este dispositivo.'
-    } else if (error.name === 'NotReadableError') {
-      errorMessage = 'La cámara ya está en uso por otra aplicación.'
+  } catch (err) {
+    if (err?.name === 'NotAllowedError') localError.value = 'Debes dar permiso a la cámara.'
+    else if (err?.name === 'NotFoundError')
+      localError.value = 'No se encontró cámara en este dispositivo.'
+    else localError.value = 'No se pudo iniciar la cámara.'
+    localActive.value = false
+  }
+}
+
+function onLocalDecode(text) {
+  if (localPaused.value) return
+  localPaused.value = true
+  applyConfigAndClose(text)
+}
+
+// === Opción B ===
+async function chooseRemote() {
+  step.value = 'remote'
+  const { data } = await api.post('/qr/start')
+  pairing.value = { id: data.session_id, url: data.mobile_url, expires_in: data.expires_in }
+
+  await connectWebSocketWhenAuthenticated()
+  wsUnsub = addWsListener((msg) => {
+    if (msg?.type === 'qr_config' && msg.session_id === pairing.value?.id) {
+      applyConfigAndClose(msg.config_text)
     }
-    showNotification(errorMessage, 'error')
-    closeModal()
+  })
+}
+
+function cleanupRemote() {
+  if (wsUnsub) {
+    try {
+      removeWsListener(wsUnsub)
+    } catch {}
+    wsUnsub = null
   }
 }
 
-function closeModal() {
-  isModalOpen.value = false
-  if (ws.value) {
-    ws.value.close()
-    ws.value = null
-  }
-  remoteScanSessionId.value = null
-}
-// --- FIN de la lógica del escáner ---
+onBeforeUnmount(() => cleanupRemote())
 
-onMounted(async () => {
-  try {
-    const { QrcodeStream } = await import('vue-qrcode-reader')
-    QrStreamComponent.value = QrcodeStream
-  } catch (e) {
-    console.error('Fallo al cargar QrcodeStream:', e)
-  }
-
-  fetchVpnProfiles()
-})
-
-// --- FUNCIONES ORIGINALES ---
+// --- CRUD VPN Profiles ---
 async function fetchVpnProfiles() {
   isLoading.value = true
   try {
@@ -215,6 +205,8 @@ async function deleteProfile(profile) {
     showNotification(err.response?.data?.detail || 'No se pudo eliminar el perfil.', 'error')
   }
 }
+
+onMounted(fetchVpnProfiles)
 </script>
 
 <template>
@@ -320,14 +312,15 @@ async function deleteProfile(profile) {
     </div>
 
     <!-- Modal del escáner QR -->
-    <div v-if="isModalOpen" class="qr-scanner-modal" @click.self="closeModal">
+    <div v-if="scanOpen" class="qr-scanner-modal" @click.self="closeScanModal">
       <div class="qr-scanner-content">
-        <button @click="closeModal" class="btn-close-modal" title="Cerrar">&times;</button>
+        <button @click="closeScanModal" class="btn-close-modal" title="Cerrar">&times;</button>
 
-        <div v-if="modalStep === 'choose'">
+        <!-- Paso elegir -->
+        <div v-if="step === 'choose'">
           <h3>¿Cómo quieres escanear el QR?</h3>
           <div class="choose-options">
-            <button @click="startLocalScan" class="btn-choose" :disabled="!QrStreamComponent">
+            <button @click="chooseLocal" class="btn-choose">
               <svg viewBox="0 0 24 24">
                 <path
                   d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"
@@ -335,7 +328,7 @@ async function deleteProfile(profile) {
               </svg>
               <span>Usar cámara de este dispositivo</span>
             </button>
-            <button @click="startRemoteScan" class="btn-choose">
+            <button @click="chooseRemote" class="btn-choose">
               <svg viewBox="0 0 24 24">
                 <path
                   d="M15 7.5V2H9v5.5l3 3 3-3zM7.5 9H2v6h5.5l3-3-3-3zM9 16.5V22h6v-5.5l-3-3-3 3zM16.5 15l-3 3 3 3H22v-6h-5.5z"
@@ -346,23 +339,27 @@ async function deleteProfile(profile) {
           </div>
         </div>
 
-        <div v-if="modalStep === 'scanLocal'">
+        <!-- Paso local -->
+        <div v-else-if="step === 'local'">
           <h3>Apunta al código QR de MikroTik</h3>
-          <component
-            v-if="QrStreamComponent"
-            :is="QrStreamComponent"
-            @decode="onDecodeLocal"
-            @init="onScannerInit"
-          >
-          </component>
-          <div v-else>Cargando escáner...</div>
+          <div v-if="localError" class="text-red-400">{{ localError }}</div>
+          <div v-else class="remote-qr-container">
+            <QrcodeStream
+              :key="localStreamKey"
+              :paused="localPaused"
+              :constraints="{ facingMode: 'environment' }"
+              @init="onLocalInit"
+              @decode="onLocalDecode"
+            />
+          </div>
         </div>
 
-        <div v-if="modalStep === 'scanRemote'">
+        <!-- Paso remoto -->
+        <div v-else-if="step === 'remote'">
           <h3>1. Escanea este QR con tu celular</h3>
           <p class="remote-scan-subtitle">Se abrirá una página para escanear el QR de MikroTik.</p>
           <div class="remote-qr-container">
-            <qrcode-vue :value="remoteScanUrl" :size="220" level="H" v-if="remoteScanUrl" />
+            <QrcodeVue :value="pairing?.url" :size="220" level="H" v-if="pairing?.url" />
           </div>
           <p class="waiting-text">Esperando datos del celular...</p>
         </div>

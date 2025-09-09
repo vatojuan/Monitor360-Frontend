@@ -139,6 +139,9 @@ async function openAppWebSocket() {
         }
       } else if (msg && Object.prototype.hasOwnProperty.call(msg, 'sensor_id')) {
         notifyAll(msg)
+      } else if (msg?.type === 'qr_config') {
+        // ✅ Nuevo: reenviamos el resultado del escaneo remoto
+        notifyAll(msg)
       }
     } catch (err) {
       if (DEV) console.debug('[WS] parse skip:', err?.message || err)
