@@ -1,10 +1,12 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, shallowRef } from 'vue'
 import api from '@/lib/api'
 
-// Importamos los componentes de QR
-import { QrcodeStream } from 'vue-qrcode-reader'
+// Importamos el componente para generar QR
 import QrcodeVue from 'qrcode.vue'
+
+// El componente QrcodeStream se importará dinámicamente
+const QrStreamComponent = shallowRef(null)
 
 const notification = ref({ show: false, message: '', type: 'success' })
 function showNotification(message, type = 'success') {
@@ -106,7 +108,16 @@ function closeModal() {
 }
 // --- FIN de la lógica del escáner ---
 
-onMounted(() => {
+onMounted(async () => {
+  // Cargamos dinámicamente el componente de escaneo solo en el cliente
+  try {
+    const { QrcodeStream } = await import('vue-qrcode-reader')
+    QrStreamComponent.value = QrcodeStream
+  } catch (e) {
+    console.error('Fallo al cargar QrcodeStream:', e)
+    showNotification('Error al cargar el componente de escáner.', 'error')
+  }
+
   fetchVpnProfiles()
 })
 
@@ -223,7 +234,14 @@ async function createProfile() {
         <!-- Paso 2A: Escáner Local -->
         <div v-if="modalStep === 'scanLocal'">
           <h3>Apunta al código QR de MikroTik</h3>
-          <qrcode-stream @decode="onDecodeLocal" @init="onScannerInit"></qrcode-stream>
+          <component
+            v-if="QrStreamComponent"
+            :is="QrStreamComponent"
+            @decode="onDecodeLocal"
+            @init="onScannerInit"
+          >
+          </component>
+          <div v-else>Cargando escáner...</div>
         </div>
 
         <!-- Paso 2B: Escáner Remoto -->

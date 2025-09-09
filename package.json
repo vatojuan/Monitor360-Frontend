@@ -17,10 +17,11 @@
     "chartjs-adapter-date-fns": "^3.0.0",
     "chartjs-plugin-zoom": "^2.2.0",
     "date-fns": "^3.6.0",
-    "qrcode.vue": "^3.6.0",
+    "qrcode.vue": "^3.4.1",
     "vue": "^3.5.17",
     "vue-chartjs": "^5.3.2",
-    "vue-router": "^4.5.1"
+    "vue-router": "^4.5.1",
+    "vue-qrcode-reader": "^5.5.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",
