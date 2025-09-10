@@ -1,12 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import {
-  BrowserQRCodeReader,
-  HTMLCanvasElementLuminanceSource,
-  BinaryBitmap,
-  HybridBinarizer,
-  QRCodeReader,
-} from '@zxing/browser'
+import { BrowserQRCodeReader, HTMLCanvasElementLuminanceSource } from '@zxing/browser'
+import { BinaryBitmap, HybridBinarizer, QRCodeReader } from '@zxing/library'
 
 const scanResult = ref(null)
 const errorMessage = ref('')
