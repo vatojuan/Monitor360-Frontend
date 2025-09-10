@@ -4,7 +4,6 @@ import { QrcodeStream } from 'vue-qrcode-reader'
 import QrcodeVue from 'qrcode.vue'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
-import 'vue-qrcode-reader/style.css'
 
 // === Estado del modal ===
 const scanOpen = ref(false)
