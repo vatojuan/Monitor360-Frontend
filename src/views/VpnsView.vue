@@ -79,9 +79,17 @@ async function onLocalInit(promise) {
 }
 
 function onLocalDecode(text) {
+  console.log('📸 QR leído crudo:', text) // log para verificar qué devuelve
   if (localPaused.value) return
   localPaused.value = true
-  applyConfigAndClose(text)
+
+  // Normalizar texto
+  const clean = text
+    .replace(/\r\n/g, '\n') // unificar saltos
+    .replace(/\n{3,}/g, '\n\n') // evitar saltos extra
+    .trim()
+
+  applyConfigAndClose(clean)
 }
 
 // === Opción B ===
@@ -349,7 +357,13 @@ onMounted(fetchVpnProfiles)
             <QrcodeStream
               :key="localStreamKey"
               :paused="localPaused"
-              :constraints="{ facingMode: { exact: 'environment' } }"
+              :constraints="{
+                video: {
+                  facingMode: { exact: 'environment' }, // fuerza cámara trasera
+                  width: { ideal: 1920 },
+                  height: { ideal: 1080 },
+                },
+              }"
               @init="onLocalInit"
               @decode="onLocalDecode"
             />
