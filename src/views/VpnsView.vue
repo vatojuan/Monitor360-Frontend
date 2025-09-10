@@ -1,9 +1,11 @@
 <script setup>
 import { ref, nextTick, onBeforeUnmount, onMounted } from 'vue'
-import { QrcodeStream } from 'vue-qrcode-reader'
 import QrcodeVue from 'qrcode.vue'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
+import { BrowserQRCodeReader, NotFoundException } from '@zxing/browser'
+
+let codeReader = null
 
 // === Estado del modal ===
 const scanOpen = ref(false)
@@ -12,7 +14,6 @@ const step = ref('choose')
 // === Local (Opción A)
 const localActive = ref(false)
 const localError = ref('')
-const localStreamKey = ref(0)
 const localPaused = ref(false)
 
 // === Remoto (Opción B)
@@ -60,44 +61,49 @@ function applyConfigAndClose(text) {
 async function chooseLocal() {
   step.value = 'local'
   await nextTick()
-  localStreamKey.value++
+  localError.value = ''
   localActive.value = true
   localPaused.value = false
-  localError.value = ''
-}
 
-async function onLocalInit(promise) {
   try {
-    await promise
+    // Preferir cámara trasera
+    codeReader = new BrowserQRCodeReader()
+    const devices = await BrowserQRCodeReader.listVideoInputDevices()
+    console.log('📸 Cámaras detectadas:', devices)
+
+    let deviceId = devices[0]?.deviceId
+    // Buscar explícitamente la trasera
+    const backCam = devices.find((d) => /back|trás|rear|environment/i.test(d.label))
+    if (backCam) {
+      deviceId = backCam.deviceId
+    }
+
+    // Iniciar escaneo
+    await codeReader.decodeFromVideoDevice(deviceId, 'preview', (result, err) => {
+      if (result) {
+        console.log('📸 QR detectado:', result.getText())
+        applyConfigAndClose(result.getText())
+        stopLocalScan()
+      }
+      if (err && !(err instanceof NotFoundException)) {
+        console.warn('⚠️ ZXing error:', err)
+      }
+    })
   } catch (err) {
-    if (err?.name === 'NotAllowedError') localError.value = 'Debes dar permiso a la cámara.'
-    else if (err?.name === 'NotFoundError')
-      localError.value = 'No se encontró cámara en este dispositivo.'
-    else localError.value = 'No se pudo iniciar la cámara.'
-    localActive.value = false
+    console.error('❌ Error iniciando ZXing:', err)
+    localError.value = 'No se pudo iniciar la cámara.'
   }
 }
 
-function onLocalDecode(result) {
-  console.log('📸 Resultado bruto del lector:', result)
-
-  if (!result || typeof result !== 'string') {
-    localError.value = 'No se pudo interpretar el código.'
-    return
+function stopLocalScan() {
+  if (codeReader) {
+    codeReader.reset()
+    codeReader = null
   }
-
-  if (localPaused.value) return
-  localPaused.value = true
-
-  // Normalizamos saltos y espacios
-  const clean = result
-    .replace(/\r\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-
-  console.log('📸 Normalizado:', clean)
-  applyConfigAndClose(clean)
+  localActive.value = false
 }
+
+onBeforeUnmount(() => stopLocalScan())
 
 // === Opción B ===
 async function chooseRemote() {
@@ -361,19 +367,7 @@ onMounted(fetchVpnProfiles)
           <h3>Apunta al código QR de MikroTik</h3>
           <div v-if="localError" class="text-red-400">{{ localError }}</div>
           <div v-else class="remote-qr-container">
-            <QrcodeStream
-              :key="localStreamKey"
-              :paused="localPaused"
-              :constraints="{
-                video: {
-                  facingMode: { exact: 'environment' }, // fuerza cámara trasera
-                  width: { ideal: 1920 },
-                  height: { ideal: 1080 },
-                },
-              }"
-              @init="onLocalInit"
-              @decode="onLocalDecode"
-            />
+            <video id="preview" class="w-full h-auto rounded-lg border border-gray-600"></video>
           </div>
         </div>
 
