@@ -368,7 +368,7 @@ onMounted(fetchVpnProfiles)
           <h3>Apunta al código QR de MikroTik</h3>
           <div v-if="localError" class="text-red-400">{{ localError }}</div>
           <div v-else class="remote-qr-container">
-            <video id="preview" class="w-full h-auto rounded-lg border border-gray-600"></video>
+            <video id="preview" class="qr-video" autoplay playsinline></video>
           </div>
         </div>
 
@@ -645,5 +645,15 @@ textarea {
 .waiting-text {
   margin-top: 1rem;
   color: var(--primary-color);
+}
+
+/* 👇 nuevo bloque bien cerrado */
+.qr-video {
+  width: 100%;
+  max-width: 400px; /* no más de 400px de ancho */
+  aspect-ratio: 1 / 1; /* cuadrado */
+  object-fit: cover; /* recorta si sobra */
+  border-radius: 12px;
+  border: 2px solid #444;
 }
 </style>
