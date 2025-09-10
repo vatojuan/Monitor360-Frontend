@@ -78,17 +78,24 @@ async function onLocalInit(promise) {
   }
 }
 
-function onLocalDecode(text) {
-  console.log('📸 QR leído crudo:', text) // log para verificar qué devuelve
+function onLocalDecode(result) {
+  console.log('📸 Resultado bruto del lector:', result)
+
+  if (!result || typeof result !== 'string') {
+    localError.value = 'No se pudo interpretar el código.'
+    return
+  }
+
   if (localPaused.value) return
   localPaused.value = true
 
-  // Normalizar texto
-  const clean = text
-    .replace(/\r\n/g, '\n') // unificar saltos
-    .replace(/\n{3,}/g, '\n\n') // evitar saltos extra
+  // Normalizamos saltos y espacios
+  const clean = result
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
 
+  console.log('📸 Normalizado:', clean)
   applyConfigAndClose(clean)
 }
 
