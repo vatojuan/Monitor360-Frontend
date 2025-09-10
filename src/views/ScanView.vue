@@ -16,6 +16,9 @@ let codeReader = null
 // sessionId viene de la URL
 const sessionId = window.location.pathname.split('/').pop()
 
+// 👇 Base URL configurable
+const API_BASE = import.meta.env.VITE_API_URL || 'https://api.conecta360.site'
+
 async function startScan() {
   try {
     codeReader = new BrowserQRCodeReader()
@@ -46,7 +49,7 @@ async function startScan() {
 
 async function sendResult(decodedString) {
   try {
-    const response = await fetch(`/api/scan/${sessionId}`, {
+    const response = await fetch(`${API_BASE}/api/scan/${sessionId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config_data: decodedString }),
@@ -59,7 +62,7 @@ async function sendResult(decodedString) {
   }
 }
 
-// 👇 Export explícito para que ESLint lo detecte como usado
+// 👇 Export explícito para ESLint
 const handleFileUpload = async (event) => {
   const file = event.target.files[0]
   if (!file) return
@@ -215,7 +218,6 @@ h1 {
   font-weight: 600;
   transition: background 0.2s ease-in-out;
 }
-
 .btn-close:hover {
   background: #666;
 }
