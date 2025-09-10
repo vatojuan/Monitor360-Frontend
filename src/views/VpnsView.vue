@@ -350,7 +350,7 @@ onMounted(fetchVpnProfiles)
             <QrcodeStream
               :key="localStreamKey"
               :paused="localPaused"
-              :constraints="{ video: { facingMode: { ideal: 'environment' } } }"
+              :constraints="{ video: true }"
               @init="onLocalInit"
               @decode="onLocalDecode"
             />
