@@ -8,6 +8,7 @@ import MonitorDetailView from '../views/MonitorDetailView.vue'
 import ChannelsView from '../views/ChannelsView.vue'
 import VpnsView from '../views/VpnsView.vue'
 import LoginView from '../views/LoginView.vue'
+import ScanView from '../views/ScanView.vue' // 👈 agregado
 import { getSession } from '@/lib/supabase'
 
 const routes = [
@@ -41,6 +42,9 @@ const routes = [
   },
   { path: '/channels', name: 'channels', component: ChannelsView, meta: { requiresAuth: true } },
   { path: '/vpns', name: 'vpns', component: VpnsView, meta: { requiresAuth: true } },
+
+  // Nueva ruta para el escaneo remoto
+  { path: '/scan/:sessionId', name: 'scan', component: ScanView },
 
   // Fallback: lo mandamos al dashboard (el guard decidirá si hay que ir a login)
   { path: '/:pathMatch(.*)*', redirect: '/' },
