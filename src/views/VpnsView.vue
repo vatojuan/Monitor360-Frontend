@@ -3,7 +3,8 @@ import { ref, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import QrcodeVue from 'qrcode.vue'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
-import { BrowserQRCodeReader, NotFoundException } from '@zxing/browser'
+import { BrowserQRCodeReader } from '@zxing/browser'
+import { NotFoundException } from '@zxing/library'
 
 let codeReader = null
 
