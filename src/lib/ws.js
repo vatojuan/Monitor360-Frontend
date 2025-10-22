@@ -13,23 +13,33 @@ function wsLog(...args) {
   }
 }
 
+/**
+ * Construye la URL del WebSocket a partir de la base del API.
+ * - Acepta absolute (https://host/api) o relative (/api).
+ * - Si la página está en HTTPS → fuerza WSS.
+ * - Quita el sufijo /api y garantiza la ruta /ws.
+ */
 export function buildWsUrlFromApiBase(base = API_BASE_URL) {
-  try {
-    const u = new URL(base)
-    u.pathname = u.pathname.replace(/\/+$/, '')
-    if (u.pathname.endsWith('/api')) u.pathname = u.pathname.slice(0, -4)
-    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
-    u.pathname = (u.pathname.replace(/\/+$/, '') || '') + '/ws'
-    return u.toString()
-  } catch (err) {
-    if (DEV) console.warn('[WS] buildWsUrlFromApiBase fallback:', err?.message || err)
-    const trimmed = String(base || '')
-      .trim()
-      .replace(/\/+$/, '')
-    const noApi = trimmed.replace(/\/api$/i, '')
-    const proto = /^https:/i.test(noApi) ? 'wss' : 'ws'
-    return `${proto}://${noApi.replace(/^https?:\/\//i, '')}/ws`
+  // 1) Normaliza la base: si es relativa o vacía, usa el origin actual
+  let resolvedBase = String(base || '').trim()
+  if (!/^https?:\/\//i.test(resolvedBase)) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+    resolvedBase = new URL(resolvedBase || '/api', origin).toString()
   }
+
+  // 2) Trabaja siempre con URL para evitar concatenaciones peligrosas
+  const u = new URL(resolvedBase)
+  // Quita barras al final y /api si está presente al final
+  u.pathname = u.pathname.replace(/\/+$/, '')
+  if (u.pathname.endsWith('/api')) u.pathname = u.pathname.slice(0, -4)
+
+  // 3) Fuerza el esquema WS/WSS acorde al esquema HTTP/HTTPS del backend
+  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+
+  // 4) Asegura la ruta /ws
+  u.pathname = (u.pathname.replace(/\/+$/, '') || '') + '/ws'
+
+  return u.toString()
 }
 
 function attachKeepAlive(ws, intervalMs = 25_000) {
@@ -123,10 +133,15 @@ function scheduleReconnect(reason = 'unknown') {
 async function openAppWebSocket() {
   const token = await waitForSession({ requireAuth: true, timeoutMs: 8000 })
   const baseWsUrl = buildWsUrlFromApiBase(API_BASE_URL)
-  const finalUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}`
-  const ws = new WebSocket(finalUrl)
+
+  // Usa URL API para agregar el token de forma segura
+  const url = new URL(baseWsUrl)
+  url.searchParams.set('token', token)
+
+  const ws = new WebSocket(url.toString())
 
   ws.addEventListener('open', () => {
+    backoffStep = 0 // reset backoff al conectar
     wsLog('Conexión WebSocket ABIERTA.')
   })
 
@@ -140,7 +155,7 @@ async function openAppWebSocket() {
       } else if (msg && Object.prototype.hasOwnProperty.call(msg, 'sensor_id')) {
         notifyAll(msg)
       } else if (msg?.type === 'qr_config') {
-        // ✅ Nuevo: reenviamos el resultado del escaneo remoto
+        // ✅ Reenviamos el resultado del escaneo remoto
         notifyAll(msg)
       }
     } catch (err) {
