@@ -14,7 +14,7 @@ import {
   PointElement,
   TimeScale,
   Filler,
-  Decimation, // 👈 agregado
+  Decimation,
 } from 'chart.js'
 import 'chartjs-adapter-date-fns'
 import { es } from 'date-fns/locale'
@@ -31,7 +31,7 @@ ChartJS.register(
   PointElement,
   TimeScale,
   Filler,
-  Decimation, // 👈 agregado
+  Decimation,
   zoomPlugin,
 )
 
@@ -67,18 +67,33 @@ function pickTimestamp(obj) {
   return new Date()
 }
 
+// --- Logging de diagnóstico HTTP ---
+function logHttpError(context, err) {
+  // Axios error?
+  const r = err && err.response
+  if (r) {
+    console.error(`[${context}] HTTP ${r.status} ${r.statusText || ''}`, r.data)
+  } else {
+    console.error(`[${context}]`, err?.message || String(err))
+  }
+}
+
 // --- Lógica de datos ---
 async function fetchHistory() {
   isLoading.value = true
+  const rng = (timeRange.value || '').toLowerCase()
+  console.time(`[history_range ${sensorId} ${rng}]`)
   try {
     const { data } = await api.get(`/sensors/${sensorId}/history_range`, {
-      params: { time_range: timeRange.value },
+      params: { time_range: rng },
     })
     historyData.value = Array.isArray(data) ? data : []
+    console.debug(`[history_range ${sensorId} ${rng}] ok rows=${historyData.value.length}`)
   } catch (err) {
-    console.error('Error fetching history:', err)
+    logHttpError('history_range', err)
     historyData.value = []
   } finally {
+    console.timeEnd(`[history_range ${sensorId} ${rng}]`)
     isLoading.value = false
   }
 }
@@ -87,10 +102,7 @@ async function fetchHistory() {
 function onBusMessage(payload) {
   const updates = Array.isArray(payload) ? payload : [payload]
   const relevantUpdates = updates.filter((u) => u && Number(u.sensor_id) === sensorId)
-
-  if (relevantUpdates.length === 0) {
-    return
-  }
+  if (relevantUpdates.length === 0) return
 
   const dataMap = new Map()
 
@@ -179,14 +191,13 @@ const chartOptions = computed(() => {
     responsive: true,
     maintainAspectRatio: false,
     animation: { duration: 0 },
-    parsing: false, // 👈 evita parseo extra (mejora performance)
-    spanGaps: true, // 👈 maneja pequeños huecos sin cortar la línea
+    parsing: false,
+    spanGaps: true,
     scales: {
       x: {
         type: 'time',
         adapters: { date: { locale: es } },
         time: {
-          // minuto para 1h, hora para 12/24h, día para 7/30d
           unit: timeRange.value === '1h' ? 'minute' : longRange ? 'day' : 'hour',
           tooltipFormat: 'dd MMM, HH:mm:ss',
           displayFormats: {
@@ -200,11 +211,10 @@ const chartOptions = computed(() => {
     },
     plugins: {
       legend: { display: sensorInfo.value?.sensor_type === 'ethernet' },
-      // 👇 Decimation nativa de Chart.js para series largas
       decimation: {
         enabled: true,
-        algorithm: 'min-max', // para líneas; LTTB también sirve
-        samples: 1500, // objetivo aproximado de puntos por dataset
+        algorithm: 'min-max',
+        samples: 1500,
       },
       zoom: {
         pan: { enabled: true, mode: 'x' },
@@ -225,11 +235,11 @@ const chartOptions = computed(() => {
 function setRange(range) {
   timeRange.value = range
   isZoomed.value = false
-  chartRef.value?.chart.resetZoom()
+  chartRef.value?.chart?.resetZoom?.()
   fetchHistory()
 }
 function resetZoom() {
-  chartRef.value?.chart.resetZoom()
+  chartRef.value?.chart?.resetZoom?.()
   isZoomed.value = false
 }
 
@@ -242,7 +252,7 @@ onMounted(async () => {
     sensorInfo.value = data
     await fetchHistory()
   } catch (err) {
-    console.error('Error loading sensor details:', err)
+    logHttpError('sensor_details', err)
     router.push('/')
     return
   }
