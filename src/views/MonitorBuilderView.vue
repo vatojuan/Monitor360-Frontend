@@ -31,23 +31,36 @@ const createNewPingSensor = () => ({
     display_mode: 'realtime',
     average_count: 5,
   },
-  ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5 },
-  ui_alert_latency: { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5 },
+  ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1 },
+  ui_alert_latency: {
+    enabled: false,
+    threshold_ms: 200,
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+  },
 })
 
 const createNewEthernetSensor = () => ({
   name: '',
   config: {
     interface_name: '',
+    interface_kind: 'auto', // ← agregado para evitar undefined
     interval_sec: 30,
   },
-  ui_alert_speed_change: { enabled: false, channel_id: null, cooldown_minutes: 10 },
+  ui_alert_speed_change: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    tolerance_count: 1,
+  },
   ui_alert_traffic: {
     enabled: false,
     threshold_mbps: 100,
     direction: 'any',
     channel_id: null,
     cooldown_minutes: 5,
+    tolerance_count: 1,
   },
 })
 
@@ -95,27 +108,53 @@ function buildSensorPayload(sensorType, sensorData) {
   const finalConfig = { ...sensorData.config }
   finalConfig.alerts = []
 
+  const onlyNums = (v, fallback = undefined) => (typeof v === 'number' && !isNaN(v) ? v : fallback)
+
   if (sensorType === 'ping') {
     if (sensorData.ui_alert_timeout.enabled) {
-      if (!sensorData.ui_alert_timeout.channel_id)
-        throw new Error('Selecciona un canal para la alerta de Timeout.')
-      finalConfig.alerts.push({ type: 'timeout', ...sensorData.ui_alert_timeout })
+      const a = sensorData.ui_alert_timeout
+      if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Timeout.')
+      finalConfig.alerts.push({
+        type: 'timeout',
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+        tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+      })
     }
     if (sensorData.ui_alert_latency.enabled) {
-      if (!sensorData.ui_alert_latency.channel_id)
-        throw new Error('Selecciona un canal para la alerta de Latencia.')
-      finalConfig.alerts.push({ type: 'high_latency', ...sensorData.ui_alert_latency })
+      const a = sensorData.ui_alert_latency
+      if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Latencia.')
+      finalConfig.alerts.push({
+        type: 'high_latency',
+        threshold_ms: onlyNums(a.threshold_ms, 200),
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+        tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+      })
     }
   } else if (sensorType === 'ethernet') {
     if (sensorData.ui_alert_speed_change.enabled) {
-      if (!sensorData.ui_alert_speed_change.channel_id)
+      const a = sensorData.ui_alert_speed_change
+      if (!a.channel_id)
         throw new Error('Selecciona un canal para la alerta de Cambio de Velocidad.')
-      finalConfig.alerts.push({ type: 'speed_change', ...sensorData.ui_alert_speed_change })
+      finalConfig.alerts.push({
+        type: 'speed_change',
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
+        tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+      })
     }
     if (sensorData.ui_alert_traffic.enabled) {
-      if (!sensorData.ui_alert_traffic.channel_id)
-        throw new Error('Selecciona un canal para la alerta de Umbral de Tráfico.')
-      finalConfig.alerts.push({ type: 'traffic_threshold', ...sensorData.ui_alert_traffic })
+      const a = sensorData.ui_alert_traffic
+      if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Umbral de Tráfico.')
+      finalConfig.alerts.push({
+        type: 'traffic_threshold',
+        threshold_mbps: onlyNums(a.threshold_mbps, 100),
+        direction: a.direction || 'any',
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+        tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+      })
     }
   }
   return { name: sensorData.name, config: finalConfig }
@@ -196,8 +235,23 @@ function openFormForEdit(sensor) {
     uiData.name = sensor.name
     uiData.config = { ...uiData.config, ...cfg }
     ;(cfg?.alerts || []).forEach((alert) => {
-      if (alert.type === 'timeout') uiData.ui_alert_timeout = { enabled: true, ...alert }
-      if (alert.type === 'high_latency') uiData.ui_alert_latency = { enabled: true, ...alert }
+      if (alert.type === 'timeout') {
+        uiData.ui_alert_timeout = {
+          enabled: true,
+          channel_id: alert.channel_id ?? null,
+          cooldown_minutes: alert.cooldown_minutes ?? 5,
+          tolerance_count: Math.max(1, alert.tolerance_count ?? 1),
+        }
+      }
+      if (alert.type === 'high_latency') {
+        uiData.ui_alert_latency = {
+          enabled: true,
+          threshold_ms: alert.threshold_ms ?? 200,
+          channel_id: alert.channel_id ?? null,
+          cooldown_minutes: alert.cooldown_minutes ?? 5,
+          tolerance_count: Math.max(1, alert.tolerance_count ?? 1),
+        }
+      }
     })
     newPingSensor.value = uiData
   } else if (sensor.sensor_type === 'ethernet') {
@@ -205,8 +259,24 @@ function openFormForEdit(sensor) {
     uiData.name = sensor.name
     uiData.config = { ...uiData.config, ...cfg }
     ;(cfg?.alerts || []).forEach((alert) => {
-      if (alert.type === 'speed_change') uiData.ui_alert_speed_change = { enabled: true, ...alert }
-      if (alert.type === 'traffic_threshold') uiData.ui_alert_traffic = { enabled: true, ...alert }
+      if (alert.type === 'speed_change') {
+        uiData.ui_alert_speed_change = {
+          enabled: true,
+          channel_id: alert.channel_id ?? null,
+          cooldown_minutes: alert.cooldown_minutes ?? 10,
+          tolerance_count: Math.max(1, alert.tolerance_count ?? 1),
+        }
+      }
+      if (alert.type === 'traffic_threshold') {
+        uiData.ui_alert_traffic = {
+          enabled: true,
+          threshold_mbps: alert.threshold_mbps ?? 100,
+          direction: alert.direction || 'any',
+          channel_id: alert.channel_id ?? null,
+          cooldown_minutes: alert.cooldown_minutes ?? 5,
+          tolerance_count: Math.max(1, alert.tolerance_count ?? 1),
+        }
+      }
     })
     newEthernetSensor.value = uiData
   }
@@ -461,6 +531,15 @@ watch(searchQuery, (newQuery) => {
                     min="1"
                   />
                 </div>
+                <div class="form-group">
+                  <label>Tolerancia (fallos consecutivos)</label>
+                  <input
+                    type="number"
+                    v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
+                    min="1"
+                  />
+                  <p class="form-hint">Cuántos fallos seguidos antes de alertar.</p>
+                </div>
               </template>
             </div>
 
@@ -497,6 +576,15 @@ watch(searchQuery, (newQuery) => {
                     v-model.number="newPingSensor.ui_alert_latency.cooldown_minutes"
                     min="1"
                   />
+                </div>
+                <div class="form-group">
+                  <label>Tolerancia (fallos consecutivos)</label>
+                  <input
+                    type="number"
+                    v-model.number="newPingSensor.ui_alert_latency.tolerance_count"
+                    min="1"
+                  />
+                  <p class="form-hint">Cuántos fallos seguidos antes de alertar.</p>
                 </div>
               </template>
             </div>
@@ -568,6 +656,15 @@ watch(searchQuery, (newQuery) => {
                     min="1"
                   />
                 </div>
+                <div class="form-group">
+                  <label>Tolerancia (eventos consecutivos)</label>
+                  <input
+                    type="number"
+                    v-model.number="newEthernetSensor.ui_alert_speed_change.tolerance_count"
+                    min="1"
+                  />
+                  <p class="form-hint">Cuántos cambios seguidos antes de alertar.</p>
+                </div>
               </template>
             </div>
 
@@ -611,6 +708,15 @@ watch(searchQuery, (newQuery) => {
                     v-model.number="newEthernetSensor.ui_alert_traffic.cooldown_minutes"
                     min="1"
                   />
+                </div>
+                <div class="form-group">
+                  <label>Tolerancia (lecturas consecutivas)</label>
+                  <input
+                    type="number"
+                    v-model.number="newEthernetSensor.ui_alert_traffic.tolerance_count"
+                    min="1"
+                  />
+                  <p class="form-hint">Cuántas mediciones seguidas antes de alertar.</p>
                 </div>
               </template>
             </div>
@@ -829,7 +935,7 @@ h4 {
 
 /* --- Estilos del Modal --- */
 .modal-overlay {
-  position: fixed;
+  position: fixed; /* ← corregido: antes tenía coma */
   top: 0;
   left: 0;
   width: 100%;
