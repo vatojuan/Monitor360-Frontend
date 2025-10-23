@@ -524,6 +524,15 @@ watch(searchQuery, (newQuery) => {
             <input type="text" v-model="newEthernetSensor.config.interface_name" required />
             <p class="form-hint">El nombre exacto en el dispositivo.</p>
           </div>
+          <div class="form-group">
+            <label>Tipo de Interfaz</label>
+            <select v-model="newEthernetSensor.config.interface_kind">
+              <option value="auto">Auto (detectar automáticamente)</option>
+              <option value="ethernet">Ethernet física</option>
+              <option value="vlan">VLAN lógica</option>
+            </select>
+            <p class="form-hint">Seleccioná VLAN si es una subinterfaz (ej: vlan70-ARBOLEDA).</p>
+          </div>
 
           <div class="form-group">
             <label>Intervalo (seg)</label>
