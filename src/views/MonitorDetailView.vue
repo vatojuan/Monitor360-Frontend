@@ -14,6 +14,7 @@ import {
   PointElement,
   TimeScale,
   Filler,
+  Decimation, // 👈 agregado
 } from 'chart.js'
 import 'chartjs-adapter-date-fns'
 import { es } from 'date-fns/locale'
@@ -30,6 +31,7 @@ ChartJS.register(
   PointElement,
   TimeScale,
   Filler,
+  Decimation, // 👈 agregado
   zoomPlugin,
 )
 
@@ -43,7 +45,6 @@ const historyData = ref([])
 const isLoading = ref(true)
 const isZoomed = ref(false)
 const timeRange = ref('24h')
-// CAMBIO: La variable isLiveView ya no es necesaria, la hemos eliminado.
 
 const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 
@@ -90,8 +91,6 @@ function onBusMessage(payload) {
   if (relevantUpdates.length === 0) {
     return
   }
-
-  // CAMBIO: Se eliminó el chequeo de "isLiveView". El gráfico ahora SIEMPRE se actualiza.
 
   const dataMap = new Map()
 
@@ -174,38 +173,53 @@ const chartData = computed(() => {
   return { datasets: [] }
 })
 
-const chartOptions = computed(() => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: { duration: 0 },
-  scales: {
-    x: {
-      type: 'time',
-      adapters: { date: { locale: es } },
-      time: {
-        unit: timeRange.value === '1h' ? 'minute' : 'hour',
-        tooltipFormat: 'dd MMM, HH:mm:ss',
-        displayFormats: { minute: 'HH:mm', hour: 'HH:mm' },
+const chartOptions = computed(() => {
+  const longRange = timeRange.value === '7d' || timeRange.value === '30d'
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 0 },
+    parsing: false, // 👈 evita parseo extra (mejora performance)
+    spanGaps: true, // 👈 maneja pequeños huecos sin cortar la línea
+    scales: {
+      x: {
+        type: 'time',
+        adapters: { date: { locale: es } },
+        time: {
+          // minuto para 1h, hora para 12/24h, día para 7/30d
+          unit: timeRange.value === '1h' ? 'minute' : longRange ? 'day' : 'hour',
+          tooltipFormat: 'dd MMM, HH:mm:ss',
+          displayFormats: {
+            minute: 'HH:mm',
+            hour: 'dd MMM HH:mm',
+            day: 'dd MMM',
+          },
+        },
       },
+      y: { beginAtZero: true },
     },
-    y: { beginAtZero: true },
-  },
-  plugins: {
-    legend: { display: sensorInfo.value?.sensor_type === 'ethernet' },
-    zoom: {
-      // CAMBIO: Se eliminaron los "onPanStart" y "onZoomStart" que desactivaban el live view.
-      pan: { enabled: true, mode: 'x' },
+    plugins: {
+      legend: { display: sensorInfo.value?.sensor_type === 'ethernet' },
+      // 👇 Decimation nativa de Chart.js para series largas
+      decimation: {
+        enabled: true,
+        algorithm: 'min-max', // para líneas; LTTB también sirve
+        samples: 1500, // objetivo aproximado de puntos por dataset
+      },
       zoom: {
-        wheel: { enabled: true },
-        mode: 'x',
-        onZoomComplete: () => {
-          isZoomed.value = true
+        pan: { enabled: true, mode: 'x' },
+        zoom: {
+          wheel: { enabled: true },
+          mode: 'x',
+          onZoomComplete: () => {
+            isZoomed.value = true
+          },
         },
       },
     },
-  },
-  interaction: { mode: 'nearest', intersect: false },
-}))
+    interaction: { mode: 'nearest', intersect: false },
+  }
+})
 
 // --- Acciones de UI ---
 function setRange(range) {
