@@ -70,33 +70,46 @@ function pickTimestamp(obj) {
 let historyAbort = null
 
 async function fetchHistory() {
-  // cancelar petición anterior si existe
-  if (historyAbort) {
-    historyAbort.abort()
-  }
-
+  if (historyAbort) historyAbort.abort()
   historyAbort = new AbortController()
 
   isLoading.value = true
   try {
     const longRange = timeRange.value === '7d' || timeRange.value === '30d'
-    const extraTimeoutMs = longRange ? 60000 : 20000 // 60s para 7d/30d, 20s resto
+    const extraTimeoutMs = longRange ? 60000 : 20000
 
-    const { data } = await api.get(`/sensors/${sensorId}/history_range`, {
-      params: { time_range: timeRange.value },
-      timeout: extraTimeoutMs,
-      signal: historyAbort.signal, // requiere axios >= 0.22
-    })
+    if (longRange) {
+      // usar endpoint agregado con ventana y buckets
+      const endIso = new Date().toISOString()
+      const hours = hoursMap[timeRange.value] ?? 24
+      const startIso = new Date(Date.now() - hours * 3600 * 1000).toISOString()
 
-    historyData.value = Array.isArray(data) ? data : []
+      const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
+        params: {
+          start: startIso,
+          end: endIso,
+          max_points: 2000,
+          mode: 'auto',
+        },
+        timeout: extraTimeoutMs,
+        signal: historyAbort.signal,
+      })
+      historyData.value = Array.isArray(data?.items) ? data.items : []
+    } else {
+      // rangos cortos -> endpoint actual (crudo)
+      const { data } = await api.get(`/sensors/${sensorId}/history_range`, {
+        params: { time_range: timeRange.value },
+        timeout: extraTimeoutMs,
+        signal: historyAbort.signal,
+      })
+      historyData.value = Array.isArray(data) ? data : []
+    }
   } catch (err) {
-    // ignorar si fue cancelado por cambio de rango rápido
     if (err?.code === 'ERR_CANCELED') {
       console.debug('Historial cancelado por nueva navegación de rango.')
       return
     }
     console.error('Error fetching history:', err)
-    // si fue timeout, mantenemos el overlay con mensaje amable
     historyData.value = []
   } finally {
     isLoading.value = false
