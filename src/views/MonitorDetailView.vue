@@ -14,7 +14,7 @@ import {
   PointElement,
   TimeScale,
   Filler,
-  Decimation, // 👈 agregado
+  Decimation,
 } from 'chart.js'
 import 'chartjs-adapter-date-fns'
 import { es } from 'date-fns/locale'
@@ -31,7 +31,7 @@ ChartJS.register(
   PointElement,
   TimeScale,
   Filler,
-  Decimation, // 👈 agregado
+  Decimation,
   zoomPlugin,
 )
 
@@ -56,7 +56,6 @@ function formatBitrateForChart(bits) {
   const n = Number(bits)
   return !Number.isFinite(n) || n < 0 ? 0 : Number((n / 1_000_000).toFixed(2))
 }
-
 function pickTimestamp(obj) {
   if (!obj) return null
   const v = obj.timestamp || obj.ts || obj.time
@@ -67,16 +66,37 @@ function pickTimestamp(obj) {
   return new Date()
 }
 
-// --- Lógica de datos ---
+// --- Fetch con cancelación y timeout dinámico ---
+let historyAbort = null
+
 async function fetchHistory() {
+  // cancelar petición anterior si existe
+  if (historyAbort) {
+    historyAbort.abort()
+  }
+
+  historyAbort = new AbortController()
+
   isLoading.value = true
   try {
+    const longRange = timeRange.value === '7d' || timeRange.value === '30d'
+    const extraTimeoutMs = longRange ? 60000 : 20000 // 60s para 7d/30d, 20s resto
+
     const { data } = await api.get(`/sensors/${sensorId}/history_range`, {
       params: { time_range: timeRange.value },
+      timeout: extraTimeoutMs,
+      signal: historyAbort.signal, // requiere axios >= 0.22
     })
+
     historyData.value = Array.isArray(data) ? data : []
   } catch (err) {
+    // ignorar si fue cancelado por cambio de rango rápido
+    if (err?.code === 'ERR_CANCELED') {
+      console.debug('Historial cancelado por nueva navegación de rango.')
+      return
+    }
     console.error('Error fetching history:', err)
+    // si fue timeout, mantenemos el overlay con mensaje amable
     historyData.value = []
   } finally {
     isLoading.value = false
@@ -87,18 +107,13 @@ async function fetchHistory() {
 function onBusMessage(payload) {
   const updates = Array.isArray(payload) ? payload : [payload]
   const relevantUpdates = updates.filter((u) => u && Number(u.sensor_id) === sensorId)
-
-  if (relevantUpdates.length === 0) {
-    return
-  }
+  if (relevantUpdates.length === 0) return
 
   const dataMap = new Map()
-
   historyData.value.forEach((point) => {
     const ts = new Date(point.timestamp).toISOString()
     dataMap.set(ts, point)
   })
-
   relevantUpdates.forEach((point) => {
     const ts = pickTimestamp(point).toISOString()
     dataMap.set(ts, { ...point, timestamp: ts })
@@ -110,14 +125,12 @@ function onBusMessage(payload) {
   const nowMs = Date.now()
   const hours = hoursMap[timeRange.value] ?? 24
   const cutoff = nowMs - hours * 3600 * 1000
-
   historyData.value = newHistory.filter((p) => new Date(p.timestamp).getTime() >= cutoff)
 }
 
 // --- Configuración del Gráfico ---
 const chartData = computed(() => {
   if (!sensorInfo.value) return { datasets: [] }
-
   const dataPoints = historyData.value
   const type = sensorInfo.value.sensor_type
 
@@ -179,14 +192,13 @@ const chartOptions = computed(() => {
     responsive: true,
     maintainAspectRatio: false,
     animation: { duration: 0 },
-    parsing: false, // 👈 evita parseo extra (mejora performance)
-    spanGaps: true, // 👈 maneja pequeños huecos sin cortar la línea
+    parsing: false,
+    spanGaps: true,
     scales: {
       x: {
         type: 'time',
         adapters: { date: { locale: es } },
         time: {
-          // minuto para 1h, hora para 12/24h, día para 7/30d
           unit: timeRange.value === '1h' ? 'minute' : longRange ? 'day' : 'hour',
           tooltipFormat: 'dd MMM, HH:mm:ss',
           displayFormats: {
@@ -200,11 +212,10 @@ const chartOptions = computed(() => {
     },
     plugins: {
       legend: { display: sensorInfo.value?.sensor_type === 'ethernet' },
-      // 👇 Decimation nativa de Chart.js para series largas
       decimation: {
         enabled: true,
-        algorithm: 'min-max', // para líneas; LTTB también sirve
-        samples: 1500, // objetivo aproximado de puntos por dataset
+        algorithm: 'min-max',
+        samples: 1500,
       },
       zoom: {
         pan: { enabled: true, mode: 'x' },
@@ -258,6 +269,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (offBus) offBus()
+  // cancelar si la vista se desmonta
+  if (historyAbort) {
+    historyAbort.abort()
+  }
 })
 
 watch(timeRange, () => fetchHistory())
@@ -320,7 +335,13 @@ const linkStatusEvents = computed(() => {
       />
 
       <div v-else class="loading-overlay">
-        <p>{{ isLoading ? 'Cargando datos...' : 'No hay historial para este rango.' }}</p>
+        <p>
+          {{
+            isLoading
+              ? 'Cargando datos...'
+              : 'No hay historial para este rango o la consulta tardó demasiado.'
+          }}
+        </p>
       </div>
 
       <div class="tz-hint">
