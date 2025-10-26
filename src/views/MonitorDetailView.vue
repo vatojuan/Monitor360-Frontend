@@ -46,6 +46,9 @@ const isLoading = ref(true)
 const isZoomed = ref(false)
 const timeRange = ref('24h')
 
+// indicador sutil de sincronización cuando llegan datos por WS
+const isSyncing = ref(false)
+
 // ventana actual cuando estamos en modo "window" (zoom) o long-range
 // { startMs: number, endMs: number, mode: 'auto' | 'raw' } | null
 const currentWindow = ref(null)
@@ -147,6 +150,10 @@ async function fetchHistoryCustomRange(startMs, endMs, mode = 'auto') {
 
 // --- Lógica de WebSocket ---
 function onBusMessage(payload) {
+  // encender indicador de sincronización breve
+  isSyncing.value = true
+  setTimeout(() => (isSyncing.value = false), 800)
+
   const updates = Array.isArray(payload) ? payload : [payload]
   const relevantUpdates = updates.filter((u) => u && Number(u.sensor_id) === sensorId)
   if (relevantUpdates.length === 0) return
@@ -252,7 +259,14 @@ const chartOptions = computed(() => {
   return {
     responsive: true,
     maintainAspectRatio: false,
-    animation: { duration: 0 },
+    animation: {
+      duration: 250,
+      easing: 'easeOutQuart',
+      onComplete: () => {
+        // reduce microcortes en updates frecuentes
+        chartRef.value?.chart.update('none')
+      },
+    },
     parsing: false,
     spanGaps: true,
     scales: {
@@ -283,6 +297,9 @@ const chartOptions = computed(() => {
         zoom: {
           wheel: { enabled: true },
           mode: 'x',
+          limits: {
+            x: { minRange: 1000 * 60 * 10 }, // mínimo 10 minutos visibles
+          },
           onZoomComplete: ({ chart }) => {
             const xScale = chart.scales.x
             const start = xScale.min
@@ -401,6 +418,11 @@ const linkStatusEvents = computed(() => {
     </div>
 
     <div class="chart-container">
+      <!-- indicador de sincronización en vivo -->
+      <div v-if="isSyncing" class="sync-overlay">
+        <span class="dot"></span> Actualizando datos en tiempo real...
+      </div>
+
       <button v-if="isZoomed" @click="resetZoom" class="reset-zoom-btn">Resetear Zoom</button>
 
       <Line
@@ -547,6 +569,38 @@ const linkStatusEvents = computed(() => {
   bottom: 0.75rem;
   color: var(--gray);
   font-size: 0.85rem;
+}
+
+/* overlay de sincronización */
+.sync-overlay {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 15;
+  backdrop-filter: blur(2px);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #4caf50;
+  animation: blink 1s infinite alternate;
+}
+@keyframes blink {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.3;
+  }
 }
 
 .events-container {
