@@ -46,6 +46,10 @@ const isLoading = ref(true)
 const isZoomed = ref(false)
 const timeRange = ref('24h')
 
+// ventana actual cuando estamos en modo "window" (zoom) o long-range
+// { startMs: number, endMs: number, mode: 'auto' | 'raw' } | null
+const currentWindow = ref(null)
+
 const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
@@ -80,9 +84,11 @@ async function fetchHistory() {
 
     if (longRange) {
       // usar endpoint agregado con ventana y buckets
-      const endIso = new Date().toISOString()
+      const endMs = Date.now()
       const hours = hoursMap[timeRange.value] ?? 24
-      const startIso = new Date(Date.now() - hours * 3600 * 1000).toISOString()
+      const startMs = endMs - hours * 3600 * 1000
+      const startIso = new Date(startMs).toISOString()
+      const endIso = new Date(endMs).toISOString()
 
       const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
         params: {
@@ -95,6 +101,7 @@ async function fetchHistory() {
         signal: historyAbort.signal,
       })
       historyData.value = Array.isArray(data?.items) ? data.items : []
+      currentWindow.value = { startMs, endMs, mode: 'auto' }
     } else {
       // rangos cortos -> endpoint actual (crudo)
       const { data } = await api.get(`/sensors/${sensorId}/history_range`, {
@@ -103,6 +110,7 @@ async function fetchHistory() {
         signal: historyAbort.signal,
       })
       historyData.value = Array.isArray(data) ? data : []
+      currentWindow.value = null
     }
   } catch (err) {
     if (err?.code === 'ERR_CANCELED') {
@@ -116,11 +124,36 @@ async function fetchHistory() {
   }
 }
 
+async function fetchHistoryCustomRange(startMs, endMs, mode = 'auto') {
+  if (historyAbort) historyAbort.abort()
+  historyAbort = new AbortController()
+
+  try {
+    const startIso = new Date(startMs).toISOString()
+    const endIso = new Date(endMs).toISOString()
+
+    const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
+      params: { start: startIso, end: endIso, max_points: 1500, mode },
+      timeout: 30000,
+      signal: historyAbort.signal,
+    })
+    historyData.value = Array.isArray(data?.items) ? data.items : []
+    currentWindow.value = { startMs, endMs, mode }
+  } catch (err) {
+    if (err?.code === 'ERR_CANCELED') return
+    console.error('Error fetching zoomed history:', err)
+  }
+}
+
 // --- Lógica de WebSocket ---
 function onBusMessage(payload) {
   const updates = Array.isArray(payload) ? payload : [payload]
   const relevantUpdates = updates.filter((u) => u && Number(u.sensor_id) === sensorId)
   if (relevantUpdates.length === 0) return
+
+  // Si hay una ventana activa (zoom o long-range), mantenemos los puntos dentro [start,end]
+  const startBound = currentWindow.value?.startMs ?? null
+  const endBound = currentWindow.value?.endMs ?? null
 
   const dataMap = new Map()
   historyData.value.forEach((point) => {
@@ -128,17 +161,32 @@ function onBusMessage(payload) {
     dataMap.set(ts, point)
   })
   relevantUpdates.forEach((point) => {
-    const ts = pickTimestamp(point).toISOString()
+    const tsDate = pickTimestamp(point)
+    const tsMs = tsDate.getTime()
+    // respetar ventana si existe
+    if (startBound !== null && tsMs < startBound) return
+    if (endBound !== null && tsMs > endBound) return
+    const ts = tsDate.toISOString()
     dataMap.set(ts, { ...point, timestamp: ts })
   })
 
   const newHistory = Array.from(dataMap.values())
   newHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
 
-  const nowMs = Date.now()
-  const hours = hoursMap[timeRange.value] ?? 24
-  const cutoff = nowMs - hours * 3600 * 1000
-  historyData.value = newHistory.filter((p) => new Date(p.timestamp).getTime() >= cutoff)
+  if (startBound !== null || endBound !== null) {
+    historyData.value = newHistory.filter((p) => {
+      const t = new Date(p.timestamp).getTime()
+      if (startBound !== null && t < startBound) return false
+      if (endBound !== null && t > endBound) return false
+      return true
+    })
+  } else {
+    // sin ventana explícita → recortar por rango seleccionado
+    const nowMs = Date.now()
+    const hours = hoursMap[timeRange.value] ?? 24
+    const cutoff = nowMs - hours * 3600 * 1000
+    historyData.value = newHistory.filter((p) => new Date(p.timestamp).getTime() >= cutoff)
+  }
 }
 
 // --- Configuración del Gráfico ---
@@ -235,8 +283,20 @@ const chartOptions = computed(() => {
         zoom: {
           wheel: { enabled: true },
           mode: 'x',
-          onZoomComplete: () => {
+          onZoomComplete: ({ chart }) => {
+            const xScale = chart.scales.x
+            const start = xScale.min
+            const end = xScale.max
+            const visibleHours = (end - start) / 1000 / 3600
             isZoomed.value = true
+
+            // Si el usuario se acerca a menos de 24h → carga modo crudo automáticamente
+            if (visibleHours < 24 && longRange) {
+              fetchHistoryCustomRange(start, end, 'raw')
+            } else {
+              // si está dentro de longRange pero >=24h, mantener agregación de la ventana
+              if (longRange) fetchHistoryCustomRange(start, end, 'auto')
+            }
           },
         },
       },
@@ -249,12 +309,15 @@ const chartOptions = computed(() => {
 function setRange(range) {
   timeRange.value = range
   isZoomed.value = false
+  currentWindow.value = null
   chartRef.value?.chart.resetZoom()
   fetchHistory()
 }
 function resetZoom() {
   chartRef.value?.chart.resetZoom()
   isZoomed.value = false
+  currentWindow.value = null
+  fetchHistory() // recarga el rango seleccionado (auto/aggregado o crudo según corresponda)
 }
 
 // --- Ciclo de Vida del Componente ---
@@ -282,13 +345,13 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (offBus) offBus()
-  // cancelar si la vista se desmonta
-  if (historyAbort) {
-    historyAbort.abort()
-  }
+  if (historyAbort) historyAbort.abort()
 })
 
-watch(timeRange, () => fetchHistory())
+watch(timeRange, () => {
+  currentWindow.value = null
+  fetchHistory()
+})
 
 const linkStatusEvents = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || historyData.value.length === 0) return []
