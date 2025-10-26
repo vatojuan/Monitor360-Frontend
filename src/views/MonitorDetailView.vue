@@ -103,7 +103,10 @@ const isZoomed = ref(false)
 const timeRange = ref('24h')
 const isSyncing = ref(false) // indicador sutil de sincronización
 
-// ventana actual cuando estamos en modo "window" (zoom) o long-range
+// modo de resolución actual (para el badge): 'raw' | 'auto'
+const resolutionMode = ref('raw')
+
+// ventana actual cuando estamos en modo "window" (zoom/pan)
 // { startMs: number, endMs: number, mode: 'auto' | 'raw' } | null
 const currentWindow = ref(null)
 
@@ -115,9 +118,7 @@ const timeRanges = hoursMap
    Caché de historial (Paso 5)
    ──────────────────────────────────────────────────────────────── */
 const historyCache = new Map()
-// clave de ejemplo:
-//   - rangos:  `${sensorId}:range:${range}`
-//   - ventanas: `${sensorId}:win:${startMs}-${endMs}:${mode}`
+// clave ejemplo: `${sensorId}:win:${startMs}-${endMs}:${mode}`  o  `${sensorId}:range:${range}`
 
 const CACHE_TTL_MS = 5 * 60_000 // 5 min
 function cacheGet(key) {
@@ -128,7 +129,6 @@ function cacheGet(key) {
 function cacheSet(key, data, windowObj) {
   historyCache.set(key, { data, window: windowObj ?? null, timestamp: Date.now() })
 }
-// Limpieza cada minuto (borra entradas > 10 min)
 setInterval(() => {
   const now = Date.now()
   for (const [k, e] of historyCache.entries()) {
@@ -157,9 +157,23 @@ const isLongRange = computed(() => timeRange.value === '7d' || timeRange.value =
 // Umbral visual para ping (Paso 6)
 const thresholdMs = computed(() => {
   const cfg = sensorInfo.value?.config ?? {}
-  // Acepta latency_threshold_ms o latency_threshold_visual (fallback del backend)
   return Number(cfg.latency_threshold_ms ?? cfg.latency_threshold_visual ?? 150)
 })
+
+// Debounce util
+function debounce(fn, wait = 300) {
+  let t = null
+  return (...args) => {
+    clearTimeout(t)
+    t = setTimeout(() => fn(...args), wait)
+  }
+}
+
+// decide modo según horas visibles
+function decideMode(startMs, endMs) {
+  const visibleHours = Math.max(0, (endMs - startMs) / 1000 / 3600)
+  return visibleHours < 24 ? 'raw' : 'auto'
+}
 
 /* ────────────────────────────────────────────────────────────────
    Fetch con cancelación, cache y timeouts
@@ -172,20 +186,21 @@ async function fetchHistory() {
 
   isLoading.value = true
   try {
-    if (isLongRange.value) {
-      const endMs = Date.now()
-      const hours = hoursMap[timeRange.value] ?? 24
-      const startMs = endMs - hours * 3600 * 1000
-      const cacheKey = `${sensorId}:win:${Math.round(startMs)}-${Math.round(endMs)}:auto`
+    const endMs = Date.now()
+    const hours = hoursMap[timeRange.value] ?? 24
+    const startMs = endMs - hours * 3600 * 1000
 
+    if (isLongRange.value) {
+      // long-range → ventana 'auto'
+      const cacheKey = `${sensorId}:win:${Math.round(startMs)}-${Math.round(endMs)}:auto`
       const cached = cacheGet(cacheKey)
       if (cached) {
         historyData.value = cached.data
         currentWindow.value = cached.window
+        resolutionMode.value = 'auto'
         isLoading.value = false
         return
       }
-
       const startIso = new Date(startMs).toISOString()
       const endIso = new Date(endMs).toISOString()
       const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
@@ -195,13 +210,16 @@ async function fetchHistory() {
       })
       historyData.value = Array.isArray(data?.items) ? data.items : []
       currentWindow.value = { startMs, endMs, mode: 'auto' }
+      resolutionMode.value = 'auto'
       cacheSet(cacheKey, historyData.value, currentWindow.value)
     } else {
+      // short-range inicial → raw usando endpoint existente
       const cacheKey = `${sensorId}:range:${timeRange.value}`
       const cached = cacheGet(cacheKey)
       if (cached) {
         historyData.value = cached.data
-        currentWindow.value = null
+        currentWindow.value = { startMs, endMs, mode: 'raw' } // fijamos ventana para permitir pan
+        resolutionMode.value = 'raw'
         isLoading.value = false
         return
       }
@@ -211,7 +229,8 @@ async function fetchHistory() {
         signal: historyAbort.signal,
       })
       historyData.value = Array.isArray(data) ? data : []
-      currentWindow.value = null
+      currentWindow.value = { startMs, endMs, mode: 'raw' } // importante para poder panear y pedir más
+      resolutionMode.value = 'raw'
       cacheSet(cacheKey, historyData.value, null)
     }
   } catch (err) {
@@ -233,27 +252,29 @@ async function fetchHistoryCustomRange(startMs, endMs, mode = 'auto') {
     if (cached) {
       historyData.value = cached.data
       currentWindow.value = cached.window
+      resolutionMode.value = mode
       return
     }
 
     const startIso = new Date(startMs).toISOString()
     const endIso = new Date(endMs).toISOString()
     const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
-      params: { start: startIso, end: endIso, max_points: 1500, mode },
+      params: { start: startIso, end: endIso, max_points: 1800, mode },
       timeout: 30000,
       signal: historyAbort.signal,
     })
     historyData.value = Array.isArray(data?.items) ? data.items : []
     currentWindow.value = { startMs, endMs, mode }
+    resolutionMode.value = mode
     cacheSet(cacheKey, historyData.value, currentWindow.value)
   } catch (err) {
     if (err?.code === 'ERR_CANCELED') return
-    console.error('Error fetching zoomed history:', err)
+    console.error('Error fetching custom window:', err)
   }
 }
 
 /* ────────────────────────────────────────────────────────────────
-   WebSocket: ingest en vivo (respeta ventana activa o rango)
+   WebSocket: ingest en vivo (respeta ventana activa)
    ──────────────────────────────────────────────────────────────── */
 function onBusMessage(payload) {
   isSyncing.value = true
@@ -291,6 +312,7 @@ function onBusMessage(payload) {
       return true
     })
   } else {
+    // fallback (no debería ocurrir porque siempre fijamos currentWindow)
     const nowMs = Date.now()
     const hours = hoursMap[timeRange.value] ?? 24
     const cutoff = nowMs - hours * 3600 * 1000
@@ -302,7 +324,6 @@ function onBusMessage(payload) {
    Computados de datos para el gráfico
    ──────────────────────────────────────────────────────────────── */
 const linkDownIntervals = computed(() => {
-  // Solo ethernet y cuando exista historial
   if (sensorInfo.value?.sensor_type !== 'ethernet' || historyData.value.length === 0) return []
   const sorted = [...historyData.value].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
@@ -314,7 +335,6 @@ const linkDownIntervals = computed(() => {
     const p = sorted[i]
     const t = new Date(p.timestamp).getTime()
     const st = (p.status || '').toLowerCase()
-
     if (st === 'link_down') {
       if (downStart === null) downStart = t
     } else {
@@ -324,7 +344,6 @@ const linkDownIntervals = computed(() => {
       }
     }
   }
-  // si terminó la serie estando caído, cerrar en el último punto (o ahora)
   if (downStart !== null) {
     const lastT = new Date(sorted[sorted.length - 1].timestamp).getTime()
     ranges.push({ startMs: downStart, endMs: lastT })
@@ -340,7 +359,6 @@ const chartData = computed(() => {
   if (type === 'ping') {
     const baseColor = '#5372f0'
     const alarmColor = 'rgba(233,69,96,1)' // rojo para > umbral
-
     return {
       datasets: [
         {
@@ -353,7 +371,6 @@ const chartData = computed(() => {
           })),
           tension: 0.2,
           pointRadius: 2,
-          // Puntos rojos cuando superan el umbral (Paso 6)
           pointBackgroundColor: (ctx) => {
             const v = ctx.raw?.y
             if (typeof v === 'number' && v > thresholdMs.value) return alarmColor
@@ -403,6 +420,44 @@ const chartData = computed(() => {
   return { datasets: [] }
 })
 
+/* ────────────────────────────────────────────────────────────────
+   Callbacks de pan/zoom (con debounce) para pedir más datos
+   ──────────────────────────────────────────────────────────────── */
+const handleViewChange = debounce(({ chart }) => {
+  const xScale = chart.scales.x
+  const start = xScale.min
+  const end = xScale.max
+  if (!isFinite(start) || !isFinite(end)) return
+
+  // Siempre trabajamos en modo ventana luego de pan/zoom
+  const mode = decideMode(start, end)
+  isZoomed.value = true
+
+  // Si todavía estábamos en short-range inicial, pasamos a ventana
+  // (equivale a dejar de usar /history_range para este ciclo)
+  const cw = currentWindow.value
+  if (!cw) {
+    fetchHistoryCustomRange(start, end, mode)
+    return
+  }
+
+  // Si el viewport actual se sale de la ventana cacheada (o está muy "pegado" a los bordes),
+  // pedimos una ventana nueva más amplia para evitar llamadas consecutivas al pan.
+  const pad = Math.max((end - start) * 0.1, 5 * 60 * 1000) // 10% o 5 min
+  const needLeft = start < cw.startMs + (cw.endMs - cw.startMs) * 0.05
+  const needRight = end > cw.endMs - (cw.endMs - cw.startMs) * 0.05
+  const outside = start < cw.startMs || end > cw.endMs
+
+  if (outside || needLeft || needRight || cw.mode !== mode) {
+    const newStart = Math.min(start - pad, cw.startMs)
+    const newEnd = Math.max(end + pad, cw.endMs)
+    fetchHistoryCustomRange(newStart, newEnd, mode)
+  }
+}, 350)
+
+const handleZoomComplete = (args) => handleViewChange(args)
+const handlePanComplete = (args) => handleViewChange(args)
+
 const chartOptions = computed(() => {
   const longRange = isLongRange.value
   const isPing = sensorInfo.value?.sensor_type === 'ping'
@@ -441,34 +496,24 @@ const chartOptions = computed(() => {
         algorithm: 'min-max',
         samples: 1500,
       },
-      // Paso 6: línea de umbral para ping
       thresholdLine: {
         show: isPing,
         y: thresholdMs.value,
       },
-      // Paso 6: franjas link_down para ethernet
       linkDownShade: {
         ranges: linkDownIntervals.value,
       },
       zoom: {
-        pan: { enabled: true, mode: 'x' },
+        pan: {
+          enabled: true,
+          mode: 'x',
+          onPanComplete: handlePanComplete,
+        },
         zoom: {
           wheel: { enabled: true },
           mode: 'x',
           limits: { x: { minRange: 1000 * 60 * 10 } }, // mínimo 10 minutos visibles
-          onZoomComplete: ({ chart }) => {
-            const xScale = chart.scales.x
-            const start = xScale.min
-            const end = xScale.max
-            const visibleHours = (end - start) / 1000 / 3600
-            isZoomed.value = true
-
-            if (visibleHours < 24 && longRange) {
-              fetchHistoryCustomRange(start, end, 'raw')
-            } else {
-              if (longRange) fetchHistoryCustomRange(start, end, 'auto')
-            }
-          },
+          onZoomComplete: handleZoomComplete,
         },
       },
     },
@@ -483,6 +528,7 @@ function setRange(range) {
   timeRange.value = range
   isZoomed.value = false
   currentWindow.value = null
+  resolutionMode.value = range === '7d' || range === '30d' ? 'auto' : 'raw'
   chartRef.value?.chart.resetZoom()
   fetchHistory()
 }
@@ -502,19 +548,17 @@ onMounted(async () => {
   try {
     const { data } = await api.get(`/sensors/${sensorId}/details`)
     sensorInfo.value = data
+    await connectWebSocketWhenAuthenticated()
+    offBus = addWsListener(onBusMessage)
+    const ws = getCurrentWebSocket()
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
+    }
     await fetchHistory()
   } catch (err) {
     console.error('Error loading sensor details:', err)
     router.push('/')
     return
-  }
-
-  await connectWebSocketWhenAuthenticated()
-  offBus = addWsListener(onBusMessage)
-
-  const ws = getCurrentWebSocket()
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
   }
 })
 
@@ -552,6 +596,9 @@ const linkStatusEvents = computed(() => {
   })
   return events.reverse()
 })
+
+// etiqueta para el badge de resolución
+const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda' : 'Agregada'))
 </script>
 
 <template>
@@ -582,6 +629,11 @@ const linkStatusEvents = computed(() => {
       <!-- indicador de sincronización en vivo -->
       <div v-if="isSyncing" class="sync-overlay">
         <span class="dot"></span> Actualizando datos en tiempo real...
+      </div>
+
+      <!-- badge de resolución -->
+      <div class="resolution-badge">
+        Resolución: <strong>{{ resolutionLabel }}</strong>
       </div>
 
       <button v-if="isZoomed" @click="resetZoom" class="reset-zoom-btn">Resetear Zoom</button>
@@ -666,6 +718,7 @@ const linkStatusEvents = computed(() => {
   margin: 0;
   color: var(--gray);
 }
+
 .time-controls {
   display: flex;
   justify-content: space-between;
@@ -708,7 +761,7 @@ const linkStatusEvents = computed(() => {
   position: absolute;
   top: 1rem;
   right: 1rem;
-  z-index: 10;
+  z-index: 12;
   background-color: var(--secondary-color);
   color: white;
   border: none;
@@ -761,6 +814,20 @@ const linkStatusEvents = computed(() => {
   to {
     opacity: 0.3;
   }
+}
+
+/* badge de resolución */
+.resolution-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 11;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  backdrop-filter: blur(2px);
 }
 
 .events-container {
