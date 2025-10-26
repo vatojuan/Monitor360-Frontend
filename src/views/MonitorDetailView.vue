@@ -21,9 +21,6 @@ import { es } from 'date-fns/locale'
 import zoomPlugin from 'chartjs-plugin-zoom'
 import { addWsListener, connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
 
-/* ────────────────────────────────────────────────────────────────
-   Registro base de ChartJS + plugins
-   ──────────────────────────────────────────────────────────────── */
 ChartJS.register(
   Title,
   Tooltip,
@@ -38,10 +35,7 @@ ChartJS.register(
   zoomPlugin,
 )
 
-/* Plugins visuales (Paso 6)
-   - thresholdLine: línea horizontal para umbral de latencia
-   - linkDownShade: franjas rojas para intervalos link_down en ethernet
-*/
+/* Plugins visuales */
 const thresholdLinePlugin = {
   id: 'thresholdLine',
   afterDatasetsDraw(chart, _args, opts) {
@@ -58,7 +52,6 @@ const thresholdLinePlugin = {
     ctx.lineTo(chartArea.right, yPix)
     ctx.stroke()
     ctx.setLineDash([])
-    // Etiqueta compacta del umbral
     ctx.fillStyle = 'rgba(233,69,96,0.9)'
     ctx.font = '12px sans-serif'
     ctx.fillText(`Umbral: ${opts.y} ms`, chartArea.left + 8, yPix - 6)
@@ -88,9 +81,7 @@ const linkDownShadePlugin = {
 
 ChartJS.register(thresholdLinePlugin, linkDownShadePlugin)
 
-/* ────────────────────────────────────────────────────────────────
-   Estado del componente
-   ──────────────────────────────────────────────────────────────── */
+/* Estado */
 const route = useRoute()
 const router = useRouter()
 const sensorId = Number(route.params.id)
@@ -101,26 +92,19 @@ const historyData = ref([])
 const isLoading = ref(true)
 const isZoomed = ref(false)
 const timeRange = ref('24h')
-const isSyncing = ref(false) // indicador sutil de sincronización
-
-// modo de resolución actual (para el badge): 'raw' | 'auto'
+const isSyncing = ref(false)
 const resolutionMode = ref('raw')
 
-// ventana actual cuando estamos en modo "window" (zoom/pan)
-// { startMs: number, endMs: number, mode: 'auto' | 'raw' } | null
-const currentWindow = ref(null)
+// Ventana visible controlada por nosotros (clave para pan atrás)
+const currentWindow = ref(null) // { startMs, endMs, mode: 'auto' | 'raw' } | null
 
 const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
 const timeRanges = hoursMap
 
-/* ────────────────────────────────────────────────────────────────
-   Caché de historial (Paso 5)
-   ──────────────────────────────────────────────────────────────── */
+/* Cache */
 const historyCache = new Map()
-// clave ejemplo: `${sensorId}:win:${startMs}-${endMs}:${mode}`  o  `${sensorId}:range:${range}`
-
-const CACHE_TTL_MS = 5 * 60_000 // 5 min
+const CACHE_TTL_MS = 5 * 60_000
 function cacheGet(key) {
   const e = historyCache.get(key)
   if (e && Date.now() - e.timestamp < CACHE_TTL_MS) return e
@@ -136,9 +120,7 @@ setInterval(() => {
   }
 }, 60_000)
 
-/* ────────────────────────────────────────────────────────────────
-   Helpers
-   ──────────────────────────────────────────────────────────────── */
+/* Helpers */
 function formatBitrateForChart(bits) {
   const n = Number(bits)
   return !Number.isFinite(n) || n < 0 ? 0 : Number((n / 1_000_000).toFixed(2))
@@ -153,14 +135,10 @@ function pickTimestamp(obj) {
   return new Date()
 }
 const isLongRange = computed(() => timeRange.value === '7d' || timeRange.value === '30d')
-
-// Umbral visual para ping (Paso 6)
 const thresholdMs = computed(() => {
   const cfg = sensorInfo.value?.config ?? {}
   return Number(cfg.latency_threshold_ms ?? cfg.latency_threshold_visual ?? 150)
 })
-
-// Debounce util
 function debounce(fn, wait = 300) {
   let t = null
   return (...args) => {
@@ -168,16 +146,12 @@ function debounce(fn, wait = 300) {
     t = setTimeout(() => fn(...args), wait)
   }
 }
-
-// decide modo según horas visibles
 function decideMode(startMs, endMs) {
   const visibleHours = Math.max(0, (endMs - startMs) / 1000 / 3600)
   return visibleHours < 24 ? 'raw' : 'auto'
 }
 
-/* ────────────────────────────────────────────────────────────────
-   Fetch con cancelación, cache y timeouts
-   ──────────────────────────────────────────────────────────────── */
+/* Fetch */
 let historyAbort = null
 
 async function fetchHistory() {
@@ -191,12 +165,11 @@ async function fetchHistory() {
     const startMs = endMs - hours * 3600 * 1000
 
     if (isLongRange.value) {
-      // long-range → ventana 'auto'
       const cacheKey = `${sensorId}:win:${Math.round(startMs)}-${Math.round(endMs)}:auto`
       const cached = cacheGet(cacheKey)
       if (cached) {
         historyData.value = cached.data
-        currentWindow.value = cached.window
+        currentWindow.value = cached.window || { startMs, endMs, mode: 'auto' }
         resolutionMode.value = 'auto'
         isLoading.value = false
         return
@@ -213,12 +186,12 @@ async function fetchHistory() {
       resolutionMode.value = 'auto'
       cacheSet(cacheKey, historyData.value, currentWindow.value)
     } else {
-      // short-range inicial → raw usando endpoint existente
+      // IMPORTANTE: fijamos ventana desde el inicio para permitir pan atrás
       const cacheKey = `${sensorId}:range:${timeRange.value}`
       const cached = cacheGet(cacheKey)
       if (cached) {
         historyData.value = cached.data
-        currentWindow.value = { startMs, endMs, mode: 'raw' } // fijamos ventana para permitir pan
+        currentWindow.value = { startMs, endMs, mode: 'raw' }
         resolutionMode.value = 'raw'
         isLoading.value = false
         return
@@ -229,7 +202,7 @@ async function fetchHistory() {
         signal: historyAbort.signal,
       })
       historyData.value = Array.isArray(data) ? data : []
-      currentWindow.value = { startMs, endMs, mode: 'raw' } // importante para poder panear y pedir más
+      currentWindow.value = { startMs, endMs, mode: 'raw' } // <- habilita pan hacia atrás
       resolutionMode.value = 'raw'
       cacheSet(cacheKey, historyData.value, null)
     }
@@ -251,7 +224,7 @@ async function fetchHistoryCustomRange(startMs, endMs, mode = 'auto') {
     const cached = cacheGet(cacheKey)
     if (cached) {
       historyData.value = cached.data
-      currentWindow.value = cached.window
+      currentWindow.value = cached.window || { startMs, endMs, mode }
       resolutionMode.value = mode
       return
     }
@@ -273,9 +246,7 @@ async function fetchHistoryCustomRange(startMs, endMs, mode = 'auto') {
   }
 }
 
-/* ────────────────────────────────────────────────────────────────
-   WebSocket: ingest en vivo (respeta ventana activa)
-   ──────────────────────────────────────────────────────────────── */
+/* WebSocket */
 function onBusMessage(payload) {
   isSyncing.value = true
   setTimeout(() => (isSyncing.value = false), 800)
@@ -312,7 +283,6 @@ function onBusMessage(payload) {
       return true
     })
   } else {
-    // fallback (no debería ocurrir porque siempre fijamos currentWindow)
     const nowMs = Date.now()
     const hours = hoursMap[timeRange.value] ?? 24
     const cutoff = nowMs - hours * 3600 * 1000
@@ -320,9 +290,7 @@ function onBusMessage(payload) {
   }
 }
 
-/* ────────────────────────────────────────────────────────────────
-   Computados de datos para el gráfico
-   ──────────────────────────────────────────────────────────────── */
+/* Datos para gráfico */
 const linkDownIntervals = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || historyData.value.length === 0) return []
   const sorted = [...historyData.value].sort(
@@ -358,7 +326,7 @@ const chartData = computed(() => {
 
   if (type === 'ping') {
     const baseColor = '#5372f0'
-    const alarmColor = 'rgba(233,69,96,1)' // rojo para > umbral
+    const alarmColor = 'rgba(233,69,96,1)'
     return {
       datasets: [
         {
@@ -420,30 +388,23 @@ const chartData = computed(() => {
   return { datasets: [] }
 })
 
-/* ────────────────────────────────────────────────────────────────
-   Callbacks de pan/zoom (con debounce) para pedir más datos
-   ──────────────────────────────────────────────────────────────── */
+/* Pan/Zoom handlers */
 const handleViewChange = debounce(({ chart }) => {
   const xScale = chart.scales.x
   const start = xScale.min
   const end = xScale.max
   if (!isFinite(start) || !isFinite(end)) return
 
-  // Siempre trabajamos en modo ventana luego de pan/zoom
   const mode = decideMode(start, end)
   isZoomed.value = true
 
-  // Si todavía estábamos en short-range inicial, pasamos a ventana
-  // (equivale a dejar de usar /history_range para este ciclo)
   const cw = currentWindow.value
   if (!cw) {
     fetchHistoryCustomRange(start, end, mode)
     return
   }
 
-  // Si el viewport actual se sale de la ventana cacheada (o está muy "pegado" a los bordes),
-  // pedimos una ventana nueva más amplia para evitar llamadas consecutivas al pan.
-  const pad = Math.max((end - start) * 0.1, 5 * 60 * 1000) // 10% o 5 min
+  const pad = Math.max((end - start) * 0.1, 5 * 60 * 1000) // 10% o 5m
   const needLeft = start < cw.startMs + (cw.endMs - cw.startMs) * 0.05
   const needRight = end > cw.endMs - (cw.endMs - cw.startMs) * 0.05
   const outside = start < cw.startMs || end > cw.endMs
@@ -458,9 +419,15 @@ const handleViewChange = debounce(({ chart }) => {
 const handleZoomComplete = (args) => handleViewChange(args)
 const handlePanComplete = (args) => handleViewChange(args)
 
+/* Opciones del gráfico */
 const chartOptions = computed(() => {
   const longRange = isLongRange.value
   const isPing = sensorInfo.value?.sensor_type === 'ping'
+
+  // 👇 BOUNDS FIJOS DEL EJE X = VENTANA ACTUAL (permite pan “hacia atrás” aunque no haya datos)
+  const xMin = currentWindow.value?.startMs ?? undefined
+  const xMax = currentWindow.value?.endMs ?? undefined
+
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -476,6 +443,8 @@ const chartOptions = computed(() => {
     scales: {
       x: {
         type: 'time',
+        min: xMin,
+        max: xMax,
         adapters: { date: { locale: es } },
         time: {
           unit: timeRange.value === '1h' ? 'minute' : longRange ? 'day' : 'hour',
@@ -512,7 +481,7 @@ const chartOptions = computed(() => {
         zoom: {
           wheel: { enabled: true },
           mode: 'x',
-          limits: { x: { minRange: 1000 * 60 * 10 } }, // mínimo 10 minutos visibles
+          limits: { x: { minRange: 1000 * 60 * 10 } },
           onZoomComplete: handleZoomComplete,
         },
       },
@@ -521,9 +490,7 @@ const chartOptions = computed(() => {
   }
 })
 
-/* ────────────────────────────────────────────────────────────────
-   Acciones de UI
-   ──────────────────────────────────────────────────────────────── */
+/* UI */
 function setRange(range) {
   timeRange.value = range
   isZoomed.value = false
@@ -535,25 +502,26 @@ function setRange(range) {
 function resetZoom() {
   chartRef.value?.chart.resetZoom()
   isZoomed.value = false
+  // volvemos a la ventana del rango seleccionado
   currentWindow.value = null
   fetchHistory()
 }
 
-/* ────────────────────────────────────────────────────────────────
-   Ciclo de vida
-   ──────────────────────────────────────────────────────────────── */
+/* Ciclo de vida */
 let offBus = null
 
 onMounted(async () => {
   try {
     const { data } = await api.get(`/sensors/${sensorId}/details`)
     sensorInfo.value = data
+
     await connectWebSocketWhenAuthenticated()
     offBus = addWsListener(onBusMessage)
     const ws = getCurrentWebSocket()
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
     }
+
     await fetchHistory()
   } catch (err) {
     console.error('Error loading sensor details:', err)
@@ -572,9 +540,7 @@ watch(timeRange, () => {
   fetchHistory()
 })
 
-/* ────────────────────────────────────────────────────────────────
-   Tabla de eventos de enlace (ethernet)
-   ──────────────────────────────────────────────────────────────── */
+/* Tabla de eventos */
 const linkStatusEvents = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || historyData.value.length === 0) return []
   const events = []
@@ -597,7 +563,6 @@ const linkStatusEvents = computed(() => {
   return events.reverse()
 })
 
-// etiqueta para el badge de resolución
 const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda' : 'Agregada'))
 </script>
 
@@ -626,12 +591,10 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
     </div>
 
     <div class="chart-container">
-      <!-- indicador de sincronización en vivo -->
       <div v-if="isSyncing" class="sync-overlay">
         <span class="dot"></span> Actualizando datos en tiempo real...
       </div>
 
-      <!-- badge de resolución -->
       <div class="resolution-badge">
         Resolución: <strong>{{ resolutionLabel }}</strong>
       </div>
