@@ -481,7 +481,6 @@ const linkStatusEvents = computed(() => {
   })
   return events.reverse()
 })
-const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda' : 'Agregada'))
 </script>
 
 <template>
@@ -523,10 +522,6 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
     <div class="chart-container">
       <div v-if="isSyncing" class="sync-overlay">
         <span class="dot"></span> Actualizando datos en tiempo real...
-      </div>
-
-      <div class="resolution-badge">
-        Resolución: <strong>{{ resolutionLabel }}</strong>
       </div>
 
       <Line
@@ -708,20 +703,6 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
   to {
     opacity: 0.3;
   }
-}
-
-/* badge de resolución — abajo/izquierda para evitar colisiones */
-.resolution-badge {
-  position: absolute;
-  left: 12px;
-  bottom: 28px;
-  z-index: 11;
-  background: rgba(0, 0, 0, 0.35);
-  color: #fff;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  backdrop-filter: blur(2px);
 }
 
 .events-container {
