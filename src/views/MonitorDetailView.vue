@@ -825,7 +825,7 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
   font-size: 0.85rem;
 }
 .status-badge.link_up {
-  background-color: rgba(61, 230, 132, 0.2);
+  background-color: rgba(61, 220, 132, 0.2);
   color: var(--green);
 }
 .status-badge.link_down {
