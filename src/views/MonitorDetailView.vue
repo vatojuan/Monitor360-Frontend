@@ -95,9 +95,8 @@ const timeRange = ref('24h')
 const isSyncing = ref(false)
 const resolutionMode = ref('raw')
 
-// Ventana visible controlada por nosotros
-// { startMs, endMs, mode: 'auto' | 'raw' } | null
-const currentWindow = ref(null)
+// Ventana visible controlada por nosotros (permite pan/shift/zoom programático)
+const currentWindow = ref(null) // { startMs, endMs, mode: 'auto' | 'raw' } | null
 
 const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
@@ -152,7 +151,7 @@ function decideMode(startMs, endMs) {
   return visibleHours < 24 ? 'raw' : 'auto'
 }
 
-/* Unidad de tiempo dinámica (evita “too far apart with stepSize…”) */
+/* Unidad de tiempo dinámica */
 const visibleSpanMs = computed(() => {
   if (currentWindow.value) return currentWindow.value.endMs - currentWindow.value.startMs
   const h = hoursMap[timeRange.value] ?? 24
@@ -202,7 +201,7 @@ async function fetchHistory() {
       resolutionMode.value = 'auto'
       cacheSet(cacheKey, historyData.value, currentWindow.value)
     } else {
-      // fijamos ventana desde el inicio para permitir pan atrás
+      // fijamos ventana desde el inicio para permitir pan/shift atrás
       const cacheKey = `${sensorId}:range:${timeRange.value}`
       const cached = cacheGet(cacheKey)
       if (cached) {
@@ -404,7 +403,7 @@ const chartData = computed(() => {
   return { datasets: [] }
 })
 
-/* Pan/Zoom handlers */
+/* Pan/Zoom handlers (debounced) */
 const handleViewChange = debounce(({ chart }) => {
   const xScale = chart.scales.x
   const start = xScale.min
@@ -430,7 +429,7 @@ const handleViewChange = debounce(({ chart }) => {
     const newEnd = Math.max(end + pad, cw.endMs)
     fetchHistoryCustomRange(newStart, newEnd, mode)
   }
-}, 350)
+}, 300)
 
 const handleZoomComplete = (args) => handleViewChange(args)
 const handlePanComplete = (args) => handleViewChange(args)
@@ -439,8 +438,6 @@ const handlePanComplete = (args) => handleViewChange(args)
 const chartOptions = computed(() => {
   const isPing = sensorInfo.value?.sensor_type === 'ping'
 
-  // BOUNDS del eje X = ventana actual (permite pan aunque no haya datos),
-  // y unidad de tiempo dinámica según el span visible (evita errores de “stepSize”)
   const xMin = currentWindow.value?.startMs ?? undefined
   const xMax = currentWindow.value?.endMs ?? undefined
 
@@ -457,8 +454,7 @@ const chartOptions = computed(() => {
         max: xMax,
         adapters: { date: { locale: es } },
         time: {
-          unit: timeUnit.value, // 👈 dinámico
-          // no forzamos stepSize; dejamos que Chart.js elija
+          unit: timeUnit.value,
           displayFormats: {
             minute: 'HH:mm',
             hour: 'dd MMM HH:mm',
@@ -469,7 +465,7 @@ const chartOptions = computed(() => {
         },
         ticks: {
           autoSkip: true,
-          maxTicksLimit: 10,
+          maxTicksLimit: 8,
           maxRotation: 0,
           minRotation: 0,
         },
@@ -498,8 +494,15 @@ const chartOptions = computed(() => {
         },
         zoom: {
           wheel: { enabled: true },
+          pinch: { enabled: true },
+          drag: {
+            enabled: true,
+            backgroundColor: 'rgba(83,114,240,0.15)',
+            borderColor: 'rgba(83,114,240,0.6)',
+            borderWidth: 1,
+          },
           mode: 'x',
-          limits: { x: { minRange: 1000 * 60 * 10 } },
+          limits: { x: { minRange: 1000 * 60 * 5 } }, // mínimo 5 minutos visibles
           onZoomComplete: handleZoomComplete,
         },
       },
@@ -508,19 +511,72 @@ const chartOptions = computed(() => {
   }
 })
 
+/* ──────────────── Controles de barra ──────────────── */
+function ensureWindow() {
+  // Garantiza que currentWindow exista: si no, crea una desde el timeRange actual
+  if (!currentWindow.value) {
+    const endMs = Date.now()
+    const hours = hoursMap[timeRange.value] ?? 24
+    const startMs = endMs - hours * 3600 * 1000
+    currentWindow.value = {
+      startMs,
+      endMs,
+      mode: isLongRange.value ? 'auto' : 'raw',
+    }
+  }
+  return currentWindow.value
+}
+
+async function shiftWindow(direction = -1) {
+  // direction: -1 atrás, +1 adelante
+  const cw = ensureWindow()
+  const span = cw.endMs - cw.startMs
+  const step = Math.max(span * 0.8, 5 * 60 * 1000) // 80% de la ventana o 5m
+  const start = cw.startMs + step * direction
+  const end = cw.endMs + step * direction
+  const mode = decideMode(start, end)
+  isZoomed.value = true
+  await fetchHistoryCustomRange(start, end, mode)
+  // Ajusta el viewport del chart a la nueva ventana
+  chartRef.value?.chart?.resetZoom()
+}
+
+async function zoomBy(factor = 0.5) {
+  // factor < 1: zoom in ; factor > 1: zoom out
+  const cw = ensureWindow()
+  const span = cw.endMs - cw.startMs
+  const center = cw.startMs + span / 2
+  let newSpan = span * factor
+  // límite mínimo 5 minutos
+  newSpan = Math.max(newSpan, 5 * 60 * 1000)
+  const start = center - newSpan / 2
+  const end = center + newSpan / 2
+  const mode = decideMode(start, end)
+  isZoomed.value = true
+  await fetchHistoryCustomRange(start, end, mode)
+  chartRef.value?.chart?.resetZoom()
+}
+
+function goLive() {
+  // Vuelve al rango seleccionado actual en “ahora”
+  isZoomed.value = false
+  currentWindow.value = null
+  chartRef.value?.chart?.resetZoom()
+  fetchHistory()
+}
+
+function resetZoom() {
+  // Igual a volver a la ventana del rango seleccionado
+  goLive()
+}
+
 /* UI */
 function setRange(range) {
   timeRange.value = range
   isZoomed.value = false
   currentWindow.value = null
   resolutionMode.value = range === '7d' || range === '30d' ? 'auto' : 'raw'
-  chartRef.value?.chart.resetZoom()
-  fetchHistory()
-}
-function resetZoom() {
-  chartRef.value?.chart.resetZoom()
-  isZoomed.value = false
-  currentWindow.value = null
+  chartRef.value?.chart?.resetZoom()
   fetchHistory()
 }
 
@@ -594,6 +650,7 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
       </p>
     </div>
 
+    <!-- Barra superior: rangos + controles -->
     <div class="time-controls">
       <div class="range-selector">
         <button
@@ -605,6 +662,21 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
           {{ range }}
         </button>
       </div>
+
+      <div class="chart-toolbar">
+        <button @click="shiftWindow(-1)" title="Ir hacia atrás (80% de la ventana)">
+          ◀ Atrás
+        </button>
+        <button @click="goLive()" title="Ir a ahora">● Hoy</button>
+        <button @click="shiftWindow(1)" title="Ir hacia adelante (80% de la ventana)">
+          Adelante ▶
+        </button>
+        <span class="sep"></span>
+        <button @click="zoomBy(0.5)" title="Acercar (zoom in)">＋</button>
+        <button @click="zoomBy(2)" title="Alejar (zoom out)">－</button>
+        <span class="sep"></span>
+        <button @click="resetZoom" title="Resetear vista">Reset</button>
+      </div>
     </div>
 
     <div class="chart-container">
@@ -612,11 +684,10 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
         <span class="dot"></span> Actualizando datos en tiempo real...
       </div>
 
+      <!-- badge de resolución (abajo-izquierda para no chocar) -->
       <div class="resolution-badge">
         Resolución: <strong>{{ resolutionLabel }}</strong>
       </div>
-
-      <button v-if="isZoomed" @click="resetZoom" class="reset-zoom-btn">Resetear Zoom</button>
 
       <Line
         v-if="!isLoading && historyData.length > 0"
@@ -683,30 +754,31 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
   padding: 0.5rem 1rem;
   border-radius: 6px;
   cursor: pointer;
-  margin-bottom: 2rem;
+  margin-bottom: 1.25rem;
 }
 .monitor-header {
   background-color: var(--surface-color);
-  padding: 1.5rem 2rem;
+  padding: 1.25rem 1.5rem;
   border-radius: 12px;
   margin-bottom: 1rem;
 }
 .monitor-header h1 {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 0.35rem 0;
 }
 .monitor-header p {
   margin: 0;
   color: var(--gray);
 }
 
+/* Barra: rangos + controles */
 .time-controls {
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  padding: 1rem;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
   background-color: var(--surface-color);
   border-radius: 12px;
 }
@@ -718,9 +790,10 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
   background-color: var(--primary-color);
   color: var(--font-color);
   border: none;
-  padding: 0.5rem 1rem;
+  padding: 0.45rem 0.8rem;
   border-radius: 6px;
   cursor: pointer;
+  line-height: 1;
 }
 .time-controls button:hover {
   background-color: #5372f0;
@@ -729,25 +802,26 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
   background-color: var(--blue);
   color: white;
 }
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.chart-toolbar .sep {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: var(--primary-color);
+  margin: 0 0.4rem;
+  opacity: 0.6;
+}
 
 .chart-container {
   background-color: var(--surface-color);
-  padding: 2rem;
+  padding: 1.25rem 1.25rem 1.6rem;
   border-radius: 12px;
-  height: 500px;
+  height: 520px;
   position: relative;
-}
-.reset-zoom-btn {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  z-index: 12;
-  background-color: var(--secondary-color);
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  cursor: pointer;
 }
 .loading-overlay {
   position: absolute;
@@ -759,7 +833,7 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
 .tz-hint {
   position: absolute;
   left: 1rem;
-  bottom: 0.75rem;
+  bottom: 0.5rem;
   color: var(--gray);
   font-size: 0.85rem;
 }
@@ -796,11 +870,11 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
   }
 }
 
-/* badge de resolución */
+/* badge de resolución — abajo/izquierda para evitar colisiones */
 .resolution-badge {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  left: 12px;
+  bottom: 28px;
   z-index: 11;
   background: rgba(0, 0, 0, 0.35);
   color: #fff;
@@ -812,13 +886,13 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
 
 .events-container {
   background-color: var(--surface-color);
-  padding: 1.5rem 2rem;
+  padding: 1.25rem 1.5rem;
   border-radius: 12px;
-  margin-top: 2rem;
+  margin-top: 1rem;
 }
 .events-container h3 {
   margin-top: 0;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 .events-table {
   width: 100%;
@@ -826,7 +900,7 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
 }
 .events-table th,
 .events-table td {
-  padding: 0.75rem 1rem;
+  padding: 0.6rem 0.9rem;
   text-align: left;
   border-bottom: 1px solid var(--primary-color);
 }
@@ -836,9 +910,9 @@ const resolutionLabel = computed(() => (resolutionMode.value === 'raw' ? 'Cruda'
   text-transform: uppercase;
 }
 .status-badge {
-  padding: 0.3rem 0.6rem;
+  padding: 0.25rem 0.55rem;
   border-radius: 12px;
-  font-weight: bold;
+  font-weight: 600;
   font-size: 0.85rem;
 }
 .status-badge.link_up {
