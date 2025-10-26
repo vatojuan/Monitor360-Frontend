@@ -424,19 +424,16 @@ const chartOptions = computed(() => {
   const longRange = isLongRange.value
   const isPing = sensorInfo.value?.sensor_type === 'ping'
 
-  // 👇 BOUNDS FIJOS DEL EJE X = VENTANA ACTUAL (permite pan “hacia atrás” aunque no haya datos)
+  // BOUNDS FIJOS DEL EJE X = VENTANA ACTUAL (permite pan “hacia atrás” aunque no haya datos)
   const xMin = currentWindow.value?.startMs ?? undefined
   const xMax = currentWindow.value?.endMs ?? undefined
 
   return {
     responsive: true,
     maintainAspectRatio: false,
+    // Evitamos bucles de render: no llamar update() dentro de onComplete
     animation: {
-      duration: 250,
-      easing: 'easeOutQuart',
-      onComplete: () => {
-        chartRef.value?.chart.update('none')
-      },
+      duration: 0,
     },
     parsing: false,
     spanGaps: true,
