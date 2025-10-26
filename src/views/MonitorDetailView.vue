@@ -95,8 +95,9 @@ const timeRange = ref('24h')
 const isSyncing = ref(false)
 const resolutionMode = ref('raw')
 
-// Ventana visible controlada por nosotros (clave para pan atrás)
-const currentWindow = ref(null) // { startMs, endMs, mode: 'auto' | 'raw' } | null
+// Ventana visible controlada por nosotros
+// { startMs, endMs, mode: 'auto' | 'raw' } | null
+const currentWindow = ref(null)
 
 const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
@@ -151,6 +152,21 @@ function decideMode(startMs, endMs) {
   return visibleHours < 24 ? 'raw' : 'auto'
 }
 
+/* Unidad de tiempo dinámica (evita “too far apart with stepSize…”) */
+const visibleSpanMs = computed(() => {
+  if (currentWindow.value) return currentWindow.value.endMs - currentWindow.value.startMs
+  const h = hoursMap[timeRange.value] ?? 24
+  return h * 3600 * 1000
+})
+const timeUnit = computed(() => {
+  const h = visibleSpanMs.value / 3600000
+  if (h <= 2) return 'minute'
+  if (h <= 72) return 'hour'
+  if (h <= 24 * 60) return 'day'
+  if (h <= 24 * 365) return 'month'
+  return 'year'
+})
+
 /* Fetch */
 let historyAbort = null
 
@@ -186,7 +202,7 @@ async function fetchHistory() {
       resolutionMode.value = 'auto'
       cacheSet(cacheKey, historyData.value, currentWindow.value)
     } else {
-      // IMPORTANTE: fijamos ventana desde el inicio para permitir pan atrás
+      // fijamos ventana desde el inicio para permitir pan atrás
       const cacheKey = `${sensorId}:range:${timeRange.value}`
       const cached = cacheGet(cacheKey)
       if (cached) {
@@ -202,7 +218,7 @@ async function fetchHistory() {
         signal: historyAbort.signal,
       })
       historyData.value = Array.isArray(data) ? data : []
-      currentWindow.value = { startMs, endMs, mode: 'raw' } // <- habilita pan hacia atrás
+      currentWindow.value = { startMs, endMs, mode: 'raw' }
       resolutionMode.value = 'raw'
       cacheSet(cacheKey, historyData.value, null)
     }
@@ -421,20 +437,17 @@ const handlePanComplete = (args) => handleViewChange(args)
 
 /* Opciones del gráfico */
 const chartOptions = computed(() => {
-  const longRange = isLongRange.value
   const isPing = sensorInfo.value?.sensor_type === 'ping'
 
-  // BOUNDS FIJOS DEL EJE X = VENTANA ACTUAL (permite pan “hacia atrás” aunque no haya datos)
+  // BOUNDS del eje X = ventana actual (permite pan aunque no haya datos),
+  // y unidad de tiempo dinámica según el span visible (evita errores de “stepSize”)
   const xMin = currentWindow.value?.startMs ?? undefined
   const xMax = currentWindow.value?.endMs ?? undefined
 
   return {
     responsive: true,
     maintainAspectRatio: false,
-    // Evitamos bucles de render: no llamar update() dentro de onComplete
-    animation: {
-      duration: 0,
-    },
+    animation: { duration: 0 },
     parsing: false,
     spanGaps: true,
     scales: {
@@ -444,13 +457,21 @@ const chartOptions = computed(() => {
         max: xMax,
         adapters: { date: { locale: es } },
         time: {
-          unit: timeRange.value === '1h' ? 'minute' : longRange ? 'day' : 'hour',
-          tooltipFormat: 'dd MMM, HH:mm:ss',
+          unit: timeUnit.value, // 👈 dinámico
+          // no forzamos stepSize; dejamos que Chart.js elija
           displayFormats: {
             minute: 'HH:mm',
             hour: 'dd MMM HH:mm',
             day: 'dd MMM',
+            month: 'MMM yyyy',
+            year: 'yyyy',
           },
+        },
+        ticks: {
+          autoSkip: true,
+          maxTicksLimit: 10,
+          maxRotation: 0,
+          minRotation: 0,
         },
       },
       y: { beginAtZero: true },
@@ -499,7 +520,6 @@ function setRange(range) {
 function resetZoom() {
   chartRef.value?.chart.resetZoom()
   isZoomed.value = false
-  // volvemos a la ventana del rango seleccionado
   currentWindow.value = null
   fetchHistory()
 }
