@@ -35,8 +35,11 @@ ChartJS.register(
   zoomPlugin,
 )
 
-/* Timeout de ping (sentinel del backend) */
-const PING_TIMEOUT_MS = 10000
+/* Sentinels */
+const PING_TIMEOUT_MS = 10000 // valor que viene del backend para timeout
+const PING_MAX_HARD = 1000 // techo duro razonable (seguro por si el P95 se va muy alto)
+const PING_MIN_CAP = 200 // piso mínimo de escala
+const PING_MAX_CAP = PING_MAX_HARD // techo máximo de escala
 
 /* Plugins visuales */
 const thresholdLinePlugin = {
@@ -92,7 +95,7 @@ const sensorId = Number(route.params.id)
 const chartRef = ref(null)
 const sensorInfo = ref(null)
 
-/* Carga: SWR suave */
+/* Carga / fetch incremental */
 const isBootLoading = ref(true)
 const isFetching = ref(false)
 let historyAbort = null
@@ -183,6 +186,29 @@ const visibleData = computed(() => {
   return mapToSortedArray(mode, startMs, endMs)
 })
 
+/* P95 dinámico para la escala del eje Y en ping */
+function percentile(values, p) {
+  if (!values.length) return NaN
+  const sorted = [...values].sort((a, b) => a - b)
+  const idx = (sorted.length - 1) * p
+  const lo = Math.floor(idx)
+  const hi = Math.ceil(idx)
+  if (lo === hi) return sorted[lo]
+  const w = idx - lo
+  return sorted[lo] * (1 - w) + sorted[hi] * w
+}
+const pingYCap = computed(() => {
+  // Tomamos sólo latencias válidas (< TIMEOUT) dentro de la ventana
+  const vals = visibleData.value
+    .map((d) => Number(d.latency_ms ?? 0))
+    .filter((v) => Number.isFinite(v) && v > 0 && v < PING_TIMEOUT_MS)
+  if (vals.length === 0) return PING_MIN_CAP
+  const p95 = percentile(vals, 0.95)
+  // inflamos un 10% y acotamos a rangos sanos
+  const cap = Math.min(Math.max(p95 * 1.1, PING_MIN_CAP), PING_MAX_CAP)
+  return cap
+})
+
 /* Sombreado link_down */
 const linkDownIntervals = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || visibleData.value.length === 0) return []
@@ -217,15 +243,29 @@ const chartData = computed(() => {
   if (type === 'ping') {
     const base = '#5372f0'
     const alarm = 'rgba(233,69,96,1)'
+    const cap = pingYCap.value
 
+    // Línea principal (corta en outliers y en timeouts)
     const linePoints = pts.map((d) => {
       const v = Number(d.latency_ms ?? 0)
-      return { x: d._ms, y: v >= PING_TIMEOUT_MS ? null : v }
+      const isTimeout = v >= PING_TIMEOUT_MS
+      const isOutlier = v > cap && !isTimeout
+      return { x: d._ms, y: isTimeout || isOutlier ? null : v }
     })
 
+    // Marcadores de OUTLIERS (por encima del cap pero debajo de timeout)
+    const outlierPoints = pts
+      .map((d) => {
+        const v = Number(d.latency_ms ?? 0)
+        if (v > cap && v < PING_TIMEOUT_MS) return { x: d._ms, y: 1, _actual: v }
+        return null
+      })
+      .filter(Boolean)
+
+    // Marcadores de TIMEOUTS
     const timeoutPoints = pts
       .filter((d) => Number(d.latency_ms ?? 0) >= PING_TIMEOUT_MS)
-      .map((d) => ({ x: d._ms, y: 1 }))
+      .map((d) => ({ x: d._ms, y: 1, _actual: Number(d.latency_ms ?? PING_TIMEOUT_MS) }))
 
     return {
       datasets: [
@@ -247,7 +287,21 @@ const chartData = computed(() => {
           },
         },
         {
-          /* <- sin 'scatter': usamos línea sin trazar para evitar registrar ScatterController */
+          // Outliers como pines (sin línea) en eje oculto
+          label: 'Pico',
+          type: 'line',
+          yAxisID: 'y_outlier',
+          data: outlierPoints,
+          showLine: false,
+          pointRadius: 4,
+          pointHoverRadius: 5,
+          pointStyle: 'rectRot',
+          backgroundColor: 'rgba(255,193,7,1)', // amarillo
+          borderColor: 'rgba(255,193,7,1)',
+          clip: false,
+        },
+        {
+          // Timeouts como triángulos en eje oculto
           label: 'Timeout',
           type: 'line',
           yAxisID: 'y_timeout',
@@ -322,7 +376,14 @@ const chartOptions = computed(() => {
         },
         ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0, minRotation: 0 },
       },
-      y: { beginAtZero: true },
+      y: {
+        beginAtZero: true,
+        // Para ping, fijamos un tope dinámico robusto; para ethernet dejamos auto.
+        max: isPing ? pingYCap.value : undefined,
+      },
+      // Eje oculto para outliers (picos)
+      y_outlier: { min: 0, max: 1, display: false, grid: { display: false } },
+      // Eje oculto para timeouts
       y_timeout: { min: 0, max: 1, display: false, grid: { display: false } },
     },
     plugins: {
@@ -349,7 +410,12 @@ const chartOptions = computed(() => {
       tooltip: {
         callbacks: {
           label(ctx) {
-            if (ctx.dataset?.label === 'Timeout') return 'Timeout'
+            const ds = ctx.dataset?.label
+            if (ds === 'Timeout') return 'Timeout'
+            if (ds === 'Pico') {
+              const val = ctx.raw?._actual
+              return typeof val === 'number' ? `Pico: ${val} ms` : 'Pico'
+            }
             const v = ctx.parsed?.y
             return typeof v === 'number' ? `Latencia: ${v} ms` : ''
           },
