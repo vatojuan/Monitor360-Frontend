@@ -38,7 +38,7 @@ ChartJS.register(
 /* Sentinels */
 const PING_TIMEOUT_MS = 20000 // valor que viene del backend para timeout
 const PING_MAX_HARD = 500 // techo duro razonable (seguro por si el P95 se va muy alto)
-const PING_MIN_CAP = 40 // piso mínimo de escala
+const PING_MIN_CAP = 5 // piso mínimo de escala
 const PING_MAX_CAP = PING_MAX_HARD // techo máximo de escala
 
 /* Plugins visuales */
