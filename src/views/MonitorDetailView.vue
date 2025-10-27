@@ -21,7 +21,6 @@ import { es } from 'date-fns/locale'
 import zoomPlugin from 'chartjs-plugin-zoom'
 import { addWsListener, connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
 
-/* ChartJS base */
 ChartJS.register(
   Title,
   Tooltip,
@@ -36,8 +35,8 @@ ChartJS.register(
   zoomPlugin,
 )
 
-/* ====== CONSTANTE PARA TIMEOUT DE PING ====== */
-const PING_TIMEOUT_MS = 10000 // ajustá si tu backend usa otro sentinel
+/* Timeout de ping (sentinel del backend) */
+const PING_TIMEOUT_MS = 10000
 
 /* Plugins visuales */
 const thresholdLinePlugin = {
@@ -94,8 +93,8 @@ const chartRef = ref(null)
 const sensorInfo = ref(null)
 
 /* Carga: SWR suave */
-const isBootLoading = ref(true) // solo primera carga
-const isFetching = ref(false) // barrita fina arriba
+const isBootLoading = ref(true)
+const isFetching = ref(false)
 let historyAbort = null
 let fetchToken = 0
 
@@ -104,9 +103,9 @@ const timeRange = ref('24h')
 const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
 
-/* Store de datos por modo */
+/* Store por modo */
 const store = reactive({
-  raw: { startMs: null, endMs: null, map: new Map() }, // key: ms, value: point normalizado
+  raw: { startMs: null, endMs: null, map: new Map() },
   auto: { startMs: null, endMs: null, map: new Map() },
 })
 
@@ -157,7 +156,7 @@ function mapToSortedArray(mode, startMs, endMs) {
   return out
 }
 
-/* Unidad de tiempo dinámica (ticks) */
+/* Unidad de tiempo dinámica */
 const visibleSpanMs = computed(() => {
   if (!currentWindow.value) return (hoursMap[timeRange.value] ?? 24) * 3600000
   return currentWindow.value.endMs - currentWindow.value.startMs
@@ -177,7 +176,7 @@ const thresholdMs = computed(() => {
   return Number(cfg.latency_threshold_ms ?? cfg.latency_threshold_visual ?? 150)
 })
 
-/* Data visible (derivado del store) */
+/* Data visible */
 const visibleData = computed(() => {
   if (!currentWindow.value) return []
   const { startMs, endMs, mode } = currentWindow.value
@@ -205,7 +204,7 @@ const linkDownIntervals = computed(() => {
   return ranges
 })
 
-/* Chart datasets (según tipo de sensor) */
+/* Datasets */
 function mbps(bits) {
   const n = Number(bits)
   return !Number.isFinite(n) || n < 0 ? 0 : Number((n / 1_000_000).toFixed(2))
@@ -219,13 +218,11 @@ const chartData = computed(() => {
     const base = '#5372f0'
     const alarm = 'rgba(233,69,96,1)'
 
-    // Línea principal: cortamos donde haya timeout
     const linePoints = pts.map((d) => {
       const v = Number(d.latency_ms ?? 0)
       return { x: d._ms, y: v >= PING_TIMEOUT_MS ? null : v }
     })
 
-    // Marcadores de timeout en eje secundario oculto
     const timeoutPoints = pts
       .filter((d) => Number(d.latency_ms ?? 0) >= PING_TIMEOUT_MS)
       .map((d) => ({ x: d._ms, y: 1 }))
@@ -239,7 +236,7 @@ const chartData = computed(() => {
           data: linePoints,
           tension: 0.2,
           pointRadius: 2,
-          spanGaps: false, // no unir sobre null (cortes visibles)
+          spanGaps: false,
           pointBackgroundColor: (ctx) => {
             const v = ctx.raw?.y
             return typeof v === 'number' && v > thresholdMs.value ? alarm : base
@@ -250,8 +247,9 @@ const chartData = computed(() => {
           },
         },
         {
+          /* <- sin 'scatter': usamos línea sin trazar para evitar registrar ScatterController */
           label: 'Timeout',
-          type: 'scatter',
+          type: 'line',
           yAxisID: 'y_timeout',
           data: timeoutPoints,
           showLine: false,
@@ -294,7 +292,7 @@ const chartData = computed(() => {
   return { datasets: [] }
 })
 
-/* Opciones de gráfico — estilo trading */
+/* Opciones */
 const chartOptions = computed(() => {
   const xMin = currentWindow.value?.startMs ?? undefined
   const xMax = currentWindow.value?.endMs ?? undefined
@@ -305,7 +303,7 @@ const chartOptions = computed(() => {
     maintainAspectRatio: false,
     animation: { duration: 0 },
     parsing: false,
-    spanGaps: isPing ? false : true, // ping corta la línea en timeouts
+    spanGaps: isPing ? false : true,
     scales: {
       x: {
         type: 'time',
@@ -325,13 +323,7 @@ const chartOptions = computed(() => {
         ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0, minRotation: 0 },
       },
       y: { beginAtZero: true },
-      // Eje secundario oculto para los marcadores de timeout
-      y_timeout: {
-        min: 0,
-        max: 1,
-        display: false,
-        grid: { display: false },
-      },
+      y_timeout: { min: 0, max: 1, display: false, grid: { display: false } },
     },
     plugins: {
       legend: { display: sensorInfo.value?.sensor_type === 'ethernet' },
@@ -348,7 +340,7 @@ const chartOptions = computed(() => {
         zoom: {
           wheel: { enabled: true, speed: 0.15 },
           pinch: { enabled: true },
-          drag: { enabled: false }, // sin rectángulo
+          drag: { enabled: false },
           mode: 'x',
           limits: { x: { minRange: 5 * 60 * 1000 } },
           onZoomComplete: (args) => handleViewChange(args),
@@ -368,14 +360,13 @@ const chartOptions = computed(() => {
   }
 })
 
-/* ENSURE DATA: trae solo lo faltante para cubrir [start,end] en 'mode' */
+/* Fetch incremental */
 async function ensureCoverage(mode, startMs, endMs) {
   if (historyAbort) historyAbort.abort()
   historyAbort = new AbortController()
   const myToken = ++fetchToken
 
   if (hasCoverage(mode, startMs, endMs)) return
-
   const segs = missingSegments(mode, startMs, endMs)
   if (segs.length === 0) return
 
@@ -404,14 +395,12 @@ async function ensureCoverage(mode, startMs, endMs) {
   }
 }
 
-/* Cambiar vista (pan/zoom/rango) sin refetch si ya hay cobertura */
 async function setView(startMs, endMs) {
   const mode = decideMode(startMs, endMs)
   await ensureCoverage(mode, startMs, endMs)
   currentWindow.value = { startMs, endMs, mode }
 }
 
-/* Handlers pan/zoom: leen el min/max real del scale */
 function handleViewChange({ chart }) {
   const xScale = chart.scales.x
   const start = xScale.min
@@ -421,7 +410,7 @@ function handleViewChange({ chart }) {
   setView(start - pad, end + pad)
 }
 
-/* Rango rápido (1h/12h/24h/7d/30d) */
+/* Rango rápido */
 async function setRange(range) {
   timeRange.value = range
   const endMs = Date.now()
@@ -429,7 +418,7 @@ async function setRange(range) {
   await setView(startMs, endMs)
 }
 
-/* Controles programáticos */
+/* Controles */
 async function shiftWindow(direction = -1) {
   const cw = currentWindow.value
   const now = Date.now()
@@ -483,7 +472,6 @@ onMounted(async () => {
     await connectWebSocketWhenAuthenticated()
     const off = addWsListener(onBusMessage)
 
-    // usar getCurrentWebSocket para suscribir (y evitar no-unused-vars)
     const ws = getCurrentWebSocket && getCurrentWebSocket()
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
@@ -492,7 +480,6 @@ onMounted(async () => {
     onUnmounted(() => {
       off && off()
     })
-
     await setRange(timeRange.value)
   } catch (err) {
     console.error('Error loading sensor details:', err)
@@ -510,7 +497,7 @@ watch(timeRange, async (r) => {
   await setRange(r)
 })
 
-/* Tabla de eventos (derivada de visibleData) */
+/* Tabla de eventos */
 const linkStatusEvents = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || visibleData.value.length === 0) return []
   const events = []
@@ -547,7 +534,6 @@ const showEmptyHint = computed(() => !isBootLoading.value && visibleData.value.l
       </p>
     </div>
 
-    <!-- Barra de rango + controles -->
     <div class="time-controls">
       <div class="range-selector">
         <button
@@ -573,10 +559,7 @@ const showEmptyHint = computed(() => !isBootLoading.value && visibleData.value.l
     <div class="chart-container">
       <div v-show="isFetching" class="top-progress"></div>
 
-      <div v-if="isBootLoading" class="loading-overlay">
-        <p>Cargando datos…</p>
-      </div>
-
+      <div v-if="isBootLoading" class="loading-overlay"><p>Cargando datos…</p></div>
       <div v-if="showEmptyHint" class="empty-hint">Sin datos en esta ventana</div>
 
       <Line v-if="!isBootLoading" ref="chartRef" :data="chartData" :options="chartOptions" />
