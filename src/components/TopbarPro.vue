@@ -2,12 +2,7 @@
   <header :class="['m360-topbar', isHidden ? 'm360-topbar--hidden' : '']">
     <!-- Lado izquierdo: logo + breadcrumb corto -->
     <div class="m360-left">
-      <button
-        class="m360-iconbtn"
-        @click="$emit('toggleSidebar')"
-        title="Menú"
-        aria-label="Abrir menú"
-      >
+      <button class="m360-iconbtn" @click="$emit('toggleSidebar')" aria-label="Abrir menú">
         <!-- hamburguesa -->
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
           <path d="M3 6h18M3 12h18M3 18h18" />
@@ -27,38 +22,21 @@
 
     <!-- Lado derecho: acciones compactas -->
     <div class="m360-right">
-      <!-- Toggle tiempo real -->
-      <button
+      <!-- Indicador tiempo real (solo display, no botón) -->
+      <span
         class="m360-chip"
         :class="realtime ? 'is-on' : 'is-off'"
-        @click="$emit('toggleRealtime')"
-        aria-pressed="realtime"
+        aria-label="Estado tiempo real"
       >
         <span class="dot" />
-        <span class="label">{{ realtime ? 'Tiempo real' : 'Pausado' }}</span>
-      </button>
-
-      <!-- Reloj/uptime (opcional) -->
-      <span class="m360-time" v-if="uptime">{{ uptime }}</span>
-
-      <!-- Command Palette -->
-      <button
-        class="m360-iconbtn"
-        @click="openCmd = true"
-        title="Comandos (Ctrl/⌘+K)"
-        aria-label="Abrir comandos"
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-          <path d="M10 4h4v2h-4zM4 10h2v4H4zm14 0h2v4h-2zM10 18h4v2h-4zM7 7h10v10H7z" />
-        </svg>
-      </button>
+        <span class="label">{{ realtime ? 'Tiempo real' : 'Reconectando…' }}</span>
+      </span>
 
       <!-- Menú rápido -->
       <div class="m360-menu" @keydown.esc="menu = false">
         <button
           class="m360-iconbtn"
           @click="menu = !menu"
-          title="Más"
           aria-haspopup="menu"
           :aria-expanded="menu"
         >
@@ -70,18 +48,20 @@
         </button>
         <div v-if="menu" class="m360-pop" role="menu">
           <router-link to="/" class="m360-item" role="menuitem">Dashboard</router-link>
-          <router-link to="/monitor-builder" class="m360-item" role="menuitem"
-            >Añadir monitor</router-link
-          >
-          <router-link to="/devices" class="m360-item" role="menuitem"
-            >Gestionar dispositivos</router-link
-          >
-          <router-link to="/credentials" class="m360-item" role="menuitem"
-            >Credenciales</router-link
-          >
+          <router-link to="/monitor-builder" class="m360-item" role="menuitem">
+            Añadir monitor
+          </router-link>
+          <router-link to="/devices" class="m360-item" role="menuitem">
+            Gestionar dispositivos
+          </router-link>
+          <router-link to="/credentials" class="m360-item" role="menuitem">
+            Credenciales
+          </router-link>
           <router-link to="/channels" class="m360-item" role="menuitem">Canales</router-link>
           <router-link to="/vpns" class="m360-item" role="menuitem">VPNs</router-link>
-          <button class="m360-item danger" role="menuitem" @click="$emit('logout')">
+
+          <!-- Logout consistente con paleta -->
+          <button class="m360-item logout" role="menuitem" @click="$emit('logout')">
             Cerrar sesión
           </button>
         </div>
@@ -92,40 +72,10 @@
         <span>{{ (userEmail || 'U').slice(0, 1).toUpperCase() }}</span>
       </div>
     </div>
-
-    <!-- Command Palette (muy simple) -->
-    <div v-if="openCmd" class="m360-cmd" @click.self="openCmd = false">
-      <div class="m360-cmd-box">
-        <input
-          v-model="query"
-          type="search"
-          placeholder="Escribe un comando o busca (ej: añadir monitor)…"
-          @keydown.esc="openCmd = false"
-          @keydown.enter="runFirst"
-          aria-label="Buscar comando"
-        />
-        <div class="m360-cmd-list">
-          <router-link
-            v-for="(opt, i) in filtered"
-            :key="opt.to + String(i)"
-            :to="opt.to"
-            class="m360-cmd-item"
-            @click="openCmd = false"
-          >
-            {{ opt.label }}
-          </router-link>
-        </div>
-      </div>
-    </div>
   </header>
 
   <!-- FAB móvil (opcional) -->
-  <router-link
-    to="/monitor-builder"
-    class="m360-fab"
-    title="Añadir monitor"
-    aria-label="Añadir monitor"
-  >
+  <router-link to="/monitor-builder" class="m360-fab" aria-label="Añadir monitor">
     <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
       <path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
     </svg>
@@ -137,17 +87,15 @@ import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 defineProps({
-  realtime: { type: Boolean, default: true },
-  uptime: { type: String, default: '' },
+  realtime: { type: Boolean, default: true }, // solo display
   userEmail: { type: String, default: '' },
   logoSrc: { type: String, default: '/favicon-32x32.png' },
 })
 
-defineEmits(['toggleRealtime', 'toggleSidebar', 'logout'])
+defineEmits(['toggleSidebar', 'logout'])
 
 const route = useRoute()
 const breadcrumb = computed(() => {
-  // título corto a la derecha del logo
   const map = {
     '/': 'Dashboard',
     '/monitor-builder': 'Añadir monitor',
@@ -174,38 +122,6 @@ const menu = ref(false)
 const closeOnRoute = () => (menu.value = false)
 onMounted(() => window.addEventListener('hashchange', closeOnRoute))
 onBeforeUnmount(() => window.removeEventListener('hashchange', closeOnRoute))
-
-// command palette
-const openCmd = ref(false)
-const query = ref('')
-const options = [
-  { label: 'Dashboard', to: '/' },
-  { label: 'Añadir monitor', to: '/monitor-builder' },
-  { label: 'Gestionar dispositivos', to: '/devices' },
-  { label: 'Credenciales', to: '/credentials' },
-  { label: 'Canales', to: '/channels' },
-  { label: 'VPNs', to: '/vpns' },
-]
-const filtered = computed(() =>
-  options.filter((o) => o.label.toLowerCase().includes(query.value.toLowerCase().trim())),
-)
-const runFirst = () => {
-  const f = filtered.value[0]
-  if (f) {
-    openCmd.value = false
-    // navegación se resuelve por <router-link>
-  }
-}
-// atajo Ctrl/⌘+K
-const onKey = (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-    e.preventDefault()
-    openCmd.value = !openCmd.value
-    query.value = ''
-  }
-}
-onMounted(() => window.addEventListener('keydown', onKey))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <style scoped>
@@ -237,7 +153,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 }
 .m360-center {
   pointer-events: none;
-} /* no poner nada en el centro */
+}
 
 /* Marca */
 .m360-brand {
@@ -278,7 +194,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* Chip realtime */
+/* Chip realtime (solo display) */
 .m360-chip {
   height: 24px;
   border-radius: 999px;
@@ -290,6 +206,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   align-items: center;
   font-size: 12px;
   color: #cfe0ff;
+  user-select: none;
+  cursor: default;
 }
 .m360-chip .dot {
   width: 6px;
@@ -302,13 +220,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   box-shadow: 0 0 0 3px rgba(55, 227, 159, 0.18);
 }
 .m360-chip.is-off {
-  opacity: 0.7;
-}
-
-/* Hora / uptime */
-.m360-time {
-  font-size: 12px;
-  color: #9fb2dd;
+  opacity: 0.8;
 }
 
 /* Menú */
@@ -337,8 +249,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .m360-item:hover {
   background: rgba(255, 255, 255, 0.06);
 }
-.m360-item.danger {
-  color: #ffb4b4;
+
+/* Logout consistente (sin fondo blanco) */
+.m360-item.logout {
+  color: #ff9a9a;
+  border-top: 1px solid rgba(255, 154, 154, 0.2);
+  margin-top: 6px;
+}
+.m360-item.logout:hover {
+  background: rgba(233, 69, 96, 0.15);
+  color: #ffc7c7;
 }
 
 /* Avatar simple */
@@ -353,49 +273,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   place-items: center;
   font-size: 12px;
   font-weight: 700;
-}
-
-/* Command Palette */
-.m360-cmd {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: grid;
-  place-items: start center;
-  padding-top: 10vh;
-  z-index: 70;
-}
-.m360-cmd-box {
-  width: min(720px, calc(100vw - 24px));
-  background: #0e1525;
-  border: 1px solid rgba(130, 180, 255, 0.22);
-  border-radius: 14px;
-  overflow: hidden;
-}
-.m360-cmd-box input {
-  width: 100%;
-  height: 44px;
-  background: #0b1220;
-  border: 0;
-  color: #dfe8ff;
-  padding: 0 12px;
-  font-size: 14px;
-  outline: none;
-  border-bottom: 1px solid rgba(130, 180, 255, 0.15);
-}
-.m360-cmd-list {
-  max-height: 50vh;
-  overflow: auto;
-}
-.m360-cmd-item {
-  display: block;
-  padding: 10px 12px;
-  color: #cfe0ff;
-  text-decoration: none;
-  font-size: 14px;
-}
-.m360-cmd-item:hover {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 /* FAB móvil */
@@ -417,7 +294,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 /* Responsivo */
 @media (max-width: 820px) {
   .m360-crumb,
-  .m360-time,
   .m360-brand-text {
     display: none;
   }
@@ -428,9 +304,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   .m360-iconbtn {
     width: 26px;
     height: 26px;
-  }
-  .m360-chip .label {
-    display: none;
   }
   .m360-fab {
     display: grid;
