@@ -35,13 +35,11 @@ ChartJS.register(
   zoomPlugin,
 )
 
-/* Sentinels */
-const PING_TIMEOUT_MS = 10000 // valor que viene del backend para timeout
-const PING_MAX_HARD = 1000 // techo duro razonable
-const PING_MIN_CAP = 200 // piso mínimo inicial
-const PING_MAX_CAP = PING_MAX_HARD // techo máximo inicial
+/* ====== CONSTANTES ====== */
+const PING_TIMEOUT_MS = 10000
+const PING_MAX_HARD = 1000
 
-/* Plugins visuales */
+/* ====== PLUGINS VISUALES ====== */
 const thresholdLinePlugin = {
   id: 'thresholdLine',
   afterDatasetsDraw(chart, _args, opts) {
@@ -87,7 +85,7 @@ const linkDownShadePlugin = {
 
 ChartJS.register(thresholdLinePlugin, linkDownShadePlugin)
 
-/* Estado base */
+/* ====== ESTADO BASE ====== */
 const route = useRoute()
 const router = useRouter()
 const sensorId = Number(route.params.id)
@@ -95,27 +93,25 @@ const sensorId = Number(route.params.id)
 const chartRef = ref(null)
 const sensorInfo = ref(null)
 
-/* Carga / fetch incremental */
 const isBootLoading = ref(true)
 const isFetching = ref(false)
 let historyAbort = null
 let fetchToken = 0
 
-/* Vista actual */
+/* ====== VISTA / RANGO ====== */
 const timeRange = ref('24h')
 const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
+const currentWindow = ref(null) // { startMs, endMs, mode }
+const lastXRange = ref(null) // para detectar cambios reales en X
 
-/* Store por modo */
+/* ====== STORE (raw/auto) ====== */
 const store = reactive({
   raw: { startMs: null, endMs: null, map: new Map() },
   auto: { startMs: null, endMs: null, map: new Map() },
 })
 
-/* Ventana visible */
-const currentWindow = ref(null) // { startMs, endMs, mode }
-
-/* Helpers */
+/* ====== HELPERS ====== */
 function decideMode(startMs, endMs) {
   const hours = Math.max(0, (endMs - startMs) / 3600000)
   return hours < 24 ? 'raw' : 'auto'
@@ -159,7 +155,7 @@ function mapToSortedArray(mode, startMs, endMs) {
   return out
 }
 
-/* Unidad de tiempo dinámica */
+/* ====== TICKS / TIME UNIT ====== */
 const visibleSpanMs = computed(() => {
   if (!currentWindow.value) return (hoursMap[timeRange.value] ?? 24) * 3600000
   return currentWindow.value.endMs - currentWindow.value.startMs
@@ -173,40 +169,54 @@ const timeUnit = computed(() => {
   return 'year'
 })
 
-/* Umbral ping */
+/* ====== THRESHOLD PING ====== */
 const thresholdMs = computed(() => {
   const cfg = sensorInfo.value?.config ?? {}
   return Number(cfg.latency_threshold_ms ?? cfg.latency_threshold_visual ?? 150)
 })
 
-/* Data visible */
+/* ====== DATA VISIBLE ====== */
 const visibleData = computed(() => {
   if (!currentWindow.value) return []
   const { startMs, endMs, mode } = currentWindow.value
   return mapToSortedArray(mode, startMs, endMs)
 })
 
-/* P95 dinámico para “arranque” de Y (sólo sugerencia, vos podés zoom Y libre) */
+/* ====== P95 PARA INICIALIZAR Y UNA SOLA VEZ ====== */
 function percentile(values, p) {
   if (!values.length) return NaN
   const sorted = [...values].sort((a, b) => a - b)
   const idx = (sorted.length - 1) * p
-  const lo = Math.floor(idx)
-  const hi = Math.ceil(idx)
+  const lo = Math.floor(idx),
+    hi = Math.ceil(idx)
   if (lo === hi) return sorted[lo]
   const w = idx - lo
   return sorted[lo] * (1 - w) + sorted[hi] * w
 }
-const pingYSuggested = computed(() => {
+function calcInitialCap() {
   const vals = visibleData.value
     .map((d) => Number(d.latency_ms ?? 0))
     .filter((v) => Number.isFinite(v) && v > 0 && v < PING_TIMEOUT_MS)
-  if (vals.length === 0) return PING_MIN_CAP
-  const p95 = percentile(vals, 0.95)
-  return Math.min(Math.max(p95 * 1.1, PING_MIN_CAP), PING_MAX_CAP)
+  if (!vals.length) return 200
+  return Math.min(Math.max(percentile(vals, 0.95) * 1.1, 120), PING_MAX_HARD)
+}
+
+/* ====== ESTADO PERSISTENTE DEL EJE Y ====== */
+const yState = reactive({
+  min: null, // null => auto
+  max: null, // null => auto
+  initialized: false, // inicializado una vez con P95
+})
+watch(visibleData, () => {
+  // Inicializamos Y una sola vez cuando hay datos
+  if (!yState.initialized && sensorInfo.value?.sensor_type === 'ping' && visibleData.value.length) {
+    yState.min = 0
+    yState.max = calcInitialCap()
+    yState.initialized = true
+  }
 })
 
-/* Sombreado link_down */
+/* ====== EVENTOS LINK DOWN ====== */
 const linkDownIntervals = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || visibleData.value.length === 0) return []
   const ranges = []
@@ -227,7 +237,7 @@ const linkDownIntervals = computed(() => {
   return ranges
 })
 
-/* Datasets */
+/* ====== DATASETS ====== */
 function mbps(bits) {
   const n = Number(bits)
   return !Number.isFinite(n) || n < 0 ? 0 : Number((n / 1_000_000).toFixed(2))
@@ -240,26 +250,27 @@ const chartData = computed(() => {
   if (type === 'ping') {
     const base = '#5372f0'
     const alarm = 'rgba(233,69,96,1)'
-    const cap = pingYSuggested.value
 
-    // Línea principal (corta en outliers y en timeouts)
+    // Línea principal (omitimos outliers/timeout)
     const linePoints = pts.map((d) => {
       const v = Number(d.latency_ms ?? 0)
       const isTimeout = v >= PING_TIMEOUT_MS
-      const isOutlier = v > cap && !isTimeout
-      return { x: d._ms, y: isTimeout || isOutlier ? null : v }
+      // si hay max definido y v>max => “cortamos” para no aplastar visual
+      const isOutOfView = typeof yState.max === 'number' && v > yState.max && !isTimeout
+      return { x: d._ms, y: isTimeout || isOutOfView ? null : v }
     })
 
-    // Marcadores de OUTLIERS (por encima del cap pero debajo de timeout)
+    // Picos fuera de vista (por encima del max actual) como pines en eje oculto
     const outlierPoints = pts
       .map((d) => {
         const v = Number(d.latency_ms ?? 0)
-        if (v > cap && v < PING_TIMEOUT_MS) return { x: d._ms, y: 1, _actual: v }
+        const over = typeof yState.max === 'number' && v > yState.max && v < PING_TIMEOUT_MS
+        if (over) return { x: d._ms, y: 1, _actual: v }
         return null
       })
       .filter(Boolean)
 
-    // Marcadores de TIMEOUTS
+    // Timeouts como triángulos en eje oculto
     const timeoutPoints = pts
       .filter((d) => Number(d.latency_ms ?? 0) >= PING_TIMEOUT_MS)
       .map((d) => ({ x: d._ms, y: 1, _actual: Number(d.latency_ms ?? PING_TIMEOUT_MS) }))
@@ -284,7 +295,6 @@ const chartData = computed(() => {
           },
         },
         {
-          // Outliers como pines en eje oculto
           label: 'Pico',
           type: 'line',
           yAxisID: 'y_outlier',
@@ -298,7 +308,6 @@ const chartData = computed(() => {
           clip: false,
         },
         {
-          // Timeouts como triángulos en eje oculto
           label: 'Timeout',
           type: 'line',
           yAxisID: 'y_timeout',
@@ -343,7 +352,7 @@ const chartData = computed(() => {
   return { datasets: [] }
 })
 
-/* Opciones — ahora el zoom/pan es XY (como trading) y el Y NO está fijado */
+/* ====== OPCIONES (Y con estado propio, zoom/pan XY) ====== */
 const chartOptions = computed(() => {
   const xMin = currentWindow.value?.startMs ?? undefined
   const xMax = currentWindow.value?.endMs ?? undefined
@@ -374,9 +383,10 @@ const chartOptions = computed(() => {
         ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0, minRotation: 0 },
       },
       y: {
-        beginAtZero: true,
-        // sin max fijo; sólo sugerimos un arranque razonable
-        suggestedMax: isPing ? pingYSuggested.value : undefined,
+        // NO fijamos beginAtZero para permitir pan/zoom real
+        min: typeof yState.min === 'number' ? yState.min : undefined,
+        max: typeof yState.max === 'number' ? yState.max : undefined,
+        grace: '5%',
       },
       y_outlier: { min: 0, max: 1, display: false, grid: { display: false } },
       y_timeout: { min: 0, max: 1, display: false, grid: { display: false } },
@@ -389,17 +399,17 @@ const chartOptions = computed(() => {
       zoom: {
         pan: {
           enabled: true,
-          mode: 'xy', // <— pan vertical y horizontal
+          mode: 'xy',
           threshold: 3,
-          onPanComplete: (args) => handleViewChange(args), // sólo recarga si cambió X
+          onPanComplete: onZoomPanDone,
         },
         zoom: {
-          wheel: { enabled: true, speed: 0.15 }, // wheel sobre el chart: zoom X+Y
-          pinch: { enabled: true }, // pinch en móviles: zoom X+Y
-          drag: { enabled: false }, // sin rectángulo
-          mode: 'xy', // <— zoom vertical y horizontal
+          wheel: { enabled: true, speed: 0.15 },
+          pinch: { enabled: true },
+          drag: { enabled: false },
+          mode: 'xy',
           limits: { x: { minRange: 5 * 60 * 1000 } },
-          onZoomComplete: (args) => handleViewChange(args),
+          onZoomComplete: onZoomPanDone,
         },
       },
       tooltip: {
@@ -421,7 +431,35 @@ const chartOptions = computed(() => {
   }
 })
 
-/* Fetch incremental */
+/* ====== HANDLERS ZOOM/PAN ====== */
+function onZoomPanDone({ chart }) {
+  const xScale = chart.scales.x
+  const yScale = chart.scales.y
+
+  // Persistimos Y tal como quedó tras el gesto (trading-like)
+  if (yScale) {
+    yState.min = Number.isFinite(yScale.min) ? yScale.min : null
+    yState.max = Number.isFinite(yScale.max) ? yScale.max : null
+    yState.initialized = true
+  }
+
+  // Sólo refetcheamos si cambió X “de verdad”
+  if (xScale) {
+    const newStart = Math.round(xScale.min)
+    const newEnd = Math.round(xScale.max)
+    const prev = lastXRange.value
+    const EPS = 1000 // 1s
+    const changedX =
+      !prev || Math.abs(newStart - prev.start) > EPS || Math.abs(newEnd - prev.end) > EPS
+    if (changedX) {
+      lastXRange.value = { start: newStart, end: newEnd }
+      const pad = Math.max((newEnd - newStart) * 0.05, 60_000)
+      setView(newStart - pad, newEnd + pad)
+    }
+  }
+}
+
+/* ====== FETCH INCREMENTAL ====== */
 async function ensureCoverage(mode, startMs, endMs) {
   if (historyAbort) historyAbort.abort()
   historyAbort = new AbortController()
@@ -456,31 +494,21 @@ async function ensureCoverage(mode, startMs, endMs) {
   }
 }
 
+/* ====== VIEW / RANGO ====== */
 async function setView(startMs, endMs) {
   const mode = decideMode(startMs, endMs)
   await ensureCoverage(mode, startMs, endMs)
   currentWindow.value = { startMs, endMs, mode }
+  lastXRange.value = { start: startMs, end: endMs }
 }
 
-/* Sólo reaccionamos a cambios en X (para no refetchear por zoom Y puro) */
-function handleViewChange({ chart }) {
-  const xScale = chart.scales.x
-  const start = xScale.min
-  const end = xScale.max
-  if (!isFinite(start) || !isFinite(end)) return
-  const pad = Math.max((end - start) * 0.05, 60_000)
-  setView(start - pad, end + pad)
-}
-
-/* Rango rápido */
+/* ====== CONTROLES DE RANGO ====== */
 async function setRange(range) {
   timeRange.value = range
   const endMs = Date.now()
   const startMs = endMs - (hoursMap[range] ?? 24) * 3600 * 1000
   await setView(startMs, endMs)
 }
-
-/* Controles */
 async function shiftWindow(direction = -1) {
   const cw = currentWindow.value
   const now = Date.now()
@@ -508,14 +536,25 @@ async function goLive() {
   await setView(startMs, endMs)
 }
 
-/* WebSocket */
+/* ====== CONTROLES DE Y (PRO) ====== */
+function resetY() {
+  yState.min = null
+  yState.max = null
+  yState.initialized = false
+}
+function fitY() {
+  yState.min = 0
+  yState.max = calcInitialCap()
+  yState.initialized = true
+}
+
+/* ====== WEBSOCKET ====== */
 function onBusMessage(payload) {
   const updates = (Array.isArray(payload) ? payload : [payload]).filter(
     (u) => u && Number(u.sensor_id) === sensorId,
   )
   if (updates.length === 0) return
   const points = updates.map(normalizePoint)
-
   for (const mode of ['raw', 'auto']) {
     mergeItems(mode, points)
     for (const p of points) {
@@ -525,7 +564,7 @@ function onBusMessage(payload) {
   }
 }
 
-/* Primera carga */
+/* ====== MOUNT ====== */
 onMounted(async () => {
   try {
     const { data } = await api.get(`/sensors/${sensorId}/details`)
@@ -534,6 +573,7 @@ onMounted(async () => {
     await connectWebSocketWhenAuthenticated()
     const off = addWsListener(onBusMessage)
 
+    // tocar el ws para evitar no-unused-vars y subscribir
     const ws = getCurrentWebSocket && getCurrentWebSocket()
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
@@ -542,6 +582,7 @@ onMounted(async () => {
     onUnmounted(() => {
       off && off()
     })
+
     await setRange(timeRange.value)
   } catch (err) {
     console.error('Error loading sensor details:', err)
@@ -554,17 +595,16 @@ onMounted(async () => {
 onUnmounted(() => {
   if (historyAbort) historyAbort.abort()
 })
-
 watch(timeRange, async (r) => {
   await setRange(r)
 })
 
-/* Tabla de eventos */
+/* ====== TABLA DE EVENTOS ====== */
 const linkStatusEvents = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || visibleData.value.length === 0) return []
   const events = []
-  let lastStatus = null
-  let lastSpeed = null
+  let lastStatus = null,
+    lastSpeed = null
   for (const d of [...visibleData.value].reverse()) {
     if (d.status !== lastStatus || d.speed !== lastSpeed) {
       events.push({
@@ -615,6 +655,9 @@ const showEmptyHint = computed(() => !isBootLoading.value && visibleData.value.l
         <span class="sep"></span>
         <button @click="zoomBy(0.5)" title="Acercar (zoom in)">＋</button>
         <button @click="zoomBy(2)" title="Alejar (zoom out)">－</button>
+        <span class="sep"></span>
+        <button @click="fitY()" title="Ajustar Y a P95 actual">Fit Y (P95)</button>
+        <button @click="resetY()" title="Automático (resetear Y)">Auto Y</button>
       </div>
     </div>
 
