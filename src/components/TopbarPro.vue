@@ -74,12 +74,29 @@
     </div>
   </header>
 
-  <!-- FAB móvil (opcional) -->
-  <router-link to="/monitor-builder" class="m360-fab" aria-label="Añadir monitor">
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-      <path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
-    </svg>
-  </router-link>
+  <!-- SPEED DIAL (solo móvil) -->
+  <div class="m360-fab-wrapper" @click.self="fabOpen = false">
+    <div class="m360-fab-main" @click.stop="fabOpen = !fabOpen" aria-label="Acciones rápidas">
+      <svg
+        viewBox="0 0 24 24"
+        width="22"
+        height="22"
+        fill="currentColor"
+        :class="{ open: fabOpen }"
+      >
+        <path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
+      </svg>
+    </div>
+
+    <transition name="fade">
+      <div v-if="fabOpen" class="m360-fab-menu" @click.stop>
+        <router-link to="/monitor-builder" class="m360-fab-item">➕ Añadir</router-link>
+        <router-link to="/devices" class="m360-fab-item">⚙️ Dispositivos</router-link>
+        <router-link to="/channels" class="m360-fab-item">🌐 Canales</router-link>
+        <button class="m360-fab-item danger" @click="$emit('logout')">⎋ Cerrar sesión</button>
+      </div>
+    </transition>
+  </div>
 </template>
 
 <script setup>
@@ -117,11 +134,19 @@ const onScroll = () => {
 onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
 onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
 
-// menú
+// menú topbar
 const menu = ref(false)
 const closeOnRoute = () => (menu.value = false)
 onMounted(() => window.addEventListener('hashchange', closeOnRoute))
 onBeforeUnmount(() => window.removeEventListener('hashchange', closeOnRoute))
+
+// speed dial
+const fabOpen = ref(false)
+const closeFabOnEscape = (e) => {
+  if (e.key === 'Escape') fabOpen.value = false
+}
+onMounted(() => window.addEventListener('keydown', closeFabOnEscape))
+onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
 </script>
 
 <style scoped>
@@ -223,7 +248,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', closeOnRoute))
   opacity: 0.8;
 }
 
-/* Menú */
+/* Menú topbar */
 .m360-menu {
   position: relative;
 }
@@ -275,23 +300,74 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', closeOnRoute))
   font-weight: 700;
 }
 
-/* FAB móvil */
-.m360-fab {
+/* SPEED DIAL */
+.m360-fab-wrapper {
   position: fixed;
   right: 14px;
   bottom: 14px;
+  z-index: 45;
+  display: none;
+}
+.m360-fab-main {
   width: 48px;
   height: 48px;
   border-radius: 14px;
   background: #2b68ff;
   color: white;
-  display: none;
+  display: grid;
   place-items: center;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
-  z-index: 45;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.15s ease;
+}
+.m360-fab-main:hover {
+  transform: translateY(-1px);
+}
+.m360-fab-main svg.open {
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
 }
 
-/* Responsivo */
+.m360-fab-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.m360-fab-item {
+  background: #1a2236;
+  color: #cfe0ff;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  text-decoration: none;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+.m360-fab-item:hover {
+  background: #2b68ff;
+  color: white;
+}
+.m360-fab-item.danger {
+  background: rgba(233, 69, 96, 0.15);
+  color: #ffc7c7;
+}
+.m360-fab-item.danger:hover {
+  background: rgba(233, 69, 96, 0.28);
+}
+
+/* Transición */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Responsivo: visible solo en móvil */
 @media (max-width: 820px) {
   .m360-crumb,
   .m360-brand-text {
@@ -305,8 +381,9 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', closeOnRoute))
     width: 26px;
     height: 26px;
   }
-  .m360-fab {
-    display: grid;
+
+  .m360-fab-wrapper {
+    display: block;
   }
 }
 </style>
