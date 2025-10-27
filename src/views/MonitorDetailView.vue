@@ -36,6 +36,9 @@ ChartJS.register(
   zoomPlugin,
 )
 
+/* ====== CONSTANTE PARA TIMEOUT DE PING ====== */
+const PING_TIMEOUT_MS = 10000 // ajustá si tu backend usa otro sentinel
+
 /* Plugins visuales */
 const thresholdLinePlugin = {
   id: 'thresholdLine',
@@ -215,17 +218,49 @@ const chartData = computed(() => {
   if (type === 'ping') {
     const base = '#5372f0'
     const alarm = 'rgba(233,69,96,1)'
+
+    // Línea principal: cortamos donde haya timeout
+    const linePoints = pts.map((d) => {
+      const v = Number(d.latency_ms ?? 0)
+      return { x: d._ms, y: v >= PING_TIMEOUT_MS ? null : v }
+    })
+
+    // Marcadores de timeout en eje secundario oculto
+    const timeoutPoints = pts
+      .filter((d) => Number(d.latency_ms ?? 0) >= PING_TIMEOUT_MS)
+      .map((d) => ({ x: d._ms, y: 1 }))
+
     return {
       datasets: [
         {
           label: 'Latencia (ms)',
           backgroundColor: base,
           borderColor: base,
-          data: pts.map((d) => ({ x: d._ms, y: Number(d.latency_ms ?? 0) })),
+          data: linePoints,
           tension: 0.2,
           pointRadius: 2,
-          pointBackgroundColor: (ctx) => (ctx.raw?.y > thresholdMs.value ? alarm : base),
-          pointBorderColor: (ctx) => (ctx.raw?.y > thresholdMs.value ? alarm : base),
+          spanGaps: false, // no unir sobre null (cortes visibles)
+          pointBackgroundColor: (ctx) => {
+            const v = ctx.raw?.y
+            return typeof v === 'number' && v > thresholdMs.value ? alarm : base
+          },
+          pointBorderColor: (ctx) => {
+            const v = ctx.raw?.y
+            return typeof v === 'number' && v > thresholdMs.value ? alarm : base
+          },
+        },
+        {
+          label: 'Timeout',
+          type: 'scatter',
+          yAxisID: 'y_timeout',
+          data: timeoutPoints,
+          showLine: false,
+          pointRadius: 5,
+          pointHoverRadius: 6,
+          pointStyle: 'triangle',
+          backgroundColor: 'rgba(233,69,96,1)',
+          borderColor: 'rgba(233,69,96,1)',
+          clip: false,
         },
       ],
     }
@@ -270,7 +305,7 @@ const chartOptions = computed(() => {
     maintainAspectRatio: false,
     animation: { duration: 0 },
     parsing: false,
-    spanGaps: true,
+    spanGaps: isPing ? false : true, // ping corta la línea en timeouts
     scales: {
       x: {
         type: 'time',
@@ -290,6 +325,13 @@ const chartOptions = computed(() => {
         ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0, minRotation: 0 },
       },
       y: { beginAtZero: true },
+      // Eje secundario oculto para los marcadores de timeout
+      y_timeout: {
+        min: 0,
+        max: 1,
+        display: false,
+        grid: { display: false },
+      },
     },
     plugins: {
       legend: { display: sensorInfo.value?.sensor_type === 'ethernet' },
@@ -310,6 +352,15 @@ const chartOptions = computed(() => {
           mode: 'x',
           limits: { x: { minRange: 5 * 60 * 1000 } },
           onZoomComplete: (args) => handleViewChange(args),
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label(ctx) {
+            if (ctx.dataset?.label === 'Timeout') return 'Timeout'
+            const v = ctx.parsed?.y
+            return typeof v === 'number' ? `Latencia: ${v} ms` : ''
+          },
         },
       },
     },
@@ -432,7 +483,7 @@ onMounted(async () => {
     await connectWebSocketWhenAuthenticated()
     const off = addWsListener(onBusMessage)
 
-    // usar getCurrentWebSocket para suscribir (evita el no-unused-vars y asegura updates)
+    // usar getCurrentWebSocket para suscribir (y evitar no-unused-vars)
     const ws = getCurrentWebSocket && getCurrentWebSocket()
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
