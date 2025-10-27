@@ -1,36 +1,43 @@
 <!-- src/App.vue -->
 <script setup>
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
-import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import { RouterView, useRoute, useRouter } from 'vue-router'
 import { supabase } from '@/lib/supabase'
 import logo from '@/assets/logo.svg'
 
-// 🔌 WS
+import TopbarPro from '@/components/TopbarPro.vue'
+
 import { connectWebSocketWhenAuthenticated, addWsListener, getCurrentWebSocket } from '@/lib/ws'
 
 const route = useRoute()
 const router = useRouter()
 
-// Auth/session
+// ===== Auth/session =====
 const session = ref(null)
 const userEmail = ref('')
 
 // Ocultar chrome en rutas que lo pidan
 const hideChrome = computed(() => route.meta?.hideChrome === true)
 
-// Estado de tiempo real para mostrar en el header
+// ===== Estado de tiempo real / WS =====
 const live = reactive({
   connected: false,
-  lastMsgIso: null, // ISO de la última actualización (batch o update)
+  lastMsgIso: null,
 })
 
-// Tooltip del chip de estado
 const liveTooltip = computed(() => {
   const parts = []
   parts.push(live.connected ? 'WS: conectado' : 'WS: reconectando')
   if (live.lastMsgIso) parts.push(`última: ${new Date(live.lastMsgIso).toLocaleString()}`)
   return parts.join(' · ')
 })
+
+// Permite pausar/reanudar el tiempo real desde la barra
+const realtimeEnabled = ref(true)
+
+let wsStateTimer = null
+let offWsListener = null
+let offAuthSub = null
 
 async function getSession() {
   const { data } = await supabase.auth.getSession()
@@ -42,24 +49,42 @@ async function logout() {
   try {
     await supabase.auth.signOut()
   } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.warn('[auth] signOut error:', err?.message || err)
-    }
+    if (import.meta?.env?.DEV) console.warn('[auth] signOut error:', err?.message || err)
   }
   session.value = null
   userEmail.value = ''
   router.push('/login')
 }
 
-// Mantener live.connected coherente incluso si el WS rota internamente
-let wsStateTimer = null
+// ===== Uptime para Topbar =====
+const uptime = ref('00:00:00')
+let uptimeTimer = null
+const fmt = (ms) => {
+  const s = Math.floor(ms / 1000)
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0')
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+  const ss = String(s % 60).padStart(2, '0')
+  return `${hh}:${mm}:${ss}`
+}
+function startUptime() {
+  const start = Date.now()
+  stopUptime()
+  uptimeTimer = setInterval(() => (uptime.value = fmt(Date.now() - start)), 1000)
+}
+function stopUptime() {
+  if (uptimeTimer) {
+    clearInterval(uptimeTimer)
+    uptimeTimer = null
+  }
+}
+
+// ===== WS helpers =====
 function startWsStatePolling() {
   stopWsStatePolling()
   wsStateTimer = setInterval(() => {
     try {
       const ws = getCurrentWebSocket()
-      const state = ws?.readyState
-      live.connected = state === WebSocket.OPEN
+      live.connected = ws?.readyState === WebSocket.OPEN
     } catch (err) {
       live.connected = false
       if (import.meta?.env?.DEV) {
@@ -75,8 +100,57 @@ function stopWsStatePolling() {
   }
 }
 
-let offWsListener = null
-let offAuthSub = null
+function attachWsListener() {
+  detachWsListener()
+  offWsListener = addWsListener((msg) => {
+    if (!msg || typeof msg !== 'object') return
+    const ts = (typeof msg.timestamp === 'string' && msg.timestamp) || new Date().toISOString()
+    live.lastMsgIso = ts
+  })
+}
+function detachWsListener() {
+  if (typeof offWsListener === 'function') {
+    try {
+      offWsListener()
+    } catch (err) {
+      if (import.meta?.env?.DEV) console.debug('[WS] offWsListener error:', err?.message || err)
+    }
+    offWsListener = null
+  }
+}
+
+// Encendido de “Tiempo real”
+async function startRealtime() {
+  realtimeEnabled.value = true
+  try {
+    await connectWebSocketWhenAuthenticated()
+  } catch (err) {
+    if (import.meta?.env?.DEV) {
+      console.warn('[WS] connectWhenAuthenticated falló (continuamos):', err?.message || err)
+    }
+  }
+  attachWsListener()
+  startWsStatePolling()
+}
+
+// Pausa de “Tiempo real”
+function stopRealtime() {
+  realtimeEnabled.value = false
+  detachWsListener()
+  stopWsStatePolling()
+  try {
+    const ws = getCurrentWebSocket()
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, 'paused-by-user')
+  } catch (err) {
+    if (import.meta?.env?.DEV) console.debug('[WS] close error:', err?.message || err)
+  }
+  live.connected = false
+}
+
+function onToggleRealtime() {
+  if (realtimeEnabled.value) stopRealtime()
+  else startRealtime()
+}
 
 onMounted(async () => {
   await getSession()
@@ -90,106 +164,42 @@ onMounted(async () => {
     try {
       sub?.subscription?.unsubscribe()
     } catch (err) {
-      if (import.meta?.env?.DEV) {
-        console.debug('[auth] unsubscribe error:', err?.message || err)
-      }
+      if (import.meta?.env?.DEV) console.debug('[auth] unsubscribe error:', err?.message || err)
     }
   }
 
-  // Asegurar conexión WS global (idempotente)
-  try {
-    await connectWebSocketWhenAuthenticated()
-  } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.warn('[WS] connect on App.vue failed (continuamos):', err?.message || err)
-    }
-  }
-
-  // Polling del estado de conexión (cubre rotaciones de socket)
-  startWsStatePolling()
-
-  // Listener de mensajes en vivo (solo para actualizar la hora)
-  offWsListener = addWsListener((msg) => {
-    if (!msg || typeof msg !== 'object') return
-    const ts = (typeof msg.timestamp === 'string' && msg.timestamp) || new Date().toISOString()
-    live.lastMsgIso = ts
-  })
+  // Arranque general
+  startUptime()
+  await startRealtime()
 })
 
 onBeforeUnmount(() => {
   try {
-    if (typeof offWsListener === 'function') offWsListener()
-  } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.debug('[WS] offWsListener error:', err?.message || err)
-    }
-  }
-  try {
     if (typeof offAuthSub === 'function') offAuthSub()
   } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.debug('[auth] offAuthSub error:', err?.message || err)
-    }
+    if (import.meta?.env?.DEV) console.debug('[auth] offAuthSub error:', err?.message || err)
   }
-  stopWsStatePolling()
+  stopRealtime()
+  stopUptime()
 })
 </script>
 
 <template>
   <div id="app-layout">
-    <!-- Header SIEMPRE visible para mantener logo/título -->
-    <header class="main-header">
-      <div class="header-container">
-        <!-- Logo + Título (siempre visibles) -->
-        <div class="title-group">
-          <img :src="logo" alt="Monitor360 Logo" class="logo" />
-          <h1 class="title-gradient">Monitor360</h1>
-        </div>
+    <!-- Topbar Pro (oculta en rutas con meta.hideChrome) -->
+    <TopbarPro
+      v-if="!hideChrome"
+      :realtime="realtimeEnabled"
+      :uptime="uptime"
+      :userEmail="userEmail"
+      :logoSrc="logo"
+      @toggleRealtime="onToggleRealtime"
+      @toggleSidebar="null /* integrar si habilitas sidebar */"
+      @logout="logout"
+    />
 
-        <!-- Navegación (oculta en páginas con hideChrome, p.ej. login) -->
-        <nav class="main-nav" v-if="!hideChrome">
-          <RouterLink to="/">Dashboard</RouterLink>
-          <RouterLink to="/monitor-builder">Añadir Monitor</RouterLink>
-          <RouterLink to="/devices">Gestionar Dispositivos</RouterLink>
-          <RouterLink to="/credentials">Credenciales</RouterLink>
-          <RouterLink to="/channels">Canales</RouterLink>
-          <RouterLink to="/vpns">VPNs</RouterLink>
-        </nav>
-
-        <!-- Usuario + Logout + Chip tiempo real (oculto cuando hideChrome) -->
-        <div v-if="!hideChrome" class="right-box">
-          <!-- Chip de estado WS -->
-          <div
-            class="realtime-chip"
-            :class="{ ok: live.connected, warn: !live.connected }"
-            :title="liveTooltip"
-            aria-label="Estado tiempo real"
-          >
-            <span class="dot" />
-            <span class="label">
-              {{ live.connected ? 'Tiempo real' : 'Reconectando…' }}
-            </span>
-            <span v-if="live.lastMsgIso" class="sep">•</span>
-            <span v-if="live.lastMsgIso" class="metric">
-              {{ new Date(live.lastMsgIso).toLocaleTimeString() }}
-            </span>
-          </div>
-
-          <div v-if="session" class="user-box">
-            <span class="user-icon" :title="userEmail" aria-label="Usuario">
-              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-                <path
-                  d="M12 12c2.761 0 5-2.686 5-6s-2.239-6-5-6-5 2.686-5 6 2.239 6 5 6zm0 2c-4.418 0-8 2.91-8 6.5V22h16v-1.5c0-3.59-3.582-6.5-8-6.5z"
-                />
-              </svg>
-            </span>
-            <button class="btn-logout" @click="logout">Cerrar sesión</button>
-          </div>
-        </div>
-      </div>
-    </header>
-
-    <main class="main-content">
+    <!-- Contenido -->
+    <main class="main-content" :title="!hideChrome ? liveTooltip : null">
       <RouterView />
     </main>
   </div>
@@ -197,6 +207,10 @@ onBeforeUnmount(() => {
 
 <style>
 :root {
+  /* Base para el efecto glass del Topbar */
+  --m360-bg: #0b1220;
+
+  /* Paleta existente */
   --bg-color: #1a1a2e;
   --surface-color: #16213e;
   --primary-color: #0f3460;
@@ -213,6 +227,7 @@ onBeforeUnmount(() => {
 *::after {
   box-sizing: border-box;
 }
+
 html,
 body,
 #app {
@@ -232,203 +247,17 @@ body {
   min-height: 100vh;
 }
 
-/* ===== Header ===== */
-.main-header {
-  width: 100%;
-  background-color: var(--surface-color);
-  border-bottom: 1px solid var(--primary-color);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  position: sticky;
-  top: 0;
-  z-index: 1000;
-}
-
-.header-container {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  max-width: 100%;
-  margin: 0;
-  padding: 1rem 2rem;
-}
-
-.title-group {
-  display: flex;
-  align-items: center;
-  gap: 1.25rem;
-  margin-right: auto;
-}
-
-.logo {
-  height: 80px;
-  width: auto;
-  display: block;
-}
-
-/* ===== Título con gradiente ===== */
-.title-gradient {
-  font-size: 2.25rem;
-  font-weight: 700;
-  margin: 0;
-  background: linear-gradient(90deg, #00c896, #23d7ff);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* ===== Nav centrado ===== */
-.main-nav {
-  flex-grow: 1;
-  display: flex;
-  justify-content: center;
-  gap: 1.25rem;
-}
-
-.main-nav a {
-  color: var(--gray);
-  text-decoration: none;
-  padding: 0.5rem 1.25rem;
-  font-weight: 600;
-  border-radius: 6px;
-  transition: all 0.2s ease-in-out;
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-
-.main-nav a.router-link-exact-active {
-  color: #fff;
-  background-color: var(--blue);
-}
-
-.main-nav a:hover:not(.router-link-exact-active) {
-  background-color: var(--primary-color);
-  color: #fff;
-}
-
-/* ===== Lado derecho header ===== */
-.right-box {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-/* ===== Chip estado tiempo real ===== */
-.realtime-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  color: #eaeaea;
-  font-size: 0.85rem;
-}
-.realtime-chip .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  background: #ffbf47; /* por defecto (warn) */
-}
-.realtime-chip.ok .dot {
-  background: #3ddc84;
-}
-.realtime-chip.warn .dot {
-  background: #ffbf47;
-}
-.realtime-chip .label {
-  font-weight: 600;
-}
-.realtime-chip .sep {
-  opacity: 0.6;
-}
-.realtime-chip .metric {
-  opacity: 0.95;
-}
-
-/* ===== User box ===== */
-.user-box {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.user-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 1px solid #2a2a2a;
-  background: #0e0e0e;
-  display: grid;
-  place-items: center;
-  color: #eaeaea;
-}
-
-.user-icon svg {
-  fill: #eaeaea;
-  display: block;
-}
-
-.btn-logout {
-  background: transparent;
-  border: 1px solid var(--secondary-color);
-  border-radius: 6px;
-  color: var(--secondary-color);
-  padding: 0.4rem 0.8rem;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: 0.2s;
-}
-.btn-logout:hover {
-  background: var(--secondary-color);
-  color: #fff;
-}
-
-/* ===== Contenido ===== */
+/* Contenido; TopbarPro ya es sticky (44px). */
 .main-content {
   width: 100%;
-  padding: 2rem;
+  padding: 16px;
   flex-grow: 1;
 }
 
-/* ===== Responsivo ===== */
-@media (max-width: 1024px) {
-  .header-container {
-    flex-direction: column;
-    justify-content: center;
-    gap: 1rem;
-  }
-  .title-group {
-    margin-right: 0;
-    justify-content: center;
-  }
-  .logo {
-    height: 64px;
-  }
-  .title-gradient {
-    font-size: 2rem;
-  }
-}
-@media (max-width: 768px) {
-  .logo {
-    height: 56px;
-  }
-  .title-gradient {
-    font-size: 1.8rem;
-  }
-}
+/* Responsivo mínimo para el contenido */
 @media (max-width: 480px) {
-  .logo {
-    height: 48px;
-  }
-  .title-gradient {
-    font-size: 1.6rem;
-  }
-  .main-nav {
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 0.5rem;
+  .main-content {
+    padding: 12px;
   }
 }
 </style>
