@@ -36,10 +36,10 @@ ChartJS.register(
 )
 
 /* Sentinels */
-const PING_TIMEOUT_MS = 20000 // valor que viene del backend para timeout
-const PING_MAX_HARD = 500 // techo duro razonable (seguro por si el P95 se va muy alto)
-const PING_MIN_CAP = 5 // piso mínimo de escala
-const PING_MAX_CAP = PING_MAX_HARD // techo máximo de escala
+const PING_TIMEOUT_MS = 10000 // valor que viene del backend para timeout
+const PING_MAX_HARD = 1000 // techo duro razonable
+const PING_MIN_CAP = 200 // piso mínimo inicial
+const PING_MAX_CAP = PING_MAX_HARD // techo máximo inicial
 
 /* Plugins visuales */
 const thresholdLinePlugin = {
@@ -186,7 +186,7 @@ const visibleData = computed(() => {
   return mapToSortedArray(mode, startMs, endMs)
 })
 
-/* P95 dinámico para la escala del eje Y en ping */
+/* P95 dinámico para “arranque” de Y (sólo sugerencia, vos podés zoom Y libre) */
 function percentile(values, p) {
   if (!values.length) return NaN
   const sorted = [...values].sort((a, b) => a - b)
@@ -197,16 +197,13 @@ function percentile(values, p) {
   const w = idx - lo
   return sorted[lo] * (1 - w) + sorted[hi] * w
 }
-const pingYCap = computed(() => {
-  // Tomamos sólo latencias válidas (< TIMEOUT) dentro de la ventana
+const pingYSuggested = computed(() => {
   const vals = visibleData.value
     .map((d) => Number(d.latency_ms ?? 0))
     .filter((v) => Number.isFinite(v) && v > 0 && v < PING_TIMEOUT_MS)
   if (vals.length === 0) return PING_MIN_CAP
   const p95 = percentile(vals, 0.95)
-  // inflamos un 10% y acotamos a rangos sanos
-  const cap = Math.min(Math.max(p95 * 1.1, PING_MIN_CAP), PING_MAX_CAP)
-  return cap
+  return Math.min(Math.max(p95 * 1.1, PING_MIN_CAP), PING_MAX_CAP)
 })
 
 /* Sombreado link_down */
@@ -243,7 +240,7 @@ const chartData = computed(() => {
   if (type === 'ping') {
     const base = '#5372f0'
     const alarm = 'rgba(233,69,96,1)'
-    const cap = pingYCap.value
+    const cap = pingYSuggested.value
 
     // Línea principal (corta en outliers y en timeouts)
     const linePoints = pts.map((d) => {
@@ -287,7 +284,7 @@ const chartData = computed(() => {
           },
         },
         {
-          // Outliers como pines (sin línea) en eje oculto
+          // Outliers como pines en eje oculto
           label: 'Pico',
           type: 'line',
           yAxisID: 'y_outlier',
@@ -296,7 +293,7 @@ const chartData = computed(() => {
           pointRadius: 4,
           pointHoverRadius: 5,
           pointStyle: 'rectRot',
-          backgroundColor: 'rgba(255,193,7,1)', // amarillo
+          backgroundColor: 'rgba(255,193,7,1)',
           borderColor: 'rgba(255,193,7,1)',
           clip: false,
         },
@@ -346,7 +343,7 @@ const chartData = computed(() => {
   return { datasets: [] }
 })
 
-/* Opciones */
+/* Opciones — ahora el zoom/pan es XY (como trading) y el Y NO está fijado */
 const chartOptions = computed(() => {
   const xMin = currentWindow.value?.startMs ?? undefined
   const xMax = currentWindow.value?.endMs ?? undefined
@@ -378,12 +375,10 @@ const chartOptions = computed(() => {
       },
       y: {
         beginAtZero: true,
-        // Para ping, fijamos un tope dinámico robusto; para ethernet dejamos auto.
-        max: isPing ? pingYCap.value : undefined,
+        // sin max fijo; sólo sugerimos un arranque razonable
+        suggestedMax: isPing ? pingYSuggested.value : undefined,
       },
-      // Eje oculto para outliers (picos)
       y_outlier: { min: 0, max: 1, display: false, grid: { display: false } },
-      // Eje oculto para timeouts
       y_timeout: { min: 0, max: 1, display: false, grid: { display: false } },
     },
     plugins: {
@@ -394,15 +389,15 @@ const chartOptions = computed(() => {
       zoom: {
         pan: {
           enabled: true,
-          mode: 'x',
+          mode: 'xy', // <— pan vertical y horizontal
           threshold: 3,
-          onPanComplete: (args) => handleViewChange(args),
+          onPanComplete: (args) => handleViewChange(args), // sólo recarga si cambió X
         },
         zoom: {
-          wheel: { enabled: true, speed: 0.15 },
-          pinch: { enabled: true },
-          drag: { enabled: false },
-          mode: 'x',
+          wheel: { enabled: true, speed: 0.15 }, // wheel sobre el chart: zoom X+Y
+          pinch: { enabled: true }, // pinch en móviles: zoom X+Y
+          drag: { enabled: false }, // sin rectángulo
+          mode: 'xy', // <— zoom vertical y horizontal
           limits: { x: { minRange: 5 * 60 * 1000 } },
           onZoomComplete: (args) => handleViewChange(args),
         },
@@ -467,6 +462,7 @@ async function setView(startMs, endMs) {
   currentWindow.value = { startMs, endMs, mode }
 }
 
+/* Sólo reaccionamos a cambios en X (para no refetchear por zoom Y puro) */
 function handleViewChange({ chart }) {
   const xScale = chart.scales.x
   const start = xScale.min
