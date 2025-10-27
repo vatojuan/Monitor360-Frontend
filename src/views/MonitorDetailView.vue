@@ -35,7 +35,7 @@ ChartJS.register(
   zoomPlugin,
 )
 
-/* -------- Plugins visuales -------- */
+/* Plugins visuales (umbral y sombreado de link_down) */
 const thresholdLinePlugin = {
   id: 'thresholdLine',
   afterDatasetsDraw(chart, _args, opts) {
@@ -58,6 +58,7 @@ const thresholdLinePlugin = {
     ctx.restore()
   },
 }
+
 const linkDownShadePlugin = {
   id: 'linkDownShade',
   beforeDatasetsDraw(chart, _args, opts) {
@@ -77,9 +78,10 @@ const linkDownShadePlugin = {
     ctx.restore()
   },
 }
+
 ChartJS.register(thresholdLinePlugin, linkDownShadePlugin)
 
-/* -------- Estado -------- */
+/* Estado */
 const route = useRoute()
 const router = useRouter()
 const sensorId = Number(route.params.id)
@@ -88,23 +90,19 @@ const chartRef = ref(null)
 const sensorInfo = ref(null)
 const historyData = ref([])
 const isLoading = ref(true)
+const isZoomed = ref(false)
+const timeRange = ref('24h')
 const isSyncing = ref(false)
+const resolutionMode = ref('raw') // para lógica interna (sin badge)
 
-const timeRange = ref('24h') // solo define la vista inicial
-const resolutionMode = ref('raw') // 'raw' | 'auto' (lo pedimos así)
-
-const currentWindow = ref(null) // { startMs, endMs, mode }
-const chartKey = computed(() =>
-  currentWindow.value
-    ? `${currentWindow.value.startMs}-${currentWindow.value.endMs}-${resolutionMode.value}`
-    : 'init',
-)
+/* Ventana visible controlada (permite pan/zoom programático y pedir más datos) */
+const currentWindow = ref(null) // { startMs, endMs, mode: 'auto' | 'raw' } | null
 
 const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
 const timeRanges = hoursMap
 
-/* -------- Cache -------- */
+/* Cache */
 const historyCache = new Map()
 const CACHE_TTL_MS = 5 * 60_000
 function cacheGet(key) {
@@ -117,43 +115,48 @@ function cacheSet(key, data, windowObj) {
 }
 setInterval(() => {
   const now = Date.now()
-  for (const [k, e] of historyCache.entries())
+  for (const [k, e] of historyCache.entries()) {
     if (now - e.timestamp > 10 * 60_000) historyCache.delete(k)
+  }
 }, 60_000)
 
-/* -------- Helpers -------- */
+/* Helpers */
 function formatBitrateForChart(bits) {
   const n = Number(bits)
   return !Number.isFinite(n) || n < 0 ? 0 : Number((n / 1_000_000).toFixed(2))
 }
 function pickTimestamp(obj) {
-  if (!obj) return new Date()
+  if (!obj) return null
   const v = obj.timestamp || obj.ts || obj.time
-  const d = new Date(v)
-  return isNaN(d.valueOf()) ? new Date() : d
+  if (v) {
+    const d = new Date(v)
+    if (!isNaN(d.valueOf())) return d
+  }
+  return new Date()
 }
 const isLongRange = computed(() => timeRange.value === '7d' || timeRange.value === '30d')
 const thresholdMs = computed(() => {
   const cfg = sensorInfo.value?.config ?? {}
   return Number(cfg.latency_threshold_ms ?? cfg.latency_threshold_visual ?? 150)
 })
+function debounce(fn, wait = 300) {
+  let t = null
+  return (...args) => {
+    clearTimeout(t)
+    t = setTimeout(() => fn(...args), wait)
+  }
+}
 function decideMode(startMs, endMs) {
   const visibleHours = Math.max(0, (endMs - startMs) / 1000 / 3600)
   return visibleHours < 24 ? 'raw' : 'auto'
 }
-function clampToNow(startMs, endMs) {
-  const now = Date.now()
-  if (endMs <= now) return [startMs, endMs]
-  const span = endMs - startMs
-  return [now - span, now]
-}
 
-/* Unidad de tiempo dinámica por ventana */
-const visibleSpanMs = computed(() =>
-  currentWindow.value
-    ? currentWindow.value.endMs - currentWindow.value.startMs
-    : (hoursMap[timeRange.value] ?? 24) * 3600 * 1000,
-)
+/* Unidad de tiempo dinámica (evita errores de stepSize) */
+const visibleSpanMs = computed(() => {
+  if (currentWindow.value) return currentWindow.value.endMs - currentWindow.value.startMs
+  const h = hoursMap[timeRange.value] ?? 24
+  return h * 3600 * 1000
+})
 const timeUnit = computed(() => {
   const h = visibleSpanMs.value / 3600000
   if (h <= 2) return 'minute'
@@ -163,17 +166,77 @@ const timeUnit = computed(() => {
   return 'year'
 })
 
-/* -------- Fetch centralizado: SIEMPRE history_window -------- */
+/* Fetch */
 let historyAbort = null
-async function loadWindow(startMs, endMs, mode) {
+
+async function fetchHistory() {
   if (historyAbort) historyAbort.abort()
   historyAbort = new AbortController()
-
-  // clamp a “no futuro”
-  ;[startMs, endMs] = clampToNow(startMs, endMs)
-  mode = mode || decideMode(startMs, endMs)
-
   isLoading.value = true
+
+  try {
+    const endMs = Date.now()
+    const hours = hoursMap[timeRange.value] ?? 24
+    const startMs = endMs - hours * 3600 * 1000
+
+    if (isLongRange.value) {
+      const cacheKey = `${sensorId}:win:${Math.round(startMs)}-${Math.round(endMs)}:auto`
+      const cached = cacheGet(cacheKey)
+      if (cached) {
+        historyData.value = cached.data
+        currentWindow.value = cached.window || { startMs, endMs, mode: 'auto' }
+        resolutionMode.value = 'auto'
+        return
+      }
+      const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
+        params: {
+          start: new Date(startMs).toISOString(),
+          end: new Date(endMs).toISOString(),
+          max_points: 2000,
+          mode: 'auto',
+        },
+        timeout: 60000,
+        signal: historyAbort.signal,
+      })
+      historyData.value = Array.isArray(data?.items) ? data.items : []
+      currentWindow.value = { startMs, endMs, mode: 'auto' }
+      resolutionMode.value = 'auto'
+      cacheSet(cacheKey, historyData.value, currentWindow.value)
+    } else {
+      // rangos cortos → fijamos ventana para permitir pan atrás
+      const cacheKey = `${sensorId}:range:${timeRange.value}`
+      const cached = cacheGet(cacheKey)
+      if (cached) {
+        historyData.value = cached.data
+        currentWindow.value = { startMs, endMs, mode: 'raw' }
+        resolutionMode.value = 'raw'
+        return
+      }
+      const { data } = await api.get(`/sensors/${sensorId}/history_range`, {
+        params: { time_range: timeRange.value },
+        timeout: 20000,
+        signal: historyAbort.signal,
+      })
+      historyData.value = Array.isArray(data) ? data : []
+      currentWindow.value = { startMs, endMs, mode: 'raw' }
+      resolutionMode.value = 'raw'
+      cacheSet(cacheKey, historyData.value, null)
+    }
+  } catch (err) {
+    if (err?.code !== 'ERR_CANCELED') {
+      console.error('Error fetching history:', err)
+      // mantenemos la data previa para no “apagar” el gráfico
+    }
+  } finally {
+    isLoading.value = false
+  }
+}
+
+async function fetchHistoryCustomRange(startMs, endMs, mode = 'auto') {
+  if (historyAbort) historyAbort.abort()
+  historyAbort = new AbortController()
+  isLoading.value = true
+
   try {
     const cacheKey = `${sensorId}:win:${Math.round(startMs)}-${Math.round(endMs)}:${mode}`
     const cached = cacheGet(cacheKey)
@@ -181,66 +244,109 @@ async function loadWindow(startMs, endMs, mode) {
       historyData.value = cached.data
       currentWindow.value = cached.window || { startMs, endMs, mode }
       resolutionMode.value = mode
-      isLoading.value = false
       return
     }
-    const startIso = new Date(startMs).toISOString()
-    const endIso = new Date(endMs).toISOString()
-    const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
-      params: { start: startIso, end: endIso, max_points: 1800, mode },
-      timeout: 30000,
-      signal: historyAbort.signal,
-    })
-    historyData.value = Array.isArray(data?.items) ? data.items : []
+
+    const call = async (m) => {
+      const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
+        params: {
+          start: new Date(startMs).toISOString(),
+          end: new Date(endMs).toISOString(),
+          max_points: 1800,
+          mode: m,
+        },
+        timeout: 30000,
+        signal: historyAbort.signal,
+      })
+      return Array.isArray(data?.items) ? data.items : []
+    }
+
+    // intento principal
+    let items = await call(mode)
+
+    // Fallback: si no hay datos, probamos el otro modo
+    if (items.length === 0) {
+      const alt = mode === 'raw' ? 'auto' : 'raw'
+      try {
+        const altItems = await call(alt)
+        if (altItems.length > 0) {
+          items = altItems
+          mode = alt
+        }
+      } catch {
+        /* silencioso */
+      }
+    }
+
+    historyData.value = items // puede ser [] y está bien: mantenemos el gráfico visible
     currentWindow.value = { startMs, endMs, mode }
     resolutionMode.value = mode
     cacheSet(cacheKey, historyData.value, currentWindow.value)
   } catch (err) {
-    if (err?.code !== 'ERR_CANCELED') console.error('Error loading window:', err)
-    historyData.value = []
+    if (err?.code !== 'ERR_CANCELED') {
+      console.error('Error fetching custom window:', err)
+    }
   } finally {
     isLoading.value = false
   }
 }
 
-/* -------- WebSocket -------- */
+/* WebSocket */
 function onBusMessage(payload) {
-  if (!currentWindow.value) return
   isSyncing.value = true
-  setTimeout(() => (isSyncing.value = false), 700)
+  setTimeout(() => (isSyncing.value = false), 800)
 
   const updates = Array.isArray(payload) ? payload : [payload]
-  const relevant = updates.filter((u) => u && Number(u.sensor_id) === sensorId)
-  if (relevant.length === 0) return
+  const relevantUpdates = updates.filter((u) => u && Number(u.sensor_id) === sensorId)
+  if (relevantUpdates.length === 0) return
 
-  const { startMs, endMs } = currentWindow.value
-  const map = new Map(historyData.value.map((p) => [new Date(p.timestamp).toISOString(), p]))
+  const startBound = currentWindow.value?.startMs ?? null
+  const endBound = currentWindow.value?.endMs ?? null
 
-  for (const u of relevant) {
-    const d = pickTimestamp(u)
-    const t = d.getTime()
-    if (t < startMs || t > endMs) continue
-    const key = d.toISOString()
-    map.set(key, { ...u, timestamp: key })
-  }
-  const merged = Array.from(map.values()).sort(
-    (a, b) => new Date(a.timestamp) - new Date(b.timestamp),
-  )
-  historyData.value = merged.filter((p) => {
-    const t = new Date(p.timestamp).getTime()
-    return t >= startMs && t <= endMs
+  const dataMap = new Map()
+  historyData.value.forEach((point) => {
+    const ts = new Date(point.timestamp).toISOString()
+    dataMap.set(ts, point)
   })
+  relevantUpdates.forEach((point) => {
+    const tsDate = pickTimestamp(point)
+    const tsMs = tsDate.getTime()
+    if (startBound !== null && tsMs < startBound) return
+    if (endBound !== null && tsMs > endBound) return
+    const ts = tsDate.toISOString()
+    dataMap.set(ts, { ...point, timestamp: ts })
+  })
+
+  const newHistory = Array.from(dataMap.values())
+  newHistory.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+
+  if (startBound !== null || endBound !== null) {
+    historyData.value = newHistory.filter((p) => {
+      const t = new Date(p.timestamp).getTime()
+      if (startBound !== null && t < startBound) return false
+      if (endBound !== null && t > endBound) return false
+      return true
+    })
+  } else {
+    // por seguridad, pero en la práctica siempre hay currentWindow
+    const nowMs = Date.now()
+    const hours = hoursMap[timeRange.value] ?? 24
+    const cutoff = nowMs - hours * 3600 * 1000
+    historyData.value = newHistory.filter((p) => new Date(p.timestamp).getTime() >= cutoff)
+  }
 }
 
-/* -------- Datos para gráfico -------- */
+/* Datos para gráfico */
 const linkDownIntervals = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || historyData.value.length === 0) return []
   const sorted = [...historyData.value].sort(
-    (a, b) => new Date(a.timestamp) - new Date(b.timestamp),
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   )
   const ranges = []
   let downStart = null
-  for (const p of sorted) {
+
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i]
     const t = new Date(p.timestamp).getTime()
     const st = (p.status || '').toLowerCase()
     if (st === 'link_down') {
@@ -259,7 +365,7 @@ const linkDownIntervals = computed(() => {
 
 const chartData = computed(() => {
   if (!sensorInfo.value) return { datasets: [] }
-  const points = historyData.value
+  const dataPoints = historyData.value
   const type = sensorInfo.value.sensor_type
 
   if (type === 'ping') {
@@ -271,14 +377,20 @@ const chartData = computed(() => {
           label: 'Latencia (ms)',
           backgroundColor: baseColor,
           borderColor: baseColor,
-          data: points.map((d) => ({
+          data: dataPoints.map((d) => ({
             x: new Date(d.timestamp).valueOf(),
             y: Number(d.latency_ms ?? 0),
           })),
           tension: 0.2,
           pointRadius: 2,
-          pointBackgroundColor: (ctx) => (ctx.raw?.y > thresholdMs.value ? alarmColor : baseColor),
-          pointBorderColor: (ctx) => (ctx.raw?.y > thresholdMs.value ? alarmColor : baseColor),
+          pointBackgroundColor: (ctx) => {
+            const v = ctx.raw?.y
+            return typeof v === 'number' && v > thresholdMs.value ? alarmColor : baseColor
+          },
+          pointBorderColor: (ctx) => {
+            const v = ctx.raw?.y
+            return typeof v === 'number' && v > thresholdMs.value ? alarmColor : baseColor
+          },
         },
       ],
     }
@@ -291,7 +403,7 @@ const chartData = computed(() => {
           label: 'Descarga (Mbps)',
           backgroundColor: 'rgba(54, 162, 235, 0.5)',
           borderColor: 'rgba(54, 162, 235, 1)',
-          data: points.map((d) => ({
+          data: dataPoints.map((d) => ({
             x: new Date(d.timestamp).valueOf(),
             y: formatBitrateForChart(d.rx_bitrate),
           })),
@@ -303,7 +415,7 @@ const chartData = computed(() => {
           label: 'Subida (Mbps)',
           backgroundColor: 'rgba(75, 192, 192, 0.5)',
           borderColor: 'rgba(75, 192, 192, 1)',
-          data: points.map((d) => ({
+          data: dataPoints.map((d) => ({
             x: new Date(d.timestamp).valueOf(),
             y: formatBitrateForChart(d.tx_bitrate),
           })),
@@ -314,28 +426,50 @@ const chartData = computed(() => {
       ],
     }
   }
+
   return { datasets: [] }
 })
 
-/* -------- Pan/Zoom (sin recursiones) -------- */
-function viewFromChart(chart) {
+/* Pan/Zoom handlers (debounced) */
+const handleViewChange = debounce(({ chart }) => {
   const xScale = chart.scales.x
-  let start = xScale.min
-  let end = xScale.max
-  if (!isFinite(start) || !isFinite(end)) return null
-  ;[start, end] = clampToNow(start, end)
-  return { start, end, mode: decideMode(start, end) }
-}
-const handleViewChange = ({ chart }) => {
-  const v = viewFromChart(chart)
-  if (!v) return
-  loadWindow(v.start, v.end, v.mode)
-}
+  const start = xScale.min
+  const end = xScale.max
+  if (!isFinite(start) || !isFinite(end)) return
 
+  const mode = decideMode(start, end)
+  isZoomed.value = true
+
+  const cw = currentWindow.value
+  if (!cw) {
+    fetchHistoryCustomRange(start, end, mode)
+    return
+  }
+
+  // margen para evitar pedir de a “mordisquitos”
+  const pad = Math.max((end - start) * 0.1, 5 * 60 * 1000) // 10% o 5m
+  const needLeft = start < cw.startMs + (cw.endMs - cw.startMs) * 0.05
+  const needRight = end > cw.endMs - (cw.endMs - cw.startMs) * 0.05
+  const outside = start < cw.startMs || end > cw.endMs
+
+  if (outside || needLeft || needRight || cw.mode !== mode) {
+    const newStart = Math.min(start - pad, cw.startMs)
+    const newEnd = Math.max(end + pad, cw.endMs)
+    fetchHistoryCustomRange(newStart, newEnd, mode)
+  } else {
+    // solo actualizamos la ventana local (para el eje) sin refetch
+    currentWindow.value = { ...cw, startMs: start, endMs: end, mode }
+  }
+}, 300)
+
+const handleZoomComplete = (args) => handleViewChange(args)
+const handlePanComplete = (args) => handleViewChange(args)
+
+/* Opciones del gráfico */
 const chartOptions = computed(() => {
   const isPing = sensorInfo.value?.sensor_type === 'ping'
-  const xMin = currentWindow.value?.startMs
-  const xMax = currentWindow.value?.endMs
+  const xMin = currentWindow.value?.startMs ?? undefined
+  const xMax = currentWindow.value?.endMs ?? undefined
 
   return {
     responsive: true,
@@ -359,17 +493,35 @@ const chartOptions = computed(() => {
             year: 'yyyy',
           },
         },
-        ticks: { autoSkip: true, maxTicksLimit: 8, maxRotation: 0, minRotation: 0 },
+        ticks: {
+          autoSkip: true,
+          maxTicksLimit: 8,
+          maxRotation: 0,
+          minRotation: 0,
+        },
       },
       y: { beginAtZero: true },
     },
     plugins: {
       legend: { display: sensorInfo.value?.sensor_type === 'ethernet' },
-      decimation: { enabled: true, algorithm: 'min-max', samples: 1500 },
-      thresholdLine: { show: isPing, y: thresholdMs.value },
-      linkDownShade: { ranges: linkDownIntervals.value },
+      decimation: {
+        enabled: true,
+        algorithm: 'min-max',
+        samples: 1500,
+      },
+      thresholdLine: {
+        show: isPing,
+        y: thresholdMs.value,
+      },
+      linkDownShade: {
+        ranges: linkDownIntervals.value,
+      },
       zoom: {
-        pan: { enabled: true, mode: 'x', onPanComplete: handleViewChange },
+        pan: {
+          enabled: true,
+          mode: 'x',
+          onPanComplete: handlePanComplete,
+        },
         zoom: {
           wheel: { enabled: true },
           pinch: { enabled: true },
@@ -380,8 +532,8 @@ const chartOptions = computed(() => {
             borderWidth: 1,
           },
           mode: 'x',
-          limits: { x: { minRange: 1000 * 60 * 5 } },
-          onZoomComplete: handleViewChange,
+          limits: { x: { minRange: 1000 * 60 * 5 } }, // mínimo 5 minutos visibles
+          onZoomComplete: handleZoomComplete,
         },
       },
     },
@@ -389,53 +541,62 @@ const chartOptions = computed(() => {
   }
 })
 
-/* -------- Controles (atrás/adelante/zoom/reset) -------- */
+/* Controles programáticos */
 function ensureWindow() {
   if (!currentWindow.value) {
-    const end = Date.now()
-    const start = end - (hoursMap[timeRange.value] ?? 24) * 3600 * 1000
-    currentWindow.value = { startMs: start, endMs: end, mode: isLongRange.value ? 'auto' : 'raw' }
+    const endMs = Date.now()
+    const hours = hoursMap[timeRange.value] ?? 24
+    const startMs = endMs - hours * 3600 * 1000
+    currentWindow.value = { startMs, endMs, mode: isLongRange.value ? 'auto' : 'raw' }
   }
   return currentWindow.value
 }
+
 async function shiftWindow(direction = -1) {
   const cw = ensureWindow()
   const span = cw.endMs - cw.startMs
-  const step = Math.max(span * 0.8, 5 * 60 * 1000)
-  let start = cw.startMs + step * direction
-  let end = cw.endMs + step * direction
-  ;[start, end] = clampToNow(start, end)
+  const step = Math.max(span * 0.8, 5 * 60 * 1000) // 80% o 5m
+  const start = cw.startMs + step * direction
+  const end = cw.endMs + step * direction
   const mode = decideMode(start, end)
-  await loadWindow(start, end, mode)
+  isZoomed.value = true
+  await fetchHistoryCustomRange(start, end, mode)
 }
+
 async function zoomBy(factor = 0.5) {
   const cw = ensureWindow()
   const span = cw.endMs - cw.startMs
   const center = cw.startMs + span / 2
-  let newSpan = Math.max(span * factor, 5 * 60 * 1000)
-  let start = center - newSpan / 2
-  let end = center + newSpan / 2
-  ;[start, end] = clampToNow(start, end)
+  let newSpan = Math.max(span * factor, 5 * 60 * 1000) // mínimo 5m
+  const start = center - newSpan / 2
+  const end = center + newSpan / 2
   const mode = decideMode(start, end)
-  await loadWindow(start, end, mode)
+  isZoomed.value = true
+  await fetchHistoryCustomRange(start, end, mode)
 }
+
 function goLive() {
-  const end = Date.now()
-  const start = end - (hoursMap[timeRange.value] ?? 24) * 3600 * 1000
-  loadWindow(start, end, isLongRange.value ? 'auto' : 'raw')
+  isZoomed.value = false
+  currentWindow.value = null
+  fetchHistory()
 }
+
 function resetZoom() {
   goLive()
 }
 
-/* -------- Rango inicial -------- */
+/* Rango */
 function setRange(range) {
   timeRange.value = range
-  goLive()
+  isZoomed.value = false
+  currentWindow.value = null
+  resolutionMode.value = range === '7d' || range === '30d' ? 'auto' : 'raw'
+  fetchHistory()
 }
 
-/* -------- Ciclo de vida -------- */
+/* Ciclo de vida */
 let offBus = null
+
 onMounted(async () => {
   try {
     const { data } = await api.get(`/sensors/${sensorId}/details`)
@@ -447,24 +608,30 @@ onMounted(async () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
     }
-    goLive()
+
+    await fetchHistory()
   } catch (err) {
     console.error('Error loading sensor details:', err)
     router.push('/')
   }
 })
+
 onUnmounted(() => {
   if (offBus) offBus()
   if (historyAbort) historyAbort.abort()
 })
-watch(timeRange, () => goLive())
 
-/* -------- Tabla de eventos -------- */
+watch(timeRange, () => {
+  currentWindow.value = null
+  fetchHistory()
+})
+
+/* Tabla de eventos */
 const linkStatusEvents = computed(() => {
   if (sensorInfo.value?.sensor_type !== 'ethernet' || historyData.value.length === 0) return []
   const events = []
-  let lastStatus = null,
-    lastSpeed = null
+  let lastStatus = null
+  let lastSpeed = null
   historyData.value.forEach((d) => {
     if (d.status !== lastStatus || d.speed !== lastSpeed) {
       events.push({
@@ -481,6 +648,9 @@ const linkStatusEvents = computed(() => {
   })
   return events.reverse()
 })
+
+/* Hint sutil si no hay puntos (sin bloquear el gráfico) */
+const showEmptyHint = computed(() => !isLoading.value && historyData.value.length === 0)
 </script>
 
 <template>
@@ -508,9 +678,13 @@ const linkStatusEvents = computed(() => {
       </div>
 
       <div class="chart-toolbar">
-        <button @click="shiftWindow(-1)" title="Ir hacia atrás (80% ventana)">◀ Atrás</button>
+        <button @click="shiftWindow(-1)" title="Ir hacia atrás (80% de la ventana)">
+          ◀ Atrás
+        </button>
         <button @click="goLive()" title="Ir a ahora">● Hoy</button>
-        <button @click="shiftWindow(1)" title="Ir hacia adelante (80% ventana)">Adelante ▶</button>
+        <button @click="shiftWindow(1)" title="Ir hacia adelante (80% de la ventana)">
+          Adelante ▶
+        </button>
         <span class="sep"></span>
         <button @click="zoomBy(0.5)" title="Acercar (zoom in)">＋</button>
         <button @click="zoomBy(2)" title="Alejar (zoom out)">－</button>
@@ -520,27 +694,21 @@ const linkStatusEvents = computed(() => {
     </div>
 
     <div class="chart-container">
+      <!-- overlay de sincronización -->
       <div v-if="isSyncing" class="sync-overlay">
         <span class="dot"></span> Actualizando datos en tiempo real...
       </div>
 
-      <Line
-        v-if="!isLoading && historyData.length > 0"
-        :key="chartKey"
-        ref="chartRef"
-        :data="chartData"
-        :options="chartOptions"
-      />
-
-      <div v-else class="loading-overlay">
-        <p>
-          {{
-            isLoading
-              ? 'Cargando datos...'
-              : 'No hay historial para este rango o la consulta tardó demasiado.'
-          }}
-        </p>
+      <!-- loader de cualquier fetch -->
+      <div v-if="isLoading" class="loading-overlay">
+        <p>Cargando datos…</p>
       </div>
+
+      <!-- hint sutil si la ventana no tiene puntos -->
+      <div v-if="showEmptyHint" class="empty-hint">Sin datos en esta ventana</div>
+
+      <!-- El gráfico SIEMPRE se muestra cuando no está cargando, aunque no haya puntos -->
+      <Line v-if="!isLoading" ref="chartRef" :data="chartData" :options="chartOptions" />
 
       <div class="tz-hint">
         Mostrando horas en tu zona: <strong>{{ localTz }}</strong>
@@ -590,13 +758,13 @@ const linkStatusEvents = computed(() => {
   padding: 0.5rem 1rem;
   border-radius: 6px;
   cursor: pointer;
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }
 .monitor-header {
   background-color: var(--surface-color);
   padding: 1.25rem 1.5rem;
   border-radius: 12px;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
 }
 .monitor-header h1 {
   margin: 0 0 0.35rem 0;
@@ -644,16 +812,18 @@ const linkStatusEvents = computed(() => {
   gap: 0.4rem;
 }
 .chart-toolbar .sep {
+  display: inline-block;
   width: 1px;
   height: 22px;
   background: var(--primary-color);
-  opacity: 0.6;
   margin: 0 0.4rem;
+  opacity: 0.6;
 }
 
+/* Chart */
 .chart-container {
   background-color: var(--surface-color);
-  padding: 1.1rem 1.1rem 1.5rem;
+  padding: 1.25rem 1.25rem 1.6rem;
   border-radius: 12px;
   height: 520px;
   position: relative;
@@ -664,6 +834,18 @@ const linkStatusEvents = computed(() => {
   display: flex;
   justify-content: center;
   align-items: center;
+  z-index: 10;
+}
+.empty-hint {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  z-index: 9;
 }
 .tz-hint {
   position: absolute;
@@ -705,14 +887,16 @@ const linkStatusEvents = computed(() => {
   }
 }
 
+/* Tabla eventos */
 .events-container {
   background-color: var(--surface-color);
-  padding: 1.1rem 1.3rem;
+  padding: 1.25rem 1.5rem;
   border-radius: 12px;
-  margin-top: 0.8rem;
+  margin-top: 1rem;
 }
 .events-container h3 {
-  margin: 0 0 0.9rem 0;
+  margin-top: 0;
+  margin-bottom: 1rem;
 }
 .events-table {
   width: 100%;
