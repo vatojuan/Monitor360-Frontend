@@ -1,6 +1,6 @@
 <template>
   <header :class="['m360-topbar', isHidden ? 'm360-topbar--hidden' : '']">
-    <!-- Lado izquierdo -->
+    <!-- Izquierda -->
     <div class="m360-left">
       <button class="m360-iconbtn" @click="$emit('toggleSidebar')" aria-label="Abrir menú">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
@@ -18,15 +18,15 @@
 
     <div class="m360-center" />
 
-    <!-- Lado derecho -->
+    <!-- Derecha -->
     <div class="m360-right">
-      <!-- Indicador tiempo real (solo display) -->
+      <!-- Indicador tiempo real (display-only) -->
       <span class="m360-chip" :class="realtime ? 'is-on' : 'is-off'" aria-hidden="true">
         <span class="dot" />
         <span class="label">{{ realtime ? 'Tiempo real' : 'Reconectando…' }}</span>
       </span>
 
-      <!-- Menú rápido -->
+      <!-- Menú -->
       <div class="m360-menu" ref="menuRef" @keydown.esc="menu = false">
         <button
           class="m360-iconbtn"
@@ -41,33 +41,32 @@
           </svg>
         </button>
 
+        <!-- Overlay click-outside -->
+        <div v-if="menu" class="m360-overlay" @click="menu = false"></div>
+
         <div v-if="menu" class="m360-pop" role="menu">
-          <router-link to="/" class="m360-item" role="menuitem" @click="menu = false">
-            Dashboard
-          </router-link>
-          <router-link
-            to="/monitor-builder"
-            class="m360-item"
-            role="menuitem"
-            @click="menu = false"
+          <router-link to="/" class="m360-item" role="menuitem" @click="menu = false"
+            >Dashboard</router-link
           >
-            Añadir monitor
-          </router-link>
-          <router-link to="/devices" class="m360-item" role="menuitem" @click="menu = false">
-            Gestionar dispositivos
-          </router-link>
-          <router-link to="/credentials" class="m360-item" role="menuitem" @click="menu = false">
-            Credenciales
-          </router-link>
-          <router-link to="/channels" class="m360-item" role="menuitem" @click="menu = false">
-            Canales
-          </router-link>
-          <router-link to="/vpns" class="m360-item" role="menuitem" @click="menu = false">
-            VPNs
-          </router-link>
+          <router-link to="/monitor-builder" class="m360-item" role="menuitem" @click="menu = false"
+            >Añadir monitor</router-link
+          >
+          <router-link to="/devices" class="m360-item" role="menuitem" @click="menu = false"
+            >Gestionar dispositivos</router-link
+          >
+          <router-link to="/credentials" class="m360-item" role="menuitem" @click="menu = false"
+            >Credenciales</router-link
+          >
+          <router-link to="/channels" class="m360-item" role="menuitem" @click="menu = false"
+            >Canales</router-link
+          >
+          <router-link to="/vpns" class="m360-item" role="menuitem" @click="menu = false"
+            >VPNs</router-link
+          >
 
           <button
             class="m360-item logout"
+            type="button"
             role="menuitem"
             @click="
               menu = false
@@ -86,8 +85,11 @@
     </div>
   </header>
 
-  <!-- SPEED DIAL (solo móvil) -->
-  <div class="m360-fab-wrapper" @click.self="fabOpen = false">
+  <!-- SPEED DIAL (móvil) -->
+  <!-- Overlay para cerrar tocando fuera -->
+  <div v-if="fabOpen" class="m360-overlay" @click="fabOpen = false"></div>
+
+  <div class="m360-fab-wrapper">
     <div class="m360-fab-main" @click.stop="fabOpen = !fabOpen" aria-label="Acciones rápidas">
       <svg
         viewBox="0 0 24 24"
@@ -102,15 +104,16 @@
 
     <transition name="fade">
       <div v-if="fabOpen" class="m360-fab-menu" @click.stop>
-        <router-link to="/monitor-builder" class="m360-fab-item" @click="fabOpen = false">
-          ➕ Añadir
-        </router-link>
-        <router-link to="/devices" class="m360-fab-item" @click="fabOpen = false">
-          ⚙️ Dispositivos
-        </router-link>
-        <!-- Quitado "Canales" como pediste -->
+        <router-link to="/monitor-builder" class="m360-fab-item" @click="fabOpen = false"
+          >➕ Añadir</router-link
+        >
+        <router-link to="/devices" class="m360-fab-item" @click="fabOpen = false"
+          >⚙️ Dispositivos</router-link
+        >
+        <!-- Sin 'Canales' -->
         <button
           class="m360-fab-item danger-solid"
+          type="button"
           @click="
             fabOpen = false
             $emit('logout')
@@ -157,18 +160,18 @@ const onScroll = () => {
 onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
 onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
 
-/* ── Menú: cerrar al click afuera ───────────────────────────────────── */
+/* Menú: click-outside robusto (pointerdown en captura) */
 const menu = ref(false)
 const menuRef = ref(null)
-const onDocClick = (e) => {
+const onDocPointer = (e) => {
   if (!menu.value) return
   const el = menuRef.value
   if (el && !el.contains(e.target)) menu.value = false
 }
-onMounted(() => document.addEventListener('click', onDocClick))
-onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
+onMounted(() => document.addEventListener('pointerdown', onDocPointer, true))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer, true))
 
-// cerrar al cambiar de ruta (también Speed Dial)
+/* Cerrar todo al cambiar de ruta */
 watch(
   () => route.fullPath,
   () => {
@@ -177,7 +180,7 @@ watch(
   },
 )
 
-/* ── Speed Dial ─────────────────────────────────────────────────────── */
+/* Speed Dial */
 const fabOpen = ref(false)
 const closeFabOnEscape = (e) => {
   if (e.key === 'Escape') fabOpen.value = false
@@ -187,6 +190,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
 </script>
 
 <style scoped>
+/* Overlay global para click-outside (menú & speed dial) */
+.m360-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent; /* solo captura clics */
+}
+
 /* Layout base */
 .m360-topbar {
   position: sticky;
@@ -262,7 +273,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* Chip realtime (sin tooltip/hover) */
+/* Chip realtime */
 .m360-chip {
   height: 24px;
   border-radius: 999px;
@@ -292,7 +303,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   opacity: 0.8;
 }
 
-/* Menú topbar */
+/* Menú */
 .m360-menu {
   position: relative;
 }
@@ -301,6 +312,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   right: 0;
   top: 36px;
   min-width: 200px;
+  z-index: 45;
   background: #0f1626;
   border: 1px solid rgba(130, 180, 255, 0.22);
   border-radius: 12px;
@@ -324,6 +336,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
 }
 .m360-item:hover {
   background: rgba(255, 255, 255, 0.06);
+}
+.m360-item:focus-visible {
+  outline: 2px solid rgba(130, 180, 255, 0.35);
+  outline-offset: 2px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 /* Logout consistente */
@@ -401,7 +418,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   color: white;
 }
 
-/* Logout del Speed Dial: sólido (no transparente) */
+/* Logout del Speed Dial: sólido */
 .m360-fab-item.danger-solid {
   background: #e94560;
   color: #fff;
@@ -421,7 +438,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   opacity: 0;
 }
 
-/* Responsivo (mostrar Speed Dial) */
+/* Responsive */
 @media (max-width: 820px) {
   .m360-crumb,
   .m360-brand-text {
