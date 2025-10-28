@@ -10,9 +10,8 @@ let codeReader = null
 
 // sessionId viene de la URL
 const sessionId = window.location.pathname.split('/').pop()
-
-// 👇 Base URL configurable
-const API_BASE = import.meta.env.VITE_API_URL || 'https://api.conecta360.site'
+// ✅ Usar la misma base que el front actual (Monitor360)
+const API_BASE = import.meta.env.VITE_API_URL || window.location.origin
 
 async function startScan() {
   try {
