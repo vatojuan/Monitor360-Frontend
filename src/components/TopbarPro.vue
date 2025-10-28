@@ -2,7 +2,7 @@
   <header :class="['m360-topbar', isHidden ? 'm360-topbar--hidden' : '']">
     <!-- Izquierda -->
     <div class="m360-left">
-      <button class="m360-iconbtn" @click="$emit('toggleSidebar')" aria-label="Abrir menú">
+      <button class="m360-iconbtn" @click="emit('toggleSidebar')" aria-label="Abrir menú">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
           <path d="M3 6h18M3 12h18M3 18h18" />
         </svg>
@@ -27,12 +27,13 @@
       </span>
 
       <!-- Menú -->
-      <div class="m360-menu" ref="menuRef" @keydown.esc="menu = false">
+      <div class="m360-menu" @keydown.esc.prevent.stop="closeMenu">
         <button
           class="m360-iconbtn"
           @click="menu = !menu"
           aria-haspopup="menu"
           :aria-expanded="menu"
+          aria-label="Abrir menú rápido"
         >
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
             <circle cx="5" cy="12" r="2" />
@@ -42,37 +43,29 @@
         </button>
 
         <!-- Overlay click-outside -->
-        <div v-if="menu" class="m360-overlay" @click="menu = false"></div>
+        <div v-if="menu" class="m360-overlay" @click="closeMenu"></div>
 
         <div v-if="menu" class="m360-pop" role="menu">
-          <router-link to="/" class="m360-item" role="menuitem" @click="menu = false"
+          <router-link to="/" class="m360-item" role="menuitem" @click="closeMenu"
             >Dashboard</router-link
           >
-          <router-link to="/monitor-builder" class="m360-item" role="menuitem" @click="menu = false"
-            >Añadir monitor</router-link
-          >
-          <router-link to="/devices" class="m360-item" role="menuitem" @click="menu = false"
-            >Gestionar dispositivos</router-link
-          >
-          <router-link to="/credentials" class="m360-item" role="menuitem" @click="menu = false"
-            >Credenciales</router-link
-          >
-          <router-link to="/channels" class="m360-item" role="menuitem" @click="menu = false"
-            >Canales</router-link
-          >
-          <router-link to="/vpns" class="m360-item" role="menuitem" @click="menu = false"
-            >VPNs</router-link
-          >
+          <router-link to="/monitor-builder" class="m360-item" role="menuitem" @click="closeMenu">
+            Añadir monitor
+          </router-link>
+          <router-link to="/devices" class="m360-item" role="menuitem" @click="closeMenu">
+            Gestionar dispositivos
+          </router-link>
+          <router-link to="/credentials" class="m360-item" role="menuitem" @click="closeMenu">
+            Credenciales
+          </router-link>
+          <router-link to="/channels" class="m360-item" role="menuitem" @click="closeMenu">
+            Canales
+          </router-link>
+          <router-link to="/vpns" class="m360-item" role="menuitem" @click="closeMenu">
+            VPNs
+          </router-link>
 
-          <button
-            class="m360-item logout"
-            type="button"
-            role="menuitem"
-            @click="
-              menu = false
-              $emit('logout')
-            "
-          >
+          <button class="m360-item logout" type="button" role="menuitem" @click="onLogout">
             Cerrar sesión
           </button>
         </div>
@@ -86,7 +79,6 @@
   </header>
 
   <!-- SPEED DIAL (móvil) -->
-  <!-- Overlay para cerrar tocando fuera -->
   <div v-if="fabOpen" class="m360-overlay" @click="fabOpen = false"></div>
 
   <div class="m360-fab-wrapper">
@@ -104,21 +96,13 @@
 
     <transition name="fade">
       <div v-if="fabOpen" class="m360-fab-menu" @click.stop>
-        <router-link to="/monitor-builder" class="m360-fab-item" @click="fabOpen = false"
+        <router-link to="/monitor-builder" class="m360-fab-item" @click="closeFab"
           >➕ Añadir</router-link
         >
-        <router-link to="/devices" class="m360-fab-item" @click="fabOpen = false"
+        <router-link to="/devices" class="m360-fab-item" @click="closeFab"
           >⚙️ Dispositivos</router-link
         >
-        <!-- Sin 'Canales' -->
-        <button
-          class="m360-fab-item danger-solid"
-          type="button"
-          @click="
-            fabOpen = false
-            $emit('logout')
-          "
-        >
+        <button class="m360-fab-item danger-solid" type="button" @click="onFabLogout">
           ⎋ Cerrar sesión
         </button>
       </div>
@@ -130,12 +114,13 @@
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-defineProps({
+/* ✅ Desestructuramos para evitar "no-unused-vars" con props */
+const { realtime, userEmail, logoSrc } = defineProps({
   realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
   logoSrc: { type: String, default: '/favicon-32x32.png' },
 })
-defineEmits(['toggleSidebar', 'logout'])
+const emit = defineEmits(['toggleSidebar', 'logout'])
 
 const route = useRoute()
 const breadcrumb = computed(() => {
@@ -150,6 +135,7 @@ const breadcrumb = computed(() => {
   return map[route.path] ?? ''
 })
 
+/* Ocultar topbar al scrollear hacia abajo */
 const isHidden = ref(false)
 let lastY = 0
 const onScroll = () => {
@@ -160,18 +146,14 @@ const onScroll = () => {
 onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
 onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
 
-/* Menú: click-outside robusto (pointerdown en captura) */
+/* Menú: estado y helpers */
 const menu = ref(false)
-const menuRef = ref(null)
-const onDocPointer = (e) => {
-  if (!menu.value) return
-  const el = menuRef.value
-  if (el && !el.contains(e.target)) menu.value = false
+const closeMenu = () => {
+  menu.value = false
 }
-onMounted(() => document.addEventListener('pointerdown', onDocPointer, true))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer, true))
 
-/* Cerrar todo al cambiar de ruta */
+/* Cerrar en cambio de ruta */
+const fabOpen = ref(false)
 watch(
   () => route.fullPath,
   () => {
@@ -180,13 +162,30 @@ watch(
   },
 )
 
-/* Speed Dial */
-const fabOpen = ref(false)
-const closeFabOnEscape = (e) => {
-  if (e.key === 'Escape') fabOpen.value = false
+/* Esc global para cerrar menú y fab */
+const onKeydown = (e) => {
+  if (e.key === 'Escape') {
+    if (menu.value) menu.value = false
+    if (fabOpen.value) fabOpen.value = false
+  }
 }
-onMounted(() => window.addEventListener('keydown', closeFabOnEscape))
-onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+
+/* Logout handlers */
+const onLogout = () => {
+  menu.value = false
+  emit('logout')
+}
+const onFabLogout = () => {
+  fabOpen.value = false
+  emit('logout')
+}
+
+/* Speed Dial */
+const closeFab = () => {
+  fabOpen.value = false
+}
 </script>
 
 <style scoped>
@@ -195,7 +194,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: transparent; /* solo captura clics */
+  background: transparent;
 }
 
 /* Layout base */
@@ -205,7 +204,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   z-index: 50;
   height: 44px;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto; /* izquierda | relleno | derecha */
   align-items: center;
   gap: 8px;
   padding: 0 10px;
