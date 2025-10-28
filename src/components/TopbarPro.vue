@@ -1,9 +1,8 @@
 <template>
   <header :class="['m360-topbar', isHidden ? 'm360-topbar--hidden' : '']">
-    <!-- Lado izquierdo: logo + breadcrumb corto -->
+    <!-- Lado izquierdo -->
     <div class="m360-left">
       <button class="m360-iconbtn" @click="$emit('toggleSidebar')" aria-label="Abrir menú">
-        <!-- hamburguesa -->
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
           <path d="M3 6h18M3 12h18M3 18h18" />
         </svg>
@@ -17,19 +16,18 @@
       <span class="m360-crumb" v-if="breadcrumb">{{ breadcrumb }}</span>
     </div>
 
-    <!-- Centro: espacio libre (deja ver monitores) -->
     <div class="m360-center" />
 
-    <!-- Lado derecho: acciones compactas (alineadas extremo derecho) -->
+    <!-- Lado derecho -->
     <div class="m360-right">
-      <!-- Indicador tiempo real (solo display, sin tooltip ni click) -->
+      <!-- Indicador tiempo real (solo display) -->
       <span class="m360-chip" :class="realtime ? 'is-on' : 'is-off'" aria-hidden="true">
         <span class="dot" />
         <span class="label">{{ realtime ? 'Tiempo real' : 'Reconectando…' }}</span>
       </span>
 
       <!-- Menú rápido -->
-      <div class="m360-menu" @keydown.esc="menu = false">
+      <div class="m360-menu" ref="menuRef" @keydown.esc="menu = false">
         <button
           class="m360-iconbtn"
           @click="menu = !menu"
@@ -42,28 +40,46 @@
             <circle cx="19" cy="12" r="2" />
           </svg>
         </button>
+
         <div v-if="menu" class="m360-pop" role="menu">
-          <router-link to="/" class="m360-item" role="menuitem">Dashboard</router-link>
-          <router-link to="/monitor-builder" class="m360-item" role="menuitem">
+          <router-link to="/" class="m360-item" role="menuitem" @click="menu = false">
+            Dashboard
+          </router-link>
+          <router-link
+            to="/monitor-builder"
+            class="m360-item"
+            role="menuitem"
+            @click="menu = false"
+          >
             Añadir monitor
           </router-link>
-          <router-link to="/devices" class="m360-item" role="menuitem">
+          <router-link to="/devices" class="m360-item" role="menuitem" @click="menu = false">
             Gestionar dispositivos
           </router-link>
-          <router-link to="/credentials" class="m360-item" role="menuitem">
+          <router-link to="/credentials" class="m360-item" role="menuitem" @click="menu = false">
             Credenciales
           </router-link>
-          <router-link to="/channels" class="m360-item" role="menuitem">Canales</router-link>
-          <router-link to="/vpns" class="m360-item" role="menuitem">VPNs</router-link>
+          <router-link to="/channels" class="m360-item" role="menuitem" @click="menu = false">
+            Canales
+          </router-link>
+          <router-link to="/vpns" class="m360-item" role="menuitem" @click="menu = false">
+            VPNs
+          </router-link>
 
-          <!-- Logout consistente con paleta -->
-          <button class="m360-item logout" role="menuitem" @click="$emit('logout')">
+          <button
+            class="m360-item logout"
+            role="menuitem"
+            @click="
+              menu = false
+              $emit('logout')
+            "
+          >
             Cerrar sesión
           </button>
         </div>
       </div>
 
-      <!-- Avatar mínimo -->
+      <!-- Avatar -->
       <div class="m360-avatar" :title="userEmail || 'Cuenta'" aria-label="Cuenta">
         <span>{{ (userEmail || 'U').slice(0, 1).toUpperCase() }}</span>
       </div>
@@ -86,25 +102,36 @@
 
     <transition name="fade">
       <div v-if="fabOpen" class="m360-fab-menu" @click.stop>
-        <router-link to="/monitor-builder" class="m360-fab-item">➕ Añadir</router-link>
-        <router-link to="/devices" class="m360-fab-item">⚙️ Dispositivos</router-link>
-        <router-link to="/channels" class="m360-fab-item">🌐 Canales</router-link>
-        <button class="m360-fab-item danger" @click="$emit('logout')">⎋ Cerrar sesión</button>
+        <router-link to="/monitor-builder" class="m360-fab-item" @click="fabOpen = false">
+          ➕ Añadir
+        </router-link>
+        <router-link to="/devices" class="m360-fab-item" @click="fabOpen = false">
+          ⚙️ Dispositivos
+        </router-link>
+        <!-- Quitado "Canales" como pediste -->
+        <button
+          class="m360-fab-item danger-solid"
+          @click="
+            fabOpen = false
+            $emit('logout')
+          "
+        >
+          ⎋ Cerrar sesión
+        </button>
       </div>
     </transition>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 defineProps({
-  realtime: { type: Boolean, default: true }, // solo display
+  realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
   logoSrc: { type: String, default: '/favicon-32x32.png' },
 })
-
 defineEmits(['toggleSidebar', 'logout'])
 
 const route = useRoute()
@@ -124,19 +151,33 @@ const isHidden = ref(false)
 let lastY = 0
 const onScroll = () => {
   const y = window.scrollY || 0
-  isHidden.value = y > 24 && y > lastY // oculta si vas bajando
+  isHidden.value = y > 24 && y > lastY
   lastY = y
 }
 onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
 onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
 
-// menú topbar
+/* ── Menú: cerrar al click afuera ───────────────────────────────────── */
 const menu = ref(false)
-const closeOnRoute = () => (menu.value = false)
-onMounted(() => window.addEventListener('hashchange', closeOnRoute))
-onBeforeUnmount(() => window.removeEventListener('hashchange', closeOnRoute))
+const menuRef = ref(null)
+const onDocClick = (e) => {
+  if (!menu.value) return
+  const el = menuRef.value
+  if (el && !el.contains(e.target)) menu.value = false
+}
+onMounted(() => document.addEventListener('click', onDocClick))
+onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
-// speed dial
+// cerrar al cambiar de ruta (también Speed Dial)
+watch(
+  () => route.fullPath,
+  () => {
+    menu.value = false
+    fabOpen.value = false
+  },
+)
+
+/* ── Speed Dial ─────────────────────────────────────────────────────── */
 const fabOpen = ref(false)
 const closeFabOnEscape = (e) => {
   if (e.key === 'Escape') fabOpen.value = false
@@ -146,14 +187,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
 </script>
 
 <style scoped>
-/* Layout base: más limpio y derecha pegada al borde */
+/* Layout base */
 .m360-topbar {
   position: sticky;
   top: 0;
   z-index: 50;
   height: 44px;
   display: grid;
-  grid-template-columns: auto 1fr auto; /* ⬅️ izquierda auto, centro rellena, derecha auto */
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 0 10px;
@@ -180,7 +221,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   display: flex;
   align-items: center;
   gap: 8px;
-} /* ⬅️ alínealo a la derecha */
+}
 
 /* Marca */
 .m360-brand {
@@ -221,7 +262,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* Chip realtime (sin tooltip ni hover) */
+/* Chip realtime (sin tooltip/hover) */
 .m360-chip {
   height: 24px;
   border-radius: 999px;
@@ -235,7 +276,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   color: #cfe0ff;
   user-select: none;
   cursor: default;
-  pointer-events: none; /* ⬅️ no muestra tooltip/hover */
+  pointer-events: none;
 }
 .m360-chip .dot {
   width: 6px;
@@ -279,13 +320,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   border: 0;
   outline: 0;
   appearance: none;
-  -webkit-appearance: none; /* ⬅️ sin fondo/blanco nativo */
+  -webkit-appearance: none;
 }
 .m360-item:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* Logout consistente (sin fondo blanco) */
+/* Logout consistente */
 .m360-item.logout {
   color: #ff9a9a;
   border-top: 1px solid rgba(255, 154, 154, 0.2);
@@ -296,7 +337,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   color: #ffc7c7;
 }
 
-/* Avatar simple */
+/* Avatar */
 .m360-avatar {
   width: 26px;
   height: 26px;
@@ -359,12 +400,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   background: #2b68ff;
   color: white;
 }
-.m360-fab-item.danger {
-  background: rgba(233, 69, 96, 0.15);
-  color: #ffc7c7;
+
+/* Logout del Speed Dial: sólido (no transparente) */
+.m360-fab-item.danger-solid {
+  background: #e94560;
+  color: #fff;
+  border: none;
 }
-.m360-fab-item.danger:hover {
-  background: rgba(233, 69, 96, 0.28);
+.m360-fab-item.danger-solid:hover {
+  filter: brightness(1.05);
 }
 
 /* Transición */
@@ -377,7 +421,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   opacity: 0;
 }
 
-/* Responsivo: visible solo en móvil */
+/* Responsivo (mostrar Speed Dial) */
 @media (max-width: 820px) {
   .m360-crumb,
   .m360-brand-text {
