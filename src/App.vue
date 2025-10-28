@@ -6,7 +6,6 @@ import { supabase } from '@/lib/supabase'
 import logo from '@/assets/logo.svg'
 
 import TopbarPro from '@/components/TopbarPro.vue'
-
 import { connectWebSocketWhenAuthenticated, addWsListener, getCurrentWebSocket } from '@/lib/ws'
 
 const route = useRoute()
@@ -25,16 +24,31 @@ const live = reactive({
   lastMsgIso: null,
 })
 
-const liveTooltip = computed(() => {
-  const parts = []
-  parts.push(live.connected ? 'WS: conectado' : 'WS: reconectando')
-  if (live.lastMsgIso) parts.push(`última: ${new Date(live.lastMsgIso).toLocaleString()}`)
-  return parts.join(' · ')
-})
+// Uptime (para TopbarPro)
+const uptime = ref('00:00:00')
+let uptimeTimer = null
+const fmt = (ms) => {
+  const s = Math.floor(ms / 1000)
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0')
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+  const ss = String(s % 60).padStart(2, '0')
+  return `${hh}:${mm}:${ss}`
+}
+function startUptime() {
+  const start = Date.now()
+  stopUptime()
+  uptimeTimer = setInterval(() => {
+    uptime.value = fmt(Date.now() - start)
+  }, 1000)
+}
+function stopUptime() {
+  if (uptimeTimer) {
+    clearInterval(uptimeTimer)
+    uptimeTimer = null
+  }
+}
 
-// Permite pausar/reanudar el tiempo real desde la barra
-const realtimeEnabled = ref(true)
-
+// ===== WS helpers =====
 let wsStateTimer = null
 let offWsListener = null
 let offAuthSub = null
@@ -48,50 +62,25 @@ async function getSession() {
 async function logout() {
   try {
     await supabase.auth.signOut()
-  } catch (err) {
-    if (import.meta?.env?.DEV) console.warn('[auth] signOut error:', err?.message || err)
+  } catch {
+    if (import.meta?.env?.DEV) console.warn('[auth] signOut error')
   }
   session.value = null
   userEmail.value = ''
   router.push('/login')
 }
 
-// ===== Uptime para Topbar =====
-const uptime = ref('00:00:00')
-let uptimeTimer = null
-const fmt = (ms) => {
-  const s = Math.floor(ms / 1000)
-  const hh = String(Math.floor(s / 3600)).padStart(2, '0')
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
-  const ss = String(s % 60).padStart(2, '0')
-  return `${hh}:${mm}:${ss}`
-}
-function startUptime() {
-  const start = Date.now()
-  stopUptime()
-  uptimeTimer = setInterval(() => (uptime.value = fmt(Date.now() - start)), 1000)
-}
-function stopUptime() {
-  if (uptimeTimer) {
-    clearInterval(uptimeTimer)
-    uptimeTimer = null
-  }
-}
-
-// ===== WS helpers =====
 function startWsStatePolling() {
   stopWsStatePolling()
   wsStateTimer = setInterval(() => {
     try {
       const ws = getCurrentWebSocket()
       live.connected = ws?.readyState === WebSocket.OPEN
-    } catch (err) {
+    } catch {
+      // Si algo falla, marcamos desconectado
       live.connected = false
-      if (import.meta?.env?.DEV) {
-        console.debug('[WS] state poll error:', err?.message || err)
-      }
     }
-  }, 1500)
+  }, 1200)
 }
 function stopWsStatePolling() {
   if (wsStateTimer) {
@@ -112,44 +101,23 @@ function detachWsListener() {
   if (typeof offWsListener === 'function') {
     try {
       offWsListener()
-    } catch (err) {
-      if (import.meta?.env?.DEV) console.debug('[WS] offWsListener error:', err?.message || err)
+    } catch {
+      // noop
     }
     offWsListener = null
   }
 }
 
-// Encendido de “Tiempo real”
-async function startRealtime() {
-  realtimeEnabled.value = true
+async function ensureRealtime() {
   try {
     await connectWebSocketWhenAuthenticated()
-  } catch (err) {
+  } catch {
     if (import.meta?.env?.DEV) {
-      console.warn('[WS] connectWhenAuthenticated falló (continuamos):', err?.message || err)
+      console.warn('[WS] connectWhenAuthenticated falló (continuamos)')
     }
   }
   attachWsListener()
   startWsStatePolling()
-}
-
-// Pausa de “Tiempo real”
-function stopRealtime() {
-  realtimeEnabled.value = false
-  detachWsListener()
-  stopWsStatePolling()
-  try {
-    const ws = getCurrentWebSocket()
-    if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, 'paused-by-user')
-  } catch (err) {
-    if (import.meta?.env?.DEV) console.debug('[WS] close error:', err?.message || err)
-  }
-  live.connected = false
-}
-
-function onToggleRealtime() {
-  if (realtimeEnabled.value) stopRealtime()
-  else startRealtime()
 }
 
 onMounted(async () => {
@@ -163,43 +131,52 @@ onMounted(async () => {
   offAuthSub = () => {
     try {
       sub?.subscription?.unsubscribe()
-    } catch (err) {
-      if (import.meta?.env?.DEV) console.debug('[auth] unsubscribe error:', err?.message || err)
+    } catch {
+      // noop
     }
   }
 
-  // Arranque general
   startUptime()
-  await startRealtime()
+  await ensureRealtime()
 })
 
 onBeforeUnmount(() => {
   try {
     if (typeof offAuthSub === 'function') offAuthSub()
-  } catch (err) {
-    if (import.meta?.env?.DEV) console.debug('[auth] offAuthSub error:', err?.message || err)
+  } catch {
+    // noop
   }
-  stopRealtime()
+  detachWsListener()
+  stopWsStatePolling()
+  try {
+    const ws = getCurrentWebSocket()
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, 'app-unmount')
+  } catch {
+    // noop
+  }
   stopUptime()
 })
 </script>
 
 <template>
   <div id="app-layout">
-    <!-- Topbar Pro (oculta en rutas con meta.hideChrome) -->
+    <!-- Topbar Pro (oculta en páginas con meta.hideChrome) -->
     <TopbarPro
       v-if="!hideChrome"
-      :realtime="realtimeEnabled"
+      :realtime="live.connected"
       :uptime="uptime"
       :userEmail="userEmail"
       :logoSrc="logo"
-      @toggleRealtime="onToggleRealtime"
-      @toggleSidebar="null /* integrar si habilitas sidebar */"
+      @toggleSidebar="
+        () => {
+          /* integrar si habilitas sidebar */
+        }
+      "
       @logout="logout"
     />
 
     <!-- Contenido -->
-    <main class="main-content" :title="!hideChrome ? liveTooltip : null">
+    <main class="main-content">
       <RouterView />
     </main>
   </div>
@@ -207,8 +184,7 @@ onBeforeUnmount(() => {
 
 <style>
 :root {
-  /* Base para el efecto glass del Topbar */
-  --m360-bg: #0b1220;
+  --m360-bg: #0b1220; /* base del efecto glass del Topbar */
 
   /* Paleta existente */
   --bg-color: #1a1a2e;
@@ -247,14 +223,13 @@ body {
   min-height: 100vh;
 }
 
-/* Contenido; TopbarPro ya es sticky (44px). */
+/* TopbarPro es sticky; padding sobrio en contenido */
 .main-content {
   width: 100%;
   padding: 16px;
   flex-grow: 1;
 }
 
-/* Responsivo mínimo para el contenido */
 @media (max-width: 480px) {
   .main-content {
     padding: 12px;
