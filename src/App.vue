@@ -3,8 +3,6 @@
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { supabase } from '@/lib/supabase'
-import logo from '@/assets/logo.svg'
-
 import TopbarPro from '@/components/TopbarPro.vue'
 import { connectWebSocketWhenAuthenticated, addWsListener, getCurrentWebSocket } from '@/lib/ws'
 
@@ -59,11 +57,11 @@ async function getSession() {
   userEmail.value = data.session?.user?.email || ''
 }
 
-async function logout() {
+async function onLogout() {
   try {
     await supabase.auth.signOut()
-  } catch {
-    if (import.meta?.env?.DEV) console.warn('[auth] signOut error')
+  } catch (e) {
+    if (import.meta?.env?.DEV) console.warn('[auth] signOut error:', e?.message || e)
   }
   session.value = null
   userEmail.value = ''
@@ -76,8 +74,8 @@ function startWsStatePolling() {
     try {
       const ws = getCurrentWebSocket()
       live.connected = ws?.readyState === WebSocket.OPEN
-    } catch {
-      // Si algo falla, marcamos desconectado
+    } catch (e) {
+      if (import.meta?.env?.DEV) console.debug('[WS] state poll error:', e?.message || e)
       live.connected = false
     }
   }, 1200)
@@ -101,8 +99,8 @@ function detachWsListener() {
   if (typeof offWsListener === 'function') {
     try {
       offWsListener()
-    } catch {
-      // noop
+    } catch (e) {
+      if (import.meta?.env?.DEV) console.debug('[WS] offWsListener error:', e?.message || e)
     }
     offWsListener = null
   }
@@ -111,9 +109,9 @@ function detachWsListener() {
 async function ensureRealtime() {
   try {
     await connectWebSocketWhenAuthenticated()
-  } catch {
+  } catch (e) {
     if (import.meta?.env?.DEV) {
-      console.warn('[WS] connectWhenAuthenticated falló (continuamos)')
+      console.warn('[WS] connectWhenAuthenticated falló (continuamos):', e?.message || e)
     }
   }
   attachWsListener()
@@ -131,8 +129,8 @@ onMounted(async () => {
   offAuthSub = () => {
     try {
       sub?.subscription?.unsubscribe()
-    } catch {
-      // noop
+    } catch (e) {
+      if (import.meta?.env?.DEV) console.debug('[auth] unsubscribe error:', e?.message || e)
     }
   }
 
@@ -143,16 +141,16 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   try {
     if (typeof offAuthSub === 'function') offAuthSub()
-  } catch {
-    // noop
+  } catch (e) {
+    if (import.meta?.env?.DEV) console.debug('[auth] offAuthSub error:', e?.message || e)
   }
   detachWsListener()
   stopWsStatePolling()
   try {
     const ws = getCurrentWebSocket()
     if (ws && ws.readyState === WebSocket.OPEN) ws.close(1000, 'app-unmount')
-  } catch {
-    // noop
+  } catch (e) {
+    if (import.meta?.env?.DEV) console.debug('[WS] close error:', e?.message || e)
   }
   stopUptime()
 })
@@ -166,13 +164,7 @@ onBeforeUnmount(() => {
       :realtime="live.connected"
       :uptime="uptime"
       :userEmail="userEmail"
-      :logoSrc="logo"
-      @toggleSidebar="
-        () => {
-          /* integrar si habilitas sidebar */
-        }
-      "
-      @logout="logout"
+      @logout="onLogout"
     />
 
     <!-- Contenido -->
@@ -185,8 +177,6 @@ onBeforeUnmount(() => {
 <style>
 :root {
   --m360-bg: #0b1220; /* base del efecto glass del Topbar */
-
-  /* Paleta existente */
   --bg-color: #1a1a2e;
   --surface-color: #16213e;
   --primary-color: #0f3460;
