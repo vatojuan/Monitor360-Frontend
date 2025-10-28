@@ -43,7 +43,7 @@ async function startScan() {
 
 async function sendResult(decodedString) {
   try {
-    const response = await fetch(`${API_BASE}/api/scan/${sessionId}`, {
+    const response = await fetch(`${API_BASE}/scan/${sessionId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config_data: decodedString }),
