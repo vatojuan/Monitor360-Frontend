@@ -20,14 +20,10 @@
     <!-- Centro: espacio libre (deja ver monitores) -->
     <div class="m360-center" />
 
-    <!-- Lado derecho: acciones compactas -->
+    <!-- Lado derecho: acciones compactas (alineadas extremo derecho) -->
     <div class="m360-right">
-      <!-- Indicador tiempo real (solo display, no botón) -->
-      <span
-        class="m360-chip"
-        :class="realtime ? 'is-on' : 'is-off'"
-        aria-label="Estado tiempo real"
-      >
+      <!-- Indicador tiempo real (solo display, sin tooltip ni click) -->
+      <span class="m360-chip" :class="realtime ? 'is-on' : 'is-off'" aria-hidden="true">
         <span class="dot" />
         <span class="label">{{ realtime ? 'Tiempo real' : 'Reconectando…' }}</span>
       </span>
@@ -150,14 +146,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
 </script>
 
 <style scoped>
-/* Layout base */
+/* Layout base: más limpio y derecha pegada al borde */
 .m360-topbar {
   position: sticky;
   top: 0;
   z-index: 50;
   height: 44px;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto 1fr auto; /* ⬅️ izquierda auto, centro rellena, derecha auto */
   align-items: center;
   gap: 8px;
   padding: 0 10px;
@@ -170,8 +166,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   transform: translateY(-100%);
 }
 
-.m360-left,
-.m360-right {
+.m360-left {
+  justify-self: start;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -179,6 +175,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
 .m360-center {
   pointer-events: none;
 }
+.m360-right {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+} /* ⬅️ alínealo a la derecha */
 
 /* Marca */
 .m360-brand {
@@ -219,7 +221,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* Chip realtime (solo display) */
+/* Chip realtime (sin tooltip ni hover) */
 .m360-chip {
   height: 24px;
   border-radius: 999px;
@@ -233,6 +235,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
   color: #cfe0ff;
   user-select: none;
   cursor: default;
+  pointer-events: none; /* ⬅️ no muestra tooltip/hover */
 }
 .m360-chip .dot {
   width: 6px;
@@ -265,11 +268,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
 }
 .m360-item {
   display: block;
+  width: 100%;
+  text-align: left;
   padding: 8px 10px;
   border-radius: 8px;
   font-size: 13px;
   color: #ccdaff;
   text-decoration: none;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  appearance: none;
+  -webkit-appearance: none; /* ⬅️ sin fondo/blanco nativo */
 }
 .m360-item:hover {
   background: rgba(255, 255, 255, 0.06);
@@ -381,7 +391,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', closeFabOnEscape))
     width: 26px;
     height: 26px;
   }
-
   .m360-fab-wrapper {
     display: block;
   }
