@@ -9,7 +9,7 @@
       </button>
 
       <router-link to="/" class="m360-brand" aria-label="Monitor360">
-        <img :src="logoUrl" alt="Monitor360" />
+        <img :src="logoUrl" alt="Monitor360" @error="onLogoError" />
         <span class="m360-brand-text">Monitor360</span>
       </router-link>
 
@@ -42,28 +42,28 @@
           </svg>
         </button>
 
-        <!-- Overlay opcional (suma UX en móvil, pero el cierre lo maneja también el listener global) -->
+        <!-- Overlay (suma UX en móvil; el cierre también lo hace el listener global) -->
         <div v-if="menu" class="m360-overlay" @click="closeMenu"></div>
 
         <div v-if="menu" class="m360-pop" role="menu">
-          <router-link to="/" class="m360-item" role="menuitem" @click="closeMenu">
-            Dashboard
-          </router-link>
-          <router-link to="/monitor-builder" class="m360-item" role="menuitem" @click="closeMenu">
-            Añadir monitor
-          </router-link>
-          <router-link to="/devices" class="m360-item" role="menuitem" @click="closeMenu">
-            Gestionar dispositivos
-          </router-link>
-          <router-link to="/credentials" class="m360-item" role="menuitem" @click="closeMenu">
-            Credenciales
-          </router-link>
-          <router-link to="/channels" class="m360-item" role="menuitem" @click="closeMenu">
-            Canales
-          </router-link>
-          <router-link to="/vpns" class="m360-item" role="menuitem" @click="closeMenu">
-            VPNs
-          </router-link>
+          <router-link to="/" class="m360-item" role="menuitem" @click="closeMenu"
+            >Dashboard</router-link
+          >
+          <router-link to="/monitor-builder" class="m360-item" role="menuitem" @click="closeMenu"
+            >Añadir monitor</router-link
+          >
+          <router-link to="/devices" class="m360-item" role="menuitem" @click="closeMenu"
+            >Gestionar dispositivos</router-link
+          >
+          <router-link to="/credentials" class="m360-item" role="menuitem" @click="closeMenu"
+            >Credenciales</router-link
+          >
+          <router-link to="/channels" class="m360-item" role="menuitem" @click="closeMenu"
+            >Canales</router-link
+          >
+          <router-link to="/vpns" class="m360-item" role="menuitem" @click="closeMenu"
+            >VPNs</router-link
+          >
 
           <button class="m360-item logout" type="button" role="menuitem" @click="onLogout">
             Cerrar sesión
@@ -113,20 +113,35 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import defaultLogo from '@/assets/logo-32.png' // <- asegurá este archivo o cambiá la ruta
+import defaultLogo from '@/assets/logo-32.png' // asegúrate que exista, o cambia esta ruta
 
 const props = defineProps({
   realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
-  logoSrc: { type: String, default: '' }, // dejamos vacío para forzar fallback si no llega
+  logoSrc: { type: String, default: '' }, // si viene vacío, usamos fallbacks
 })
 const emit = defineEmits(['toggleSidebar', 'logout'])
 
-/* Fallback robusto de logo: usa props.logoSrc si viene; si no, usa asset importado */
+/* Fallbacks de logo:
+   1) props.logoSrc
+   2) asset importado (defaultLogo)
+   3) /favicon-32x32.png (public/) vía onerror
+*/
+const triedPublic = ref(false)
+
 const logoUrl = computed(() => {
-  const src = (props.logoSrc || '').trim()
-  return src || defaultLogo
+  const viaProp = (props.logoSrc || '').trim()
+  if (viaProp) return viaProp
+  if (triedPublic.value) return '/favicon-32x32.png'
+  return defaultLogo
 })
+
+const onLogoError = (e) => {
+  if (!triedPublic.value) {
+    triedPublic.value = true
+    e.target.src = '/favicon-32x32.png'
+  }
+}
 
 const route = useRoute()
 const breadcrumb = computed(() => {
@@ -152,7 +167,7 @@ const onScroll = () => {
 onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
 onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
 
-/* Menú: estado y helpers */
+/* Menú */
 const menu = ref(false)
 const menuRef = ref(null)
 const closeMenu = () => {
@@ -177,7 +192,7 @@ const onKeydown = (e) => {
   }
 }
 
-/* 👇 Cierre por click/tap fuera en TODA la página (no sólo el topbar) */
+/* Cierre por click/tap fuera en TODA la página (fase de captura para móvil) */
 const onDocPointerDown = (e) => {
   if (!menu.value) return
   const root = menuRef.value
@@ -188,7 +203,6 @@ const onDocPointerDown = (e) => {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
-  // fase de captura para ganarle a otros handlers y capturar taps en móvil
   document.addEventListener('pointerdown', onDocPointerDown, true)
 })
 onBeforeUnmount(() => {
