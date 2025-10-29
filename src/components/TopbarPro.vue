@@ -9,7 +9,7 @@
       </button>
 
       <router-link to="/" class="m360-brand" aria-label="Monitor360">
-        <img :src="logoSrc" alt="" />
+        <img :src="logoUrl" alt="Monitor360" />
         <span class="m360-brand-text">Monitor360</span>
       </router-link>
 
@@ -27,7 +27,7 @@
       </span>
 
       <!-- Menú -->
-      <div class="m360-menu" @keydown.esc.prevent.stop="closeMenu">
+      <div class="m360-menu" ref="menuRef" @keydown.esc.prevent.stop="closeMenu">
         <button
           class="m360-iconbtn"
           @click="menu = !menu"
@@ -42,13 +42,13 @@
           </svg>
         </button>
 
-        <!-- Overlay click-outside -->
+        <!-- Overlay opcional (suma UX en móvil, pero el cierre lo maneja también el listener global) -->
         <div v-if="menu" class="m360-overlay" @click="closeMenu"></div>
 
         <div v-if="menu" class="m360-pop" role="menu">
-          <router-link to="/" class="m360-item" role="menuitem" @click="closeMenu"
-            >Dashboard</router-link
-          >
+          <router-link to="/" class="m360-item" role="menuitem" @click="closeMenu">
+            Dashboard
+          </router-link>
           <router-link to="/monitor-builder" class="m360-item" role="menuitem" @click="closeMenu">
             Añadir monitor
           </router-link>
@@ -113,14 +113,20 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import defaultLogo from '@/assets/logo-32.png' // <- asegurá este archivo o cambiá la ruta
 
-/* ✅ Desestructuramos para evitar "no-unused-vars" con props */
-const { realtime, userEmail, logoSrc } = defineProps({
+const props = defineProps({
   realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
-  logoSrc: { type: String, default: '/favicon-32x32.png' },
+  logoSrc: { type: String, default: '' }, // dejamos vacío para forzar fallback si no llega
 })
 const emit = defineEmits(['toggleSidebar', 'logout'])
+
+/* Fallback robusto de logo: usa props.logoSrc si viene; si no, usa asset importado */
+const logoUrl = computed(() => {
+  const src = (props.logoSrc || '').trim()
+  return src || defaultLogo
+})
 
 const route = useRoute()
 const breadcrumb = computed(() => {
@@ -148,11 +154,12 @@ onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
 
 /* Menú: estado y helpers */
 const menu = ref(false)
+const menuRef = ref(null)
 const closeMenu = () => {
   menu.value = false
 }
 
-/* Cerrar en cambio de ruta */
+/* Cerrar al cambiar de ruta */
 const fabOpen = ref(false)
 watch(
   () => route.fullPath,
@@ -169,8 +176,25 @@ const onKeydown = (e) => {
     if (fabOpen.value) fabOpen.value = false
   }
 }
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+
+/* 👇 Cierre por click/tap fuera en TODA la página (no sólo el topbar) */
+const onDocPointerDown = (e) => {
+  if (!menu.value) return
+  const root = menuRef.value
+  if (root && !root.contains(e.target)) {
+    menu.value = false
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  // fase de captura para ganarle a otros handlers y capturar taps en móvil
+  document.addEventListener('pointerdown', onDocPointerDown, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('pointerdown', onDocPointerDown, true)
+})
 
 /* Logout handlers */
 const onLogout = () => {
