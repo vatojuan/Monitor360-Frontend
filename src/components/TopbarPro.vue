@@ -13,7 +13,7 @@
           <img :src="currentLogo" alt="Monitor360" @error="handleImgError" />
         </template>
         <template v-else>
-          <!-- Fallback SVG inline: cero 404 -->
+          <!-- Fallback SVG inline -->
           <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
             <defs>
               <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
@@ -62,7 +62,7 @@
           </svg>
         </button>
 
-        <!-- Overlay auxiliar (en móvil se siente mejor); igual hay listener global -->
+        <!-- Overlay auxiliar -->
         <div v-if="menu" class="m360-overlay" @click="closeMenu"></div>
 
         <div v-if="menu" class="m360-pop" role="menu">
@@ -133,35 +133,32 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-
-// ⚠️ Si usás Vite con alias "@", asegurate de tener logo en src/assets/logo-32.png
-const viteAssetUrl = new URL('@/assets/logo-32.png', import.meta.url).href
+import logoSvgUrl from '@/assets/logo.svg?url' // ✅ tu logo real
 
 const props = defineProps({
   realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
-  logoSrc: { type: String, default: '' },
+  logoSrc: { type: String, default: '' }, // permite override si querés
 })
 const emit = defineEmits(['toggleSidebar', 'logout'])
 
-// Estado de logo: si falla todo, ocultamos <img> y mostramos SVG inline
+/* Logo fallbacks: prop → logo.svg (src/assets) → /icons/icon-192.png (public) → SVG inline */
 const triedPublic = ref(false)
 const showImg = ref(true)
 
 const currentLogo = computed(() => {
   const viaProp = (props.logoSrc || '').trim()
   if (viaProp) return viaProp // 1) Prop
-  if (triedPublic.value) return '/favicon-32x32.png' // 3) Public si ya falló asset
-  return viteAssetUrl // 2) Asset de Vite
+  if (triedPublic.value) return '/icons/icon-192.png' // 3) Public
+  return logoSvgUrl // 2) Asset Vite (svg)
 })
 
 const handleImgError = (e) => {
   if (!triedPublic.value) {
     triedPublic.value = true
-    e.target.src = '/favicon-32x32.png'
+    e.target.src = '/icons/icon-192.png'
   } else {
-    // Si también falla el public, ocultamos la imagen y dejamos el SVG inline
-    showImg.value = false
+    showImg.value = false // 4) SVG inline
   }
 }
 
@@ -214,7 +211,7 @@ const onKeydown = (e) => {
   }
 }
 
-/* Cierre por click/tap fuera en TODA la página (captura → móvil también) */
+/* Click/tap fuera en TODA la página (fase captura, compatible móvil) */
 const onDocPointerDown = (e) => {
   if (!menu.value) return
   const root = menuRef.value
