@@ -14,7 +14,7 @@
         </template>
         <template v-else>
           <!-- Fallback SVG inline -->
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
             <defs>
               <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
                 <stop offset="0" stop-color="#6AB4FF" />
@@ -133,24 +133,24 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import logoSvgUrl from '@/assets/logo.svg?url' // ✅ tu logo real
+import logoSvgUrl from '@/assets/logo.svg?url'
 
 const props = defineProps({
   realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
-  logoSrc: { type: String, default: '' }, // permite override si querés
+  logoSrc: { type: String, default: '' },
 })
 const emit = defineEmits(['toggleSidebar', 'logout'])
 
-/* Logo fallbacks: prop → logo.svg (src/assets) → /icons/icon-192.png (public) → SVG inline */
+/* Logo fallbacks: prop → logo.svg → /icons/icon-192.png → SVG inline */
 const triedPublic = ref(false)
 const showImg = ref(true)
 
 const currentLogo = computed(() => {
   const viaProp = (props.logoSrc || '').trim()
-  if (viaProp) return viaProp // 1) Prop
-  if (triedPublic.value) return '/icons/icon-192.png' // 3) Public
-  return logoSvgUrl // 2) Asset Vite (svg)
+  if (viaProp) return viaProp
+  if (triedPublic.value) return '/icons/icon-192.png'
+  return logoSvgUrl
 })
 
 const handleImgError = (e) => {
@@ -158,7 +158,7 @@ const handleImgError = (e) => {
     triedPublic.value = true
     e.target.src = '/icons/icon-192.png'
   } else {
-    showImg.value = false // 4) SVG inline
+    showImg.value = false
   }
 }
 
@@ -211,7 +211,7 @@ const onKeydown = (e) => {
   }
 }
 
-/* Click/tap fuera en TODA la página (fase captura, compatible móvil) */
+/* Click/tap fuera en toda la página (captura: móvil también) */
 const onDocPointerDown = (e) => {
   if (!menu.value) return
   const root = menuRef.value
@@ -277,8 +277,8 @@ const closeFab = () => {
   justify-self: start;
   display: flex;
   align-items: center;
-  gap: 8px;
-}
+  gap: 10px;
+} /* +gap */
 .m360-center {
   pointer-events: none;
 }
@@ -293,19 +293,21 @@ const closeFab = () => {
 .m360-brand {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   text-decoration: none;
 }
 .m360-brand img {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-}
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+} /* 18 -> 22 */
 .m360-brand-text {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 15px; /* 13 -> 15 */
+  font-weight: 800; /* un poco más marcado */
   color: #b9cdfa;
   letter-spacing: 0.2px;
+  line-height: 1; /* mejor alineado vertical */
+  -webkit-font-smoothing: antialiased;
 }
 .m360-crumb {
   font-size: 12px;
