@@ -9,7 +9,28 @@
       </button>
 
       <router-link to="/" class="m360-brand" aria-label="Monitor360">
-        <img :src="logoUrl" alt="Monitor360" @error="onLogoError" />
+        <template v-if="showImg">
+          <img :src="currentLogo" alt="Monitor360" @error="handleImgError" />
+        </template>
+        <template v-else>
+          <!-- Fallback SVG inline: cero 404 -->
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <defs>
+              <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0" stop-color="#6AB4FF" />
+                <stop offset="1" stop-color="#2B68FF" />
+              </linearGradient>
+            </defs>
+            <rect x="2" y="2" width="20" height="20" rx="4" fill="url(#g)" />
+            <path
+              d="M7 12h10M9 9l3 6 3-6"
+              stroke="#0b1220"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </template>
         <span class="m360-brand-text">Monitor360</span>
       </router-link>
 
@@ -20,7 +41,6 @@
 
     <!-- Derecha -->
     <div class="m360-right">
-      <!-- Indicador tiempo real (display-only) -->
       <span class="m360-chip" :class="realtime ? 'is-on' : 'is-off'" aria-hidden="true">
         <span class="dot" />
         <span class="label">{{ realtime ? 'Tiempo real' : 'Reconectando…' }}</span>
@@ -42,7 +62,7 @@
           </svg>
         </button>
 
-        <!-- Overlay (suma UX en móvil; el cierre también lo hace el listener global) -->
+        <!-- Overlay auxiliar (en móvil se siente mejor); igual hay listener global -->
         <div v-if="menu" class="m360-overlay" @click="closeMenu"></div>
 
         <div v-if="menu" class="m360-pop" role="menu">
@@ -113,33 +133,35 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import defaultLogo from '@/assets/logo-32.png' // asegúrate que exista, o cambia esta ruta
+
+// ⚠️ Si usás Vite con alias "@", asegurate de tener logo en src/assets/logo-32.png
+const viteAssetUrl = new URL('@/assets/logo-32.png', import.meta.url).href
 
 const props = defineProps({
   realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
-  logoSrc: { type: String, default: '' }, // si viene vacío, usamos fallbacks
+  logoSrc: { type: String, default: '' },
 })
 const emit = defineEmits(['toggleSidebar', 'logout'])
 
-/* Fallbacks de logo:
-   1) props.logoSrc
-   2) asset importado (defaultLogo)
-   3) /favicon-32x32.png (public/) vía onerror
-*/
+// Estado de logo: si falla todo, ocultamos <img> y mostramos SVG inline
 const triedPublic = ref(false)
+const showImg = ref(true)
 
-const logoUrl = computed(() => {
+const currentLogo = computed(() => {
   const viaProp = (props.logoSrc || '').trim()
-  if (viaProp) return viaProp
-  if (triedPublic.value) return '/favicon-32x32.png'
-  return defaultLogo
+  if (viaProp) return viaProp // 1) Prop
+  if (triedPublic.value) return '/favicon-32x32.png' // 3) Public si ya falló asset
+  return viteAssetUrl // 2) Asset de Vite
 })
 
-const onLogoError = (e) => {
+const handleImgError = (e) => {
   if (!triedPublic.value) {
     triedPublic.value = true
     e.target.src = '/favicon-32x32.png'
+  } else {
+    // Si también falla el public, ocultamos la imagen y dejamos el SVG inline
+    showImg.value = false
   }
 }
 
@@ -192,7 +214,7 @@ const onKeydown = (e) => {
   }
 }
 
-/* Cierre por click/tap fuera en TODA la página (fase de captura para móvil) */
+/* Cierre por click/tap fuera en TODA la página (captura → móvil también) */
 const onDocPointerDown = (e) => {
   if (!menu.value) return
   const root = menuRef.value
@@ -200,7 +222,6 @@ const onDocPointerDown = (e) => {
     menu.value = false
   }
 }
-
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown, true)
@@ -242,7 +263,7 @@ const closeFab = () => {
   z-index: 50;
   height: 44px;
   display: grid;
-  grid-template-columns: auto 1fr auto; /* izquierda | relleno | derecha */
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 0 10px;
@@ -368,8 +389,6 @@ const closeFab = () => {
   background: transparent;
   border: 0;
   outline: 0;
-  appearance: none;
-  -webkit-appearance: none;
 }
 .m360-item:hover {
   background: rgba(255, 255, 255, 0.06);
