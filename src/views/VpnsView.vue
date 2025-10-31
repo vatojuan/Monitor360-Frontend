@@ -167,9 +167,7 @@ async function fetchPeerStatus(pubKey) {
     } catch (e) {
       lastErr = e
       const code = e?.response?.status
-      // 404/405/422 -> probamos la siguiente variante sin cortar
       if ([404, 405, 422].includes(code)) continue
-      // Otros errores (401, 500, etc.) => dejo de intentar
       break
     }
   }
@@ -229,11 +227,23 @@ function startVerifyPolling() {
   verifyTimer = setInterval(pollStatusOnce, 2500)
 }
 
+/* ====== WS para QR remoto y para rotaciones ====== */
+let wsUnsubRot = null
+
 onBeforeUnmount(() => {
   stopLocalScan()
   cleanupRemote()
   document.removeEventListener('visibilitychange', onVisibilityChange)
   stopVerifyPolling()
+
+  if (wsUnsubRot) {
+    try {
+      removeWsListener(wsUnsubRot)
+    } catch (e) {
+      void e
+    }
+    wsUnsubRot = null
+  }
 })
 
 /* ====== Notificaciones ====== */
@@ -441,7 +451,14 @@ async function generateAutoConfig() {
       const suggested = proposeProfileName(conf)
       if (suggested) newProfile.value.name = suggested.slice(0, 80)
     }
-    autoGen.value = { ...data, mikrotik_cmd: buildMikrotikCmd(data) }
+    // —— NUEVO: persistimos metadata de device/rotaciones que manda el backend
+    autoGen.value = {
+      ...data,
+      mikrotik_cmd: buildMikrotikCmd(data),
+      last_auth_ok: data.last_auth_ok || null,
+      last_auth_fail: data.last_auth_fail || null,
+      rotations_count: data.rotations_count || 0,
+    }
     autoBoxOpen.value = true
     showNotification('Configuración generada automáticamente.', 'success')
     stopVerifyPolling()
@@ -552,7 +569,6 @@ async function testProfile(profile) {
     if (data.reachable) showNotification(`Túnel OK. Alcanzable (${profile.check_ip}).`, 'success')
     else showNotification(data.detail || 'No alcanzable a través del túnel.', 'error')
   } catch (err) {
-    // si el backend tira 500, lo mostramos textual para depurar rápido
     const status = err?.response?.status
     const detail = getAxiosErr(err)
     showNotification(`Error (${status}): ${detail}`, 'error')
@@ -583,7 +599,27 @@ async function copyMikrotikScript() {
   }
 }
 
-onMounted(fetchVpnProfiles)
+/* ====== Montaje ====== */
+onMounted(async () => {
+  await fetchVpnProfiles()
+  // WS para escuchar rotaciones y actualizar la UI en vivo
+  try {
+    await connectWebSocketWhenAuthenticated()
+    wsUnsubRot = addWsListener((msg) => {
+      if (msg?.type === 'device_credential_rotated' && autoGen.value) {
+        // Si el backend incluye device_id en autoGen, lo validamos
+        if (!msg.device_id || msg.device_id === autoGen.value.device_id) {
+          autoGen.value.rotations_count = (autoGen.value.rotations_count ?? 0) + 1
+          if (msg.ok) autoGen.value.last_auth_ok = msg.ts
+          else autoGen.value.last_auth_fail = msg.ts
+        }
+      }
+    })
+  } catch (e) {
+    // si no hay WS autenticado aún, no rompemos el flujo
+    void e
+  }
+})
 </script>
 
 <template>
@@ -662,6 +698,13 @@ onMounted(fetchVpnProfiles)
                 <div class="mono-clip">
                   <strong>Client PubKey:</strong> {{ autoGen.client_public_key }}
                 </div>
+              </div>
+
+              <!-- NUEVO: métricas de autenticación/rotación -->
+              <div class="auto-grid">
+                <div><strong>Rotaciones:</strong> {{ autoGen.rotations_count ?? 0 }}</div>
+                <div><strong>Último OK:</strong> {{ autoGen.last_auth_ok || '—' }}</div>
+                <div><strong>Último fallo:</strong> {{ autoGen.last_auth_fail || '—' }}</div>
               </div>
 
               <div class="stack">
