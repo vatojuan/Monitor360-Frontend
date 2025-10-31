@@ -43,18 +43,20 @@ function buildMikrotikCmd(resp) {
   const addr = resp?.interface_address || ''
   const allowed = resp?.peer_allowed_ips || '0.0.0.0/0'
   const srvPub = resp?.peer_public_key || ''
+  const clientPriv = resp?.client_private_key || ''
 
-  // NOTA: no fijamos listen-port en el cliente; MikroTik puede usar puerto efímero detrás de NAT
   return [
     '# --- Configuración sugerida para el cliente MikroTik ---',
-    '# 1) Crear la interfaz WireGuard (poné tu private-key generada en el propio MikroTik)',
-    '/interface/wireguard add name=wg-m360 comment="Monitor360 VPN (auto)"',
-    `# 2) IP de la interfaz`,
+    '# Paso 1: crear interfaz WireGuard con la clave privada provista',
+    `/interface/wireguard add name=wg-m360 comment="Monitor360 VPN (auto)" private-key="${clientPriv}"`,
+    '# Paso 2: asignar IP a la interfaz',
     `/ip/address add address=${addr} interface=wg-m360`,
-    '# 3) Peer hacia el servidor',
+    '# Paso 3: añadir peer del servidor',
     `/interface/wireguard/peers add interface=wg-m360 public-key="${srvPub}" endpoint-address=${host} endpoint-port=${port} persistent-keepalive=25 allowed-address=${allowed}`,
-    '# 4) (opcional) Si necesitás default route vía el túnel, ajustá según tu caso',
+    '# (Opcional) Si querés enrutar todo por el túnel, agregá una default route:',
     '# /ip/route add dst-address=0.0.0.0/0 gateway=wg-m360 distance=1',
+    '# (Opcional) DNS para clientes detrás del MikroTik:',
+    '# /ip/dns set servers=1.1.1.1',
   ].join('\n')
 }
 
@@ -116,6 +118,69 @@ const isSaving = ref(false)
 const isGenerating = ref(false)
 const autoGen = ref(null) // guarda última respuesta útil para mostrar detalles y comando
 
+/* ====== Verificación de handshake (polling) ====== */
+const verify = ref({
+  running: false,
+  connected: false,
+  lastHandshake: null,
+  rx: 0,
+  tx: 0,
+  tries: 0,
+  error: '',
+})
+let verifyTimer = null
+
+function stopVerifyPolling() {
+  if (verifyTimer) {
+    clearInterval(verifyTimer)
+    verifyTimer = null
+  }
+  verify.value.running = false
+}
+
+async function pollStatusOnce() {
+  if (!autoGen.value?.client_public_key) return
+  try {
+    const url = `/vpns/peer-status/${encodeURIComponent(autoGen.value.client_public_key)}`
+    const { data } = await api.get(url)
+    verify.value.connected = !!data?.connected
+    verify.value.lastHandshake = data?.latest_handshake || null
+    verify.value.rx = data?.rx_bytes || 0
+    verify.value.tx = data?.tx_bytes || 0
+    verify.value.error = ''
+  } catch (e) {
+    verify.value.error = getAxiosErr(e)
+  } finally {
+    verify.value.tries += 1
+    // Si conectó, lo dejamos corriendo unos ciclos más por si el usuario quiere ver tráfico.
+    // Si preferís cortar al conectar, descomentá:
+    // if (verify.value.connected) stopVerifyPolling()
+  }
+}
+
+function startVerifyPolling() {
+  if (!autoGen.value?.client_public_key || verify.value.running) return
+  verify.value.running = true
+  verify.value.connected = false
+  verify.value.lastHandshake = null
+  verify.value.rx = 0
+  verify.value.tx = 0
+  verify.value.tries = 0
+  verify.value.error = ''
+  // Primer intento inmediato
+  pollStatusOnce()
+  // Luego cada ~2.5s
+  verifyTimer = setInterval(pollStatusOnce, 2500)
+}
+
+onBeforeUnmount(() => {
+  stopLocalScan()
+  cleanupRemote()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopVerifyPolling()
+})
+
+/* ====== Notificaciones ====== */
 const notification = ref({ show: false, message: '', type: 'success' })
 function showNotification(message, type = 'success') {
   notification.value = { show: true, message, type }
@@ -299,12 +364,6 @@ function cleanupRemote() {
   remoteExpired.value = false
 }
 
-onBeforeUnmount(() => {
-  stopLocalScan()
-  cleanupRemote()
-  document.removeEventListener('visibilitychange', onVisibilityChange)
-})
-
 /* ====== Importar desde archivo .conf ====== */
 async function importFromFile(e) {
   const file = e.target?.files?.[0]
@@ -320,27 +379,29 @@ async function importFromFile(e) {
 }
 
 /* ====== Generar config automáticamente (backend) ====== */
+const autoBoxOpen = ref(true)
+
 async function generateAutoConfig() {
   if (isGenerating.value) return
   isGenerating.value = true
   try {
-    // Podés enviar payload vacío si usás ENV en el backend
-    const { data } = await api.post('/vpns/mikrotik-auto', {})
-    // Rellenar el textarea con el INI
+    const { data } = await api.post('/vpns/mikrotik-auto', {}) // usa ENV del backend
     const conf = (data?.conf_ini || '').trim()
     if (!conf) throw new Error('El backend no devolvió conf_ini.')
     newProfile.value.config_data = conf
-    // Proponer nombre si no hay
     if (!newProfile.value.name.trim()) {
       const suggested = proposeProfileName(conf)
       if (suggested) newProfile.value.name = suggested.slice(0, 80)
     }
-    // Guardar detalles y comando sugerido
     autoGen.value = {
       ...data,
       mikrotik_cmd: buildMikrotikCmd(data),
     }
+    autoBoxOpen.value = true
     showNotification('Configuración generada automáticamente.', 'success')
+    // Iniciar verificación automática
+    stopVerifyPolling()
+    startVerifyPolling()
   } catch (err) {
     console.error(err)
     showNotification(getAxiosErr(err), 'error')
@@ -394,6 +455,7 @@ async function createProfile() {
     })
     newProfile.value = { name: '', check_ip: '', config_data: '' }
     autoGen.value = null
+    stopVerifyPolling()
     showNotification('Perfil VPN creado.', 'success')
   } catch (err) {
     console.error('Error al crear perfil:', err)
@@ -527,16 +589,59 @@ onMounted(fetchVpnProfiles)
 
         <!-- Panel autogenerado -->
         <div v-if="autoGen" class="auto-box">
-          <div class="auto-grid">
-            <div><strong>Address:</strong> {{ autoGen.interface_address }}</div>
-            <div><strong>Endpoint:</strong> {{ autoGen.peer_endpoint }}</div>
-            <div><strong>AllowedIPs:</strong> {{ autoGen.peer_allowed_ips }}</div>
-            <div><strong>Server PubKey:</strong> {{ autoGen.peer_public_key }}</div>
+          <div class="auto-box-header" @click="autoBoxOpen = !autoBoxOpen">
+            <div class="status-chip" :class="verify.connected ? 'ok' : 'warn'">
+              <span class="dot"></span>
+              {{ verify.connected ? 'Túnel activo' : 'Esperando handshake' }}
+            </div>
+            <div class="grow"></div>
+            <button class="btn-toggle" type="button">
+              {{ autoBoxOpen ? 'Ocultar' : 'Mostrar' }}
+            </button>
           </div>
-          <div class="stack">
-            <label>Comando MikroTik sugerido</label>
-            <pre class="code-block">{{ autoGen.mikrotik_cmd }}</pre>
-          </div>
+
+          <transition name="fade">
+            <div v-if="autoBoxOpen" class="auto-inner">
+              <div class="auto-grid">
+                <div><strong>Address:</strong> {{ autoGen.interface_address }}</div>
+                <div><strong>Endpoint:</strong> {{ autoGen.peer_endpoint }}</div>
+                <div><strong>AllowedIPs:</strong> {{ autoGen.peer_allowed_ips }}</div>
+                <div class="mono-clip">
+                  <strong>Server PubKey:</strong> {{ autoGen.peer_public_key }}
+                </div>
+                <div class="mono-clip">
+                  <strong>Client PubKey:</strong> {{ autoGen.client_public_key }}
+                </div>
+              </div>
+
+              <div class="stack">
+                <label>Script MikroTik (copiar y pegar en terminal)</label>
+                <pre class="code-block">{{ autoGen.mikrotik_cmd }}</pre>
+                <div class="actions-row">
+                  <button class="btn-secondary" @click="copyMikrotikScript">Copiar script</button>
+                  <button v-if="!verify.running" class="btn-default" @click="startVerifyPolling">
+                    Verificar estado
+                  </button>
+                  <button v-else class="btn-danger" @click="stopVerifyPolling">
+                    Detener verificación
+                  </button>
+                </div>
+              </div>
+
+              <div class="verify-box">
+                <div>
+                  <strong>Conexión:</strong>
+                  <span :class="verify.connected ? 'ok' : 'warn'">{{
+                    verify.connected ? 'Conectado' : 'Sin conexión'
+                  }}</span>
+                </div>
+                <div><strong>Último handshake:</strong> {{ verify.lastHandshake || '—' }}</div>
+                <div><strong>RX / TX:</strong> {{ verify.rx }} / {{ verify.tx }} bytes</div>
+                <div v-if="verify.error" class="err">Error: {{ verify.error }}</div>
+                <small>Intentos: {{ verify.tries }}</small>
+              </div>
+            </div>
+          </transition>
         </div>
       </div>
 
@@ -840,6 +945,7 @@ textarea {
   gap: 1rem;
 }
 
+/* Notificaciones */
 .notification {
   position: fixed;
   bottom: 20px;
@@ -857,6 +963,7 @@ textarea {
   background: var(--error-red);
 }
 
+/* Botones barra config */
 .label-with-action {
   display: flex;
   justify-content: space-between;
@@ -875,7 +982,6 @@ textarea {
   align-items: center;
   gap: 0.4rem;
 }
-
 .btn-qr-scan {
   background: #333;
   color: var(--font-color);
@@ -1003,17 +1109,34 @@ textarea {
   background: #0f0f0f;
   border: 1px solid #2a2a2a;
   border-radius: 8px;
+}
+.auto-box-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid #2a2a2a;
+}
+.auto-inner {
   padding: 0.75rem;
 }
 .auto-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
 }
 @media (max-width: 720px) {
   .auto-grid {
     grid-template-columns: 1fr;
   }
+}
+.mono-clip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
 }
 .code-block {
   background: #0b0b0b;
@@ -1022,5 +1145,71 @@ textarea {
   padding: 0.75rem;
   overflow: auto;
   white-space: pre;
+}
+
+/* Verify badge */
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  border: 1px solid #2a2a2a;
+}
+.status-chip .dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+.status-chip.ok {
+  background: rgba(46, 160, 67, 0.12);
+  color: #68d391;
+}
+.status-chip.ok .dot {
+  background: #2ea043;
+}
+.status-chip.warn {
+  background: rgba(244, 208, 63, 0.12);
+  color: #f4d03f;
+}
+.status-chip.warn .dot {
+  background: #f4d03f;
+}
+
+.verify-box {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 0.75rem;
+  font-size: 0.95rem;
+}
+.verify-box .ok {
+  color: #68d391;
+}
+.verify-box .warn {
+  color: #f4d03f;
+}
+.verify-box .err {
+  color: #ff6b6b;
+  grid-column: 1 / -1;
+}
+.grow {
+  flex: 1;
+}
+
+/* Transición */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
