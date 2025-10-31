@@ -6,22 +6,80 @@ import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } fr
 import { BrowserQRCodeReader } from '@zxing/browser'
 import { NotFoundException } from '@zxing/library'
 
-let codeReader = null
+/* ====== Helpers ====== */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
-// === Estado del modal ===
+/** Validación mínima de un ini de WireGuard */
+function isLikelyWgIni(txt) {
+  if (!txt) return false
+  const s = txt.trim()
+  return (
+    /\[Interface\]/i.test(s) &&
+    /\[Peer\]/i.test(s) &&
+    /PublicKey\s*=/.test(s) &&
+    /AllowedIPs\s*=/.test(s)
+  )
+}
+
+/** Intenta proponer un nombre a partir de Address/Endpoint */
+function proposeProfileName(iniText) {
+  try {
+    const addr = (iniText.match(/Address\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
+    const endpoint = (iniText.match(/Endpoint\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
+    if (addr && endpoint) return `${addr.split('/')[0]} @ ${endpoint}`
+    if (endpoint) return endpoint
+    if (addr) return addr.split('/')[0]
+  } catch {
+    return ''
+  }
+  return ''
+}
+
+/* ====== ZXing / Cámara ====== */
+let codeReader = null
+let currentStream = null
+const cameras = ref([])
+const selectedCameraId = ref('')
+
+async function listCameras() {
+  cameras.value = await BrowserQRCodeReader.listVideoInputDevices()
+  // Preferir trasera si existe
+  const backCam = cameras.value.find((d) => /back|trás|rear|environment/i.test(d.label))
+  selectedCameraId.value = backCam?.deviceId || cameras.value[0]?.deviceId || ''
+}
+
+/** Algunos navegadores permiten torch */
+async function setTorch(on) {
+  try {
+    const track = currentStream?.getVideoTracks?.()[0]
+    const caps = track?.getCapabilities?.()
+    if (caps?.torch) {
+      await track.applyConstraints({ advanced: [{ torch: !!on }] })
+      return true
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
+/* ====== Estado del modal QR ====== */
 const scanOpen = ref(false)
 const step = ref('choose')
 
-// === Local (Opción A)
 const localActive = ref(false)
 const localError = ref('')
 const localPaused = ref(false)
+const torchEnabled = ref(false)
 
-// === Remoto (Opción B)
 const pairing = ref(null) // { id, url, expires_in }
 let wsUnsub = null
+let remoteTimer = null
+const remoteCountdown = ref(0)
+const remoteExpired = ref(false)
 
-// === Formulario creación VPN ===
+/* ====== Formulario / listado de VPNs ====== */
 const newProfile = ref({
   name: '',
   check_ip: '',
@@ -30,6 +88,7 @@ const newProfile = ref({
 
 const vpnProfiles = ref([])
 const isLoading = ref(false)
+const isSaving = ref(false)
 
 const notification = ref({ show: false, message: '', type: 'success' })
 function showNotification(message, type = 'success') {
@@ -37,7 +96,7 @@ function showNotification(message, type = 'success') {
   setTimeout(() => (notification.value.show = false), 4000)
 }
 
-// --- Modal QR ---
+/* ====== Abrir / cerrar modal ====== */
 function openScanModal() {
   scanOpen.value = true
   step.value = 'choose'
@@ -45,95 +104,206 @@ function openScanModal() {
   localActive.value = false
   localPaused.value = false
   pairing.value = null
+  remoteCountdown.value = 0
+  remoteExpired.value = false
 }
 
 function closeScanModal() {
   scanOpen.value = false
   cleanupRemote()
+  stopLocalScan()
 }
 
+/* ====== Aplicar config desde QR/archivo ====== */
 function applyConfigAndClose(text) {
-  newProfile.value.config_data = text?.trim() || ''
+  const conf = (text || '').trim()
+  if (!isLikelyWgIni(conf)) {
+    showNotification('El QR/archivo no parece una config válida de WireGuard.', 'error')
+    return
+  }
+  newProfile.value.config_data = conf
+  if (!newProfile.value.name.trim()) {
+    const suggested = proposeProfileName(conf)
+    if (suggested) newProfile.value.name = suggested.slice(0, 80)
+  }
   closeScanModal()
-  showNotification('Configuración cargada desde QR', 'success')
+  showNotification('Configuración cargada.', 'success')
 }
 
-// === Opción A ===
+/* ====== Opción A: Cámara local ====== */
 async function chooseLocal() {
   step.value = 'local'
   await nextTick()
   localError.value = ''
   localActive.value = true
   localPaused.value = false
+  torchEnabled.value = false
 
   try {
-    // Preferir cámara trasera
-    codeReader = new BrowserQRCodeReader()
-    const devices = await BrowserQRCodeReader.listVideoInputDevices()
-    console.log('📸 Cámaras detectadas:', devices)
-
-    let deviceId = devices[0]?.deviceId
-    // Buscar explícitamente la trasera
-    const backCam = devices.find((d) => /back|trás|rear|environment/i.test(d.label))
-    if (backCam) {
-      deviceId = backCam.deviceId
+    await listCameras()
+    if (!selectedCameraId.value) {
+      localError.value = 'No se encontró ninguna cámara disponible.'
+      return
     }
 
-    // Iniciar escaneo
-    await codeReader.decodeFromVideoDevice(deviceId, 'preview', (result, err) => {
+    // Permiso de cámara (algunos navegadores lo requieren explícito)
+    try {
+      currentStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: selectedCameraId.value },
+      })
+      // liberamos porque ZXing tomará control
+      currentStream.getTracks().forEach((t) => t.stop())
+      currentStream = null
+    } catch {
+      localError.value = 'Permiso de cámara denegado o no disponible.'
+      return
+    }
+
+    codeReader = new BrowserQRCodeReader()
+    await codeReader.decodeFromVideoDevice(selectedCameraId.value, 'preview', (result, err) => {
       if (result) {
-        console.log('📸 QR detectado:', result.getText())
         applyConfigAndClose(result.getText())
         stopLocalScan()
       }
       if (err && !(err instanceof NotFoundException)) {
-        console.warn('⚠️ ZXing error:', err)
+        void err // evita bloque vacío y marca el param como usado
       }
     })
+
+    // Guardar stream para Torch y pausas
+    const preview = document.getElementById('preview')
+    currentStream = preview?.srcObject || null
   } catch (err) {
-    console.error('❌ Error iniciando ZXing:', err)
-    localError.value = 'No se pudo iniciar la cámara.'
+    console.error('Error iniciando ZXing:', err)
+    localError.value = 'No se pudo iniciar el lector de QR.'
   }
+}
+
+async function onChangeCamera() {
+  if (!localActive.value) return
+  stopLocalScan()
+  await sleep(150)
+  await chooseLocal()
+}
+
+async function toggleTorch() {
+  const ok = await setTorch(!torchEnabled.value)
+  if (ok) torchEnabled.value = !torchEnabled.value
+  else showNotification('Este dispositivo no soporta linterna.', 'error')
 }
 
 function stopLocalScan() {
-  if (codeReader) {
-    codeReader.reset()
-    codeReader = null
+  try {
+    if (codeReader) {
+      codeReader.reset()
+      codeReader = null
+    }
+    if (currentStream) {
+      currentStream.getTracks().forEach((t) => t.stop?.())
+      currentStream = null
+    }
+  } catch (e) {
+    void e
   }
   localActive.value = false
+  torchEnabled.value = false
 }
 
-onBeforeUnmount(() => stopLocalScan())
+/* Pausar cámara cuando se oculta la pestaña (ahorra recursos) */
+function onVisibilityChange() {
+  if (!localActive.value) return
+  if (document.hidden) {
+    localPaused.value = true
+    stopLocalScan()
+  } else if (localPaused.value) {
+    chooseLocal()
+  }
+}
+document.addEventListener('visibilitychange', onVisibilityChange)
 
-// === Opción B ===
+/* ====== Opción B: Remoto con celular ====== */
 async function chooseRemote() {
   step.value = 'remote'
-  const { data } = await api.post('/qr/start')
-  pairing.value = { id: data.session_id, url: data.mobile_url, expires_in: data.expires_in }
+  try {
+    const { data } = await api.post('/qr/start')
+    pairing.value = { id: data.session_id, url: data.mobile_url, expires_in: data.expires_in }
+    remoteCountdown.value = Number(data.expires_in || 300)
+    remoteExpired.value = false
 
-  await connectWebSocketWhenAuthenticated()
-  wsUnsub = addWsListener((msg) => {
-    if (msg?.type === 'qr_config' && msg.session_id === pairing.value?.id) {
-      applyConfigAndClose(msg.config_text)
-    }
-  })
+    // Countdown
+    if (remoteTimer) clearInterval(remoteTimer)
+    remoteTimer = setInterval(() => {
+      if (remoteCountdown.value > 0) remoteCountdown.value -= 1
+      if (remoteCountdown.value <= 0) {
+        remoteExpired.value = true
+        cleanupRemote()
+        clearInterval(remoteTimer)
+        remoteTimer = null
+      }
+    }, 1000)
+
+    await connectWebSocketWhenAuthenticated()
+    wsUnsub = addWsListener((msg) => {
+      if (msg?.type === 'qr_config' && msg.session_id === pairing.value?.id) {
+        applyConfigAndClose(msg.config_text)
+        cleanupRemote()
+      }
+    })
+  } catch (err) {
+    showNotification(getAxiosErr(err), 'error')
+    step.value = 'choose'
+  }
 }
 
 function cleanupRemote() {
   if (wsUnsub) {
     try {
       removeWsListener(wsUnsub)
-    } catch {
-      // no-op: ignoramos errores al remover el listener
+    } catch (e) {
+      void e
     }
     wsUnsub = null
   }
+  if (remoteTimer) {
+    clearInterval(remoteTimer)
+    remoteTimer = null
+  }
+  pairing.value = null
+  remoteCountdown.value = 0
+  remoteExpired.value = false
 }
 
-onBeforeUnmount(() => cleanupRemote())
+onBeforeUnmount(() => {
+  stopLocalScan()
+  cleanupRemote()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 
-// --- CRUD VPN Profiles ---
+/* ====== Importar desde archivo .conf ====== */
+async function importFromFile(e) {
+  const file = e.target?.files?.[0]
+  if (!file) return
+  try {
+    const txt = await file.text()
+    applyConfigAndClose(txt)
+  } catch {
+    showNotification('No se pudo leer el archivo.', 'error')
+  } finally {
+    e.target.value = '' // reset input
+  }
+}
+
+/* ====== Copiar config ====== */
+async function copyConfig() {
+  try {
+    await navigator.clipboard.writeText(newProfile.value.config_data || '')
+    showNotification('Configuración copiada al portapapeles.')
+  } catch {
+    showNotification('No se pudo copiar al portapapeles.', 'error')
+  }
+}
+
+/* ====== CRUD VPN Profiles ====== */
 async function fetchVpnProfiles() {
   isLoading.value = true
   try {
@@ -142,20 +312,27 @@ async function fetchVpnProfiles() {
       ...p,
       is_default: !!p.is_default,
       _expanded: false,
+      _saving: false,
     }))
   } catch (err) {
     console.error('Error al cargar perfiles VPN:', err)
-    showNotification(err.response?.data?.detail || 'Error al cargar perfiles VPN.', 'error')
+    showNotification(getAxiosErr(err) || 'Error al cargar perfiles VPN.', 'error')
   } finally {
     isLoading.value = false
   }
 }
 
+function canCreate() {
+  return newProfile.value.name.trim() && isLikelyWgIni(newProfile.value.config_data)
+}
+
 async function createProfile() {
-  if (!newProfile.value.name.trim() || !newProfile.value.config_data.trim()) {
-    showNotification('Nombre y Config son obligatorios.', 'error')
+  if (!canCreate()) {
+    showNotification('Nombre y Config válidas son obligatorios.', 'error')
     return
   }
+  if (isSaving.value) return
+  isSaving.value = true
   try {
     const body = {
       name: newProfile.value.name.trim(),
@@ -163,16 +340,25 @@ async function createProfile() {
       check_ip: newProfile.value.check_ip.trim(),
     }
     const { data } = await api.post('/vpns', body)
-    vpnProfiles.value.push({ ...data, is_default: !!data.is_default, _expanded: false })
+    vpnProfiles.value.unshift({
+      ...data,
+      is_default: !!data.is_default,
+      _expanded: false,
+      _saving: false,
+    })
     newProfile.value = { name: '', check_ip: '', config_data: '' }
     showNotification('Perfil VPN creado.', 'success')
   } catch (err) {
     console.error('Error al crear perfil:', err)
-    showNotification(err.response?.data?.detail || 'Error al crear perfil.', 'error')
+    showNotification(getAxiosErr(err) || 'Error al crear perfil.', 'error')
+  } finally {
+    isSaving.value = false
   }
 }
 
 async function saveProfile(profile) {
+  if (profile._saving) return
+  profile._saving = true
   try {
     const payload = {
       name: profile.name,
@@ -184,18 +370,24 @@ async function saveProfile(profile) {
     await fetchVpnProfiles()
   } catch (err) {
     console.error('Error al actualizar perfil:', err)
-    showNotification(err.response?.data?.detail || 'Error al actualizar perfil.', 'error')
+    showNotification(getAxiosErr(err) || 'Error al actualizar perfil.', 'error')
+  } finally {
+    profile._saving = false
   }
 }
 
 async function setDefault(profile) {
+  if (profile._saving) return
+  profile._saving = true
   try {
     await api.put(`/vpns/${profile.id}`, { is_default: true })
     await fetchVpnProfiles()
     showNotification(`"${profile.name}" ahora es el default.`, 'success')
   } catch (err) {
     console.error('Error al marcar default:', err)
-    showNotification(err.response?.data?.detail || 'No se pudo marcar como default.', 'error')
+    showNotification(getAxiosErr(err) || 'No se pudo marcar como default.', 'error')
+  } finally {
+    profile._saving = false
   }
 }
 
@@ -214,7 +406,7 @@ async function testProfile(profile) {
     }
   } catch (err) {
     console.error('Error al probar túnel:', err)
-    showNotification(err.response?.data?.detail || 'Error al probar el túnel.', 'error')
+    showNotification(getAxiosErr(err) || 'Error al probar el túnel.', 'error')
   }
 }
 
@@ -226,7 +418,7 @@ async function deleteProfile(profile) {
     showNotification('Perfil eliminado.', 'success')
   } catch (err) {
     console.error('Error al eliminar perfil:', err)
-    showNotification(err.response?.data?.detail || 'No se pudo eliminar el perfil.', 'error')
+    showNotification(getAxiosErr(err) || 'No se pudo eliminar el perfil.', 'error')
   }
 }
 
@@ -251,17 +443,27 @@ onMounted(fetchVpnProfiles)
           <small>IP dentro del túnel para prueba rápida.</small>
         </div>
       </div>
+
       <div class="stack">
         <div class="label-with-action">
           <label>Config WireGuard *</label>
-          <button @click="openScanModal" class="btn-qr-scan" title="Escanear Código QR">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path
-                d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM13 13h2v2h-2zM15 15h2v2h-2zM13 17h2v2h-2zM17 17h2v2h-2zM19 19h2v2h-2zM15 19h2v2h-2zM17 13h2v2h-2zM19 15h2v2h-2z"
-              ></path>
-            </svg>
-            Escanear
-          </button>
+          <div class="actions-right">
+            <label class="file-btn" title="Importar .conf">
+              Importar .conf
+              <input type="file" accept=".conf,.txt" @change="importFromFile" hidden />
+            </label>
+            <button @click="copyConfig" class="btn-qr-scan" title="Copiar al portapapeles">
+              Copiar
+            </button>
+            <button @click="openScanModal" class="btn-qr-scan" title="Escanear Código QR">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path
+                  d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM13 13h2v2h-2zM15 15h2v2h-2zM13 17h2v2h-2zM17 17h2v2h-2zM19 19h2v2h-2zM15 19h2v2h-2zM17 13h2v2h-2zM19 15h2v2h-2z"
+                ></path>
+              </svg>
+              Escanear
+            </button>
+          </div>
         </div>
         <textarea
           v-model="newProfile.config_data"
@@ -271,7 +473,13 @@ onMounted(fetchVpnProfiles)
         />
       </div>
       <div class="actions-row">
-        <button class="btn-primary" @click="createProfile">Crear Perfil</button>
+        <button
+          class="btn-primary"
+          :disabled="!newProfile.name.trim() || !isLikelyWgIni(newProfile.config_data) || isSaving"
+          @click="createProfile"
+        >
+          {{ isSaving ? 'Creando…' : 'Crear Perfil' }}
+        </button>
       </div>
     </section>
 
@@ -313,17 +521,24 @@ onMounted(fetchVpnProfiles)
               <textarea v-model="p.config_data" rows="12" spellcheck="false"></textarea>
             </div>
             <div class="actions-row">
-              <button class="btn-primary" @click.stop="saveProfile(p)">Guardar cambios</button>
+              <button class="btn-primary" :disabled="p._saving" @click.stop="saveProfile(p)">
+                {{ p._saving ? 'Guardando…' : 'Guardar cambios' }}
+              </button>
               <button
                 class="btn-default"
                 v-if="!p.is_default"
+                :disabled="p._saving"
                 @click.stop="setDefault(p)"
                 title="Marcar este perfil como predeterminado"
               >
                 Marcar como default
               </button>
-              <button class="btn-secondary" @click.stop="testProfile(p)">Probar túnel</button>
-              <button class="btn-danger" @click.stop="deleteProfile(p)">Eliminar</button>
+              <button class="btn-secondary" :disabled="p._saving" @click.stop="testProfile(p)">
+                Probar túnel
+              </button>
+              <button class="btn-danger" :disabled="p._saving" @click.stop="deleteProfile(p)">
+                Eliminar
+              </button>
             </div>
           </div>
         </li>
@@ -342,7 +557,7 @@ onMounted(fetchVpnProfiles)
 
         <!-- Paso elegir -->
         <div v-if="step === 'choose'">
-          <h3>¿Cómo quieres escanear el QR?</h3>
+          <h3>¿Cómo querés escanear el QR?</h3>
           <div class="choose-options">
             <button @click="chooseLocal" class="btn-choose">
               <svg viewBox="0 0 24 24">
@@ -365,21 +580,42 @@ onMounted(fetchVpnProfiles)
 
         <!-- Paso local -->
         <div v-else-if="step === 'local'">
-          <h3>Apunta al código QR de MikroTik</h3>
+          <h3>Apuntá al código QR de MikroTik</h3>
           <div v-if="localError" class="text-red-400">{{ localError }}</div>
-          <div v-else class="remote-qr-container">
+          <div class="local-controls" v-else>
+            <select v-if="cameras.length" v-model="selectedCameraId" @change="onChangeCamera">
+              <option v-for="c in cameras" :key="c.deviceId" :value="c.deviceId">
+                {{ c.label || 'Cámara' }}
+              </option>
+            </select>
+            <button class="btn-qr-scan" @click="toggleTorch" title="Linterna">
+              {{ torchEnabled ? 'Apagar linterna' : 'Encender linterna' }}
+            </button>
+          </div>
+          <div class="remote-qr-container">
             <video id="preview" class="qr-video" autoplay playsinline></video>
           </div>
         </div>
 
         <!-- Paso remoto -->
         <div v-else-if="step === 'remote'">
-          <h3>1. Escanea este QR con tu celular</h3>
+          <h3>1. Escaneá este QR con tu celular</h3>
           <p class="remote-scan-subtitle">Se abrirá una página para escanear el QR de MikroTik.</p>
           <div class="remote-qr-container">
-            <QrcodeVue :value="pairing?.url" :size="220" level="H" v-if="pairing?.url" />
+            <QrcodeVue
+              :value="pairing?.url"
+              :size="220"
+              level="H"
+              v-if="pairing?.url && !remoteExpired"
+            />
+            <div v-else class="expired">La sesión expiró.</div>
           </div>
-          <p class="waiting-text">Esperando datos del celular...</p>
+          <p v-if="!remoteExpired" class="waiting-text">
+            Esperando datos del celular… ({{ remoteCountdown }}s)
+          </p>
+          <div v-else class="expired-actions">
+            <button class="btn-qr-scan" @click="chooseRemote">Reintentar</button>
+          </div>
         </div>
       </div>
     </div>
@@ -435,7 +671,8 @@ h2 {
   gap: 0.4rem;
 }
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   background: #0e0e0e;
   color: var(--font-color);
@@ -457,7 +694,9 @@ textarea {
 .btn-secondary,
 .btn-danger,
 .btn-default,
-.btn-toggle {
+.btn-toggle,
+.btn-qr-scan,
+.file-btn {
   border-radius: 8px;
   padding: 0.6rem 0.9rem;
   cursor: pointer;
@@ -466,6 +705,10 @@ textarea {
 }
 .btn-primary {
   background: var(--green);
+}
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .btn-secondary {
   background: transparent;
@@ -528,6 +771,7 @@ textarea {
   flex-direction: column;
   gap: 1rem;
 }
+
 .notification {
   position: fixed;
   bottom: 20px;
@@ -544,19 +788,31 @@ textarea {
 .notification.error {
   background: var(--error-red);
 }
+
 .label-with-action {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
+.actions-right {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.file-btn {
+  background: #333;
+  color: var(--font-color);
+  border: 1px solid #444;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .btn-qr-scan {
   background: #333;
   color: var(--font-color);
   border: 1px solid #444;
-  border-radius: 6px;
-  padding: 0.25rem 0.6rem;
-  cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.4rem;
 }
@@ -567,6 +823,7 @@ textarea {
   width: 1rem;
   height: 1rem;
 }
+
 .qr-scanner-modal {
   position: fixed;
   top: 0;
@@ -585,7 +842,7 @@ textarea {
   border-radius: 12px;
   text-align: center;
   width: 90%;
-  max-width: 500px;
+  max-width: 540px;
   position: relative;
 }
 .btn-close-modal {
@@ -632,6 +889,7 @@ textarea {
   fill: var(--primary-color);
   flex-shrink: 0;
 }
+
 .remote-scan-subtitle {
   color: var(--gray);
   margin: -0.5rem 0 1rem 0;
@@ -646,13 +904,27 @@ textarea {
   margin-top: 1rem;
   color: var(--primary-color);
 }
+.expired {
+  color: var(--error-red);
+  font-weight: 600;
+  margin-top: 0.5rem;
+}
+.expired-actions {
+  margin-top: 0.75rem;
+}
 
-/* 👇 nuevo bloque bien cerrado */
+.local-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.5rem;
+}
 .qr-video {
   width: 100%;
-  max-width: 400px; /* no más de 400px de ancho */
-  aspect-ratio: 1 / 1; /* cuadrado */
-  object-fit: cover; /* recorta si sobra */
+  max-width: 420px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
   border-radius: 12px;
   border: 2px solid #444;
 }
