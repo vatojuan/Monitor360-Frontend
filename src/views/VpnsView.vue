@@ -10,23 +10,35 @@ import { NotFoundException } from '@zxing/library'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
-/** Validación mínima de un ini de WireGuard */
+/** Validación mínima de un ini de WireGuard (ahora exige Address también) */
 function isLikelyWgIni(txt) {
   if (!txt) return false
   const s = txt.trim()
   return (
     /\[Interface\]/i.test(s) &&
+    /(^|\n)\s*Address\s*=\s*.+/i.test(s) &&
     /\[Peer\]/i.test(s) &&
-    /PublicKey\s*=/.test(s) &&
-    /AllowedIPs\s*=/.test(s)
+    /(^|\n)\s*PublicKey\s*=\s*.+/i.test(s) &&
+    /(^|\n)\s*AllowedIPs\s*=\s*.+/i.test(s)
   )
+}
+
+/** Inyecta Address=... en el bloque [Interface] si falta */
+function ensureAddressInIni(iniText, fallbackAddr) {
+  let out = (iniText || '').trim()
+  if (!/(^|\n)\s*Address\s*=\s*.+/i.test(out)) {
+    if (!fallbackAddr) return null
+    // Insertar debajo de la primera línea [Interface]
+    out = out.replace(/\[Interface\]\s*/i, (m) => `${m}\nAddress = ${fallbackAddr}\n`)
+  }
+  return out
 }
 
 /** Intenta proponer un nombre a partir de Address/Endpoint */
 function proposeProfileName(iniText) {
   try {
-    const addr = (iniText.match(/Address\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
-    const endpoint = (iniText.match(/Endpoint\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
+    const addr = (iniText.match(/(^|\n)\s*Address\s*=\s*([^\n\r]+)/i)?.[2] || '').trim()
+    const endpoint = (iniText.match(/(^|\n)\s*Endpoint\s*=\s*([^\n\r]+)/i)?.[2] || '').trim()
     if (addr && endpoint) return `${addr.split('/')[0]} @ ${endpoint}`
     if (endpoint) return endpoint
     if (addr) return addr.split('/')[0]
@@ -49,11 +61,11 @@ function buildMikrotikCmd(resp) {
     '# --- Configuración sugerida para el cliente MikroTik ---',
     '# Paso 1: crear interfaz WireGuard con la clave privada provista',
     `/interface/wireguard add name=wg-m360 comment="Monitor360 VPN (auto)" private-key="${clientPriv}"`,
-    '# Paso 2: asignar IP a la interfaz',
+    '# Paso 2: asignar IP a la interfaz (¡importante!)',
     `/ip/address add address=${addr} interface=wg-m360`,
     '# Paso 3: añadir peer del servidor',
     `/interface/wireguard/peers add interface=wg-m360 public-key="${srvPub}" endpoint-address=${host} endpoint-port=${port} persistent-keepalive=25 allowed-address=${allowed}`,
-    '# (Opcional) Si querés enrutar todo por el túnel, agregá una default route:',
+    '# (Opcional) Enrutar todo por el túnel:',
     '# /ip/route add dst-address=0.0.0.0/0 gateway=wg-m360 distance=1',
     '# (Opcional) DNS para clientes detrás del MikroTik:',
     '# /ip/dns set servers=1.1.1.1',
@@ -152,9 +164,6 @@ async function pollStatusOnce() {
     verify.value.error = getAxiosErr(e)
   } finally {
     verify.value.tries += 1
-    // Si conectó, lo dejamos corriendo unos ciclos más por si el usuario quiere ver tráfico.
-    // Si preferís cortar al conectar, descomentá:
-    // if (verify.value.connected) stopVerifyPolling()
   }
 }
 
@@ -205,18 +214,51 @@ function closeScanModal() {
   stopLocalScan()
 }
 
+/** Intenta arreglar Address faltante si tenemos un address del backend */
+function fixOrRejectIni(text) {
+  const withMaybeAddress = ensureAddressInIni(text, autoGen.value?.interface_address || '') || null
+
+  if (!withMaybeAddress) {
+    // No pudimos inyectar Address porque no tenemos fallback
+    return {
+      ok: false,
+      text: null,
+      reason:
+        'La configuración no incluye "Address = ..." y no se pudo inferir automáticamente. Editá el .conf y agregá la línea Address.',
+    }
+  }
+
+  // Validar final
+  if (!isLikelyWgIni(withMaybeAddress)) {
+    return {
+      ok: false,
+      text: null,
+      reason:
+        'La configuración de WireGuard no es válida. Verificá [Interface], Address, [Peer], PublicKey y AllowedIPs.',
+    }
+  }
+  return { ok: true, text: withMaybeAddress }
+}
+
 /* ====== Aplicar config desde QR/archivo ====== */
 function applyConfigAndClose(text) {
   const conf = (text || '').trim()
-  if (!isLikelyWgIni(conf)) {
-    showNotification('El QR/archivo no parece una config válida de WireGuard.', 'error')
+  // 1) Intentar inyectar Address si falta
+  const result = fixOrRejectIni(conf)
+  if (!result.ok) {
+    showNotification(result.reason, 'error')
     return
   }
-  newProfile.value.config_data = conf
+
+  const finalConf = result.text
+  newProfile.value.config_data = finalConf
+
+  // Sugerir nombre si falta
   if (!newProfile.value.name.trim()) {
-    const suggested = proposeProfileName(conf)
+    const suggested = proposeProfileName(finalConf)
     if (suggested) newProfile.value.name = suggested.slice(0, 80)
   }
+
   closeScanModal()
   showNotification('Configuración cargada.', 'success')
 }
@@ -242,7 +284,7 @@ async function chooseLocal() {
       currentStream = await navigator.mediaDevices.getUserMedia({
         video: { deviceId: selectedCameraId.value },
       })
-      // liberamos porque ZXing tomará control
+      // liberar porque ZXing tomará control
       currentStream.getTracks().forEach((t) => t.stop())
       currentStream = null
     } catch {
@@ -386,16 +428,26 @@ async function generateAutoConfig() {
   isGenerating.value = true
   try {
     const { data } = await api.post('/vpns/mikrotik-auto', {}) // usa ENV del backend
-    const conf = (data?.conf_ini || '').trim()
-    if (!conf) throw new Error('El backend no devolvió conf_ini.')
-    newProfile.value.config_data = conf
+    // Asegurar que el INI tenga Address; si falta, lo inyectamos con interface_address
+    const rawConf = (data?.conf_ini || '').trim()
+    const ensured = ensureAddressInIni(rawConf, data?.interface_address || '')
+    if (!ensured) {
+      throw new Error('El backend no devolvió Address y no se pudo inferir.')
+    }
+    if (!isLikelyWgIni(ensured)) {
+      throw new Error('La conf generada es inválida. Faltan campos obligatorios.')
+    }
+
+    newProfile.value.config_data = ensured
     if (!newProfile.value.name.trim()) {
-      const suggested = proposeProfileName(conf)
+      const suggested = proposeProfileName(ensured)
       if (suggested) newProfile.value.name = suggested.slice(0, 80)
     }
+
     autoGen.value = {
       ...data,
-      mikrotik_cmd: buildMikrotikCmd(data),
+      conf_ini: ensured,
+      mikrotik_cmd: buildMikrotikCmd({ ...data, interface_address: data?.interface_address }),
     }
     autoBoxOpen.value = true
     showNotification('Configuración generada automáticamente.', 'success')
@@ -435,7 +487,11 @@ function canCreate() {
 
 async function createProfile() {
   if (!canCreate()) {
-    showNotification('Nombre y Config válidas son obligatorios.', 'error')
+    // Mensaje más específico de ayuda
+    const msg = /Address\s*=/.test(newProfile.value.config_data || '')
+      ? 'Nombre y Config válidas son obligatorios.'
+      : 'La config debe incluir "Address = ..." dentro de [Interface].'
+    showNotification(msg, 'error')
     return
   }
   if (isSaving.value) return
@@ -467,6 +523,14 @@ async function createProfile() {
 
 async function saveProfile(profile) {
   if (profile._saving) return
+  // Validar que mantenga Address
+  if (!isLikelyWgIni(profile.config_data || '')) {
+    showNotification(
+      'La config debe incluir "Address = ..." en [Interface], PublicKey y AllowedIPs.',
+      'error',
+    )
+    return
+  }
   profile._saving = true
   try {
     const payload = {
@@ -531,6 +595,32 @@ async function deleteProfile(profile) {
   }
 }
 
+/* ====== Utilidad: copiar script MikroTik ====== */
+async function copyMikrotikScript() {
+  const txt = autoGen.value?.mikrotik_cmd || ''
+  if (!txt.trim()) {
+    showNotification('No hay script para copiar.', 'error')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(txt)
+    showNotification('Script copiado al portapapeles.', 'success')
+  } catch {
+    // Fallback
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = txt
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      showNotification('Script copiado al portapapeles.', 'success')
+    } catch {
+      showNotification('No se pudo copiar el script.', 'error')
+    }
+  }
+}
+
 onMounted(fetchVpnProfiles)
 </script>
 
@@ -584,7 +674,7 @@ onMounted(fetchVpnProfiles)
           v-model="newProfile.config_data"
           rows="10"
           spellcheck="false"
-          placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;DNS = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = ...&#10;Endpoint = ..."
+          placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.10.13.X/24&#10;DNS = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = 0.0.0.0/0&#10;Endpoint = host:port"
         />
 
         <!-- Panel autogenerado -->
