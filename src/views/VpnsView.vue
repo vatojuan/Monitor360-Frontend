@@ -10,7 +10,6 @@ import { NotFoundException } from '@zxing/library'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
-/** Validación mínima de un ini de WireGuard */
 function isLikelyWgIni(txt) {
   if (!txt) return false
   const s = txt.trim()
@@ -22,7 +21,6 @@ function isLikelyWgIni(txt) {
   )
 }
 
-/** Intenta proponer un nombre a partir de Address/Endpoint */
 function proposeProfileName(iniText) {
   try {
     const addr = (iniText.match(/Address\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
@@ -36,7 +34,6 @@ function proposeProfileName(iniText) {
   return ''
 }
 
-/** Construye plantilla CLI para MikroTik a partir de la respuesta /mikrotik-auto */
 function buildMikrotikCmd(resp) {
   const ep = String(resp?.peer_endpoint || '')
   const [host, port] = ep.split(':')
@@ -44,7 +41,6 @@ function buildMikrotikCmd(resp) {
   const allowed = resp?.peer_allowed_ips || '0.0.0.0/0'
   const srvPub = resp?.peer_public_key || ''
   const clientPriv = resp?.client_private_key || ''
-
   return [
     '# --- Configuración sugerida para el cliente MikroTik ---',
     '# Paso 1: crear interfaz WireGuard con la clave privada provista',
@@ -72,7 +68,6 @@ async function listCameras() {
   selectedCameraId.value = backCam?.deviceId || cameras.value[0]?.deviceId || ''
 }
 
-/** Algunos navegadores permiten torch */
 async function setTorch(on) {
   try {
     const track = currentStream?.getVideoTracks?.()[0]
@@ -96,32 +91,27 @@ const localError = ref('')
 const localPaused = ref(false)
 const torchEnabled = ref(false)
 
-const pairing = ref(null) // { id, url, expires_in }
+const pairing = ref(null)
 let wsUnsub = null
 let remoteTimer = null
 const remoteCountdown = ref(0)
 const remoteExpired = ref(false)
 
-/* ====== Formulario / listado de VPNs ====== */
-const newProfile = ref({
-  name: '',
-  check_ip: '',
-  config_data: '',
-})
-
+/* ====== Formulario / listado ====== */
+const newProfile = ref({ name: '', check_ip: '', config_data: '' })
 const vpnProfiles = ref([])
 const isLoading = ref(false)
 const isSaving = ref(false)
 
 /* ====== Auto-generado backend ====== */
 const isGenerating = ref(false)
-const autoGen = ref(null) // guarda última respuesta útil para mostrar detalles y comando
+const autoGen = ref(null)
 
-/* ====== Verificación de handshake (polling) ====== */
+/* ====== Verificación de handshake ====== */
 const verify = ref({
   running: false,
   connected: false,
-  lastHandshake: null, // string "hace 00:00:12"
+  lastHandshake: null,
   rx: 0,
   tx: 0,
   tries: 0,
@@ -137,7 +127,7 @@ function stopVerifyPolling() {
   verify.value.running = false
 }
 
-/** Da formato "hace HH:MM:SS" a segundos de antigüedad */
+/* pretty "hace HH:MM:SS" */
 function formatAgoFromSeconds(sec) {
   if (sec == null || isNaN(sec)) return null
   const h = Math.floor(sec / 3600)
@@ -152,22 +142,38 @@ function formatAgoFromSeconds(sec) {
   return `hace ${h}:${m}:${s}`
 }
 
-/** Intenta ambas rutas y tolera formatos distintos */
+/* —— NUEVO: cliente tolerante a rutas y métodos —— */
 async function fetchPeerStatus(pubKey) {
-  const path1 = `/vpns/peer-status/${encodeURIComponent(pubKey)}`
-  const path2 = `/vpns/peer-status?pub=${encodeURIComponent(pubKey)}`
+  // Intentos en orden: GET path (guion / underscore), GET con query, POST con body (dos keys), POST underscore
+  const candidates = [
+    { m: 'get', url: `/vpns/peer-status/${encodeURIComponent(pubKey)}` },
+    { m: 'get', url: `/vpns/peer_status/${encodeURIComponent(pubKey)}` },
+    { m: 'get', url: `/vpns/peer-status`, params: { pub: pubKey } },
+    { m: 'get', url: `/vpns/peer_status`, params: { pub: pubKey } },
+    { m: 'post', url: `/vpns/peer-status`, data: { public_key: pubKey } },
+    { m: 'post', url: `/vpns/peer-status`, data: { peer_public_key: pubKey } },
+    { m: 'post', url: `/vpns/peer_status`, data: { public_key: pubKey } },
+    { m: 'post', url: `/vpns/peer_status`, data: { peer_public_key: pubKey } },
+  ]
 
-  try {
-    const { data } = await api.get(path1)
-    return data
-  } catch (e1) {
+  let lastErr
+  for (const c of candidates) {
     try {
-      const { data } = await api.get(path2)
-      return data
-    } catch (e2) {
-      throw e2 || e1
+      const resp =
+        c.m === 'get'
+          ? await api.get(c.url, c.params ? { params: c.params } : undefined)
+          : await api.post(c.url, c.data || {})
+      if (resp?.data) return resp.data
+    } catch (e) {
+      lastErr = e
+      const code = e?.response?.status
+      // 404/405/422 -> probamos la siguiente variante sin cortar
+      if ([404, 405, 422].includes(code)) continue
+      // Otros errores (401, 500, etc.) => dejo de intentar
+      break
     }
   }
+  throw lastErr || new Error('No hay endpoint disponible para peer-status')
 }
 
 async function pollStatusOnce() {
@@ -175,12 +181,11 @@ async function pollStatusOnce() {
   try {
     const data = await fetchPeerStatus(autoGen.value.client_public_key)
 
-    // Normalizo tipos posibles
     let rx = Number(data?.rx_bytes || 0)
     let tx = Number(data?.tx_bytes || 0)
     let connectedFlag = !!data?.connected
 
-    // latest_handshake puede venir como epoch (seg) o ISO
+    // epoch (seg) o ISO
     let ageSeconds = null
     const hs = data?.latest_handshake
     if (typeof hs === 'number') {
@@ -191,11 +196,6 @@ async function pollStatusOnce() {
       if (!isNaN(t)) ageSeconds = Math.max(0, Math.floor((Date.now() - t) / 1000))
     }
 
-    // Heurística robusta:
-    // Conectado si:
-    //  a) backend lo marca, o
-    //  b) hubo handshake en los últimos 180s, o
-    //  c) hay tráfico acumulado
     const recentHandshake = ageSeconds != null && ageSeconds <= 180
     const hasTraffic = rx + tx > 0
     const connected = connectedFlag || recentHandshake || hasTraffic
@@ -209,8 +209,10 @@ async function pollStatusOnce() {
     verify.value.error = getAxiosErr(e)
   } finally {
     verify.value.tries += 1
-    // Si querés cortar cuando conecta, descomentá:
-    // if (verify.value.connected) stopVerifyPolling()
+    // Evitar spam infinito si el endpoint no existe
+    if (verify.value.tries >= 40 && !verify.value.connected) {
+      stopVerifyPolling()
+    }
   }
 }
 
@@ -259,7 +261,7 @@ function closeScanModal() {
   stopLocalScan()
 }
 
-/* ====== Aplicar config desde QR/archivo ====== */
+/* ====== QR / archivo ====== */
 function applyConfigAndClose(text) {
   const conf = (text || '').trim()
   if (!isLikelyWgIni(conf)) {
@@ -275,7 +277,6 @@ function applyConfigAndClose(text) {
   showNotification('Configuración cargada.', 'success')
 }
 
-/* ====== Opción A: Cámara local ====== */
 async function chooseLocal() {
   step.value = 'local'
   await nextTick()
@@ -362,7 +363,6 @@ function onVisibilityChange() {
 }
 document.addEventListener('visibilitychange', onVisibilityChange)
 
-/* ====== Opción B: Remoto con celular ====== */
 async function chooseRemote() {
   step.value = 'remote'
   try {
@@ -413,7 +413,6 @@ function cleanupRemote() {
   remoteExpired.value = false
 }
 
-/* ====== Importar desde archivo .conf ====== */
 async function importFromFile(e) {
   const file = e.target?.files?.[0]
   if (!file) return
@@ -427,7 +426,7 @@ async function importFromFile(e) {
   }
 }
 
-/* ====== Generar config automáticamente (backend) ====== */
+/* ====== Auto config ====== */
 const autoBoxOpen = ref(true)
 
 async function generateAutoConfig() {
@@ -437,19 +436,14 @@ async function generateAutoConfig() {
     const { data } = await api.post('/vpns/mikrotik-auto', {})
     const conf = (data?.conf_ini || '').trim()
     if (!conf) throw new Error('El backend no devolvió conf_ini.')
-
     newProfile.value.config_data = conf
     if (!newProfile.value.name.trim()) {
       const suggested = proposeProfileName(conf)
       if (suggested) newProfile.value.name = suggested.slice(0, 80)
     }
-    autoGen.value = {
-      ...data,
-      mikrotik_cmd: buildMikrotikCmd(data),
-    }
+    autoGen.value = { ...data, mikrotik_cmd: buildMikrotikCmd(data) }
     autoBoxOpen.value = true
     showNotification('Configuración generada automáticamente.', 'success')
-
     stopVerifyPolling()
     startVerifyPolling()
   } catch (err) {
@@ -460,7 +454,7 @@ async function generateAutoConfig() {
   }
 }
 
-/* ====== CRUD VPN Profiles ====== */
+/* ====== CRUD ====== */
 async function fetchVpnProfiles() {
   isLoading.value = true
   try {
@@ -484,10 +478,7 @@ function canCreate() {
 }
 
 async function createProfile() {
-  if (!canCreate()) {
-    showNotification('Nombre y Config válidas son obligatorios.', 'error')
-    return
-  }
+  if (!canCreate()) return showNotification('Nombre y Config válidas son obligatorios.', 'error')
   if (isSaving.value) return
   isSaving.value = true
   try {
@@ -558,14 +549,13 @@ async function testProfile(profile) {
   try {
     const payload = { ip_address: profile.check_ip.trim(), vpn_profile_id: profile.id }
     const { data } = await api.post('/devices/test_reachability', payload)
-    if (data.reachable) {
-      showNotification(`Túnel OK. Alcanzable (${profile.check_ip}).`, 'success')
-    } else {
-      showNotification(data.detail || 'No alcanzable a través del túnel.', 'error')
-    }
+    if (data.reachable) showNotification(`Túnel OK. Alcanzable (${profile.check_ip}).`, 'success')
+    else showNotification(data.detail || 'No alcanzable a través del túnel.', 'error')
   } catch (err) {
-    console.error('Error al probar túnel:', err)
-    showNotification(getAxiosErr(err) || 'Error al probar el túnel.', 'error')
+    // si el backend tira 500, lo mostramos textual para depurar rápido
+    const status = err?.response?.status
+    const detail = getAxiosErr(err)
+    showNotification(`Error (${status}): ${detail}`, 'error')
   }
 }
 
@@ -600,7 +590,6 @@ onMounted(fetchVpnProfiles)
   <div class="page-wrap">
     <h1>Perfiles VPN</h1>
 
-    <!-- Crear nuevo perfil -->
     <section class="control-section">
       <h2><i class="icon">➕</i> Crear Perfil</h2>
       <div class="grid-2">
@@ -649,7 +638,6 @@ onMounted(fetchVpnProfiles)
           placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;DNS = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = ...&#10;Endpoint = ..."
         />
 
-        <!-- Panel autogenerado -->
         <div v-if="autoGen" class="auto-box">
           <div class="auto-box-header" @click="autoBoxOpen = !autoBoxOpen">
             <div class="status-chip" :class="verify.connected ? 'ok' : 'warn'">
@@ -693,9 +681,9 @@ onMounted(fetchVpnProfiles)
               <div class="verify-box">
                 <div>
                   <strong>Conexión:</strong>
-                  <span :class="verify.connected ? 'ok' : 'warn'">
-                    {{ verify.connected ? 'Conectado' : 'Sin conexión' }}
-                  </span>
+                  <span :class="verify.connected ? 'ok' : 'warn'">{{
+                    verify.connected ? 'Conectado' : 'Sin conexión'
+                  }}</span>
                 </div>
                 <div><strong>Último handshake:</strong> {{ verify.lastHandshake || '—' }}</div>
                 <div><strong>RX / TX:</strong> {{ verify.rx }} / {{ verify.tx }} bytes</div>
@@ -718,7 +706,6 @@ onMounted(fetchVpnProfiles)
       </div>
     </section>
 
-    <!-- Listado / edición -->
     <section class="control-section">
       <h2><i class="icon">🗂️</i> Perfiles existentes</h2>
       <div v-if="isLoading" class="loading-text">Cargando...</div>
@@ -780,17 +767,15 @@ onMounted(fetchVpnProfiles)
       </ul>
     </section>
 
-    <!-- Notificaciones -->
     <div v-if="notification.show" class="notification" :class="notification.type">
       {{ notification.message }}
     </div>
 
-    <!-- Modal del escáner QR -->
+    <!-- Modal QR -->
     <div v-if="scanOpen" class="qr-scanner-modal" @click.self="closeScanModal">
       <div class="qr-scanner-content">
         <button @click="closeScanModal" class="btn-close-modal" title="Cerrar">&times;</button>
 
-        <!-- Paso elegir -->
         <div v-if="step === 'choose'">
           <h3>¿Cómo querés escanear el QR?</h3>
           <div class="choose-options">
@@ -813,7 +798,6 @@ onMounted(fetchVpnProfiles)
           </div>
         </div>
 
-        <!-- Paso local -->
         <div v-else-if="step === 'local'">
           <h3>Apuntá al código QR de MikroTik</h3>
           <div v-if="localError" class="text-red-400">{{ localError }}</div>
@@ -832,7 +816,6 @@ onMounted(fetchVpnProfiles)
           </div>
         </div>
 
-        <!-- Paso remoto -->
         <div v-else-if="step === 'remote'">
           <h3>1. Escaneá este QR con tu celular</h3>
           <p class="remote-scan-subtitle">Se abrirá una página para escanear el QR de MikroTik.</p>
@@ -1036,14 +1019,7 @@ textarea {
   gap: 0.5rem;
   align-items: center;
 }
-.file-btn {
-  background: #333;
-  color: var(--font-color);
-  border: 1px solid #444;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-}
+.file-btn,
 .btn-qr-scan {
   background: #333;
   color: var(--font-color);
@@ -1063,10 +1039,7 @@ textarea {
 /* Modal QR */
 .qr-scanner-modal {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   z-index: 1000;
   background-color: rgba(0, 0, 0, 0.8);
   display: flex;
@@ -1209,7 +1182,7 @@ textarea {
   white-space: pre;
 }
 
-/* Verify badge */
+/* Verify */
 .status-chip {
   display: inline-flex;
   align-items: center;
