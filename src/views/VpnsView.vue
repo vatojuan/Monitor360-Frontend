@@ -10,35 +10,23 @@ import { NotFoundException } from '@zxing/library'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
-/** Validación mínima de un ini de WireGuard (ahora exige Address también) */
+/** Validación mínima de un ini de WireGuard */
 function isLikelyWgIni(txt) {
   if (!txt) return false
   const s = txt.trim()
   return (
     /\[Interface\]/i.test(s) &&
-    /(^|\n)\s*Address\s*=\s*.+/i.test(s) &&
     /\[Peer\]/i.test(s) &&
-    /(^|\n)\s*PublicKey\s*=\s*.+/i.test(s) &&
-    /(^|\n)\s*AllowedIPs\s*=\s*.+/i.test(s)
+    /PublicKey\s*=/.test(s) &&
+    /AllowedIPs\s*=/.test(s)
   )
-}
-
-/** Inyecta Address=... en el bloque [Interface] si falta */
-function ensureAddressInIni(iniText, fallbackAddr) {
-  let out = (iniText || '').trim()
-  if (!/(^|\n)\s*Address\s*=\s*.+/i.test(out)) {
-    if (!fallbackAddr) return null
-    // Insertar debajo de la primera línea [Interface]
-    out = out.replace(/\[Interface\]\s*/i, (m) => `${m}\nAddress = ${fallbackAddr}\n`)
-  }
-  return out
 }
 
 /** Intenta proponer un nombre a partir de Address/Endpoint */
 function proposeProfileName(iniText) {
   try {
-    const addr = (iniText.match(/(^|\n)\s*Address\s*=\s*([^\n\r]+)/i)?.[2] || '').trim()
-    const endpoint = (iniText.match(/(^|\n)\s*Endpoint\s*=\s*([^\n\r]+)/i)?.[2] || '').trim()
+    const addr = (iniText.match(/Address\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
+    const endpoint = (iniText.match(/Endpoint\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
     if (addr && endpoint) return `${addr.split('/')[0]} @ ${endpoint}`
     if (endpoint) return endpoint
     if (addr) return addr.split('/')[0]
@@ -80,7 +68,6 @@ const selectedCameraId = ref('')
 
 async function listCameras() {
   cameras.value = await BrowserQRCodeReader.listVideoInputDevices()
-  // Preferir trasera si existe
   const backCam = cameras.value.find((d) => /back|trás|rear|environment/i.test(d.label))
   selectedCameraId.value = backCam?.deviceId || cameras.value[0]?.deviceId || ''
 }
@@ -134,7 +121,7 @@ const autoGen = ref(null) // guarda última respuesta útil para mostrar detalle
 const verify = ref({
   running: false,
   connected: false,
-  lastHandshake: null,
+  lastHandshake: null, // string "hace 00:00:12"
   rx: 0,
   tx: 0,
   tries: 0,
@@ -150,20 +137,80 @@ function stopVerifyPolling() {
   verify.value.running = false
 }
 
+/** Da formato "hace HH:MM:SS" a segundos de antigüedad */
+function formatAgoFromSeconds(sec) {
+  if (sec == null || isNaN(sec)) return null
+  const h = Math.floor(sec / 3600)
+    .toString()
+    .padStart(2, '0')
+  const m = Math.floor((sec % 3600) / 60)
+    .toString()
+    .padStart(2, '0')
+  const s = Math.floor(sec % 60)
+    .toString()
+    .padStart(2, '0')
+  return `hace ${h}:${m}:${s}`
+}
+
+/** Intenta ambas rutas y tolera formatos distintos */
+async function fetchPeerStatus(pubKey) {
+  const path1 = `/vpns/peer-status/${encodeURIComponent(pubKey)}`
+  const path2 = `/vpns/peer-status?pub=${encodeURIComponent(pubKey)}`
+
+  try {
+    const { data } = await api.get(path1)
+    return data
+  } catch (e1) {
+    try {
+      const { data } = await api.get(path2)
+      return data
+    } catch (e2) {
+      throw e2 || e1
+    }
+  }
+}
+
 async function pollStatusOnce() {
   if (!autoGen.value?.client_public_key) return
   try {
-    const url = `/vpns/peer-status/${encodeURIComponent(autoGen.value.client_public_key)}`
-    const { data } = await api.get(url)
-    verify.value.connected = !!data?.connected
-    verify.value.lastHandshake = data?.latest_handshake || null
-    verify.value.rx = data?.rx_bytes || 0
-    verify.value.tx = data?.tx_bytes || 0
+    const data = await fetchPeerStatus(autoGen.value.client_public_key)
+
+    // Normalizo tipos posibles
+    let rx = Number(data?.rx_bytes || 0)
+    let tx = Number(data?.tx_bytes || 0)
+    let connectedFlag = !!data?.connected
+
+    // latest_handshake puede venir como epoch (seg) o ISO
+    let ageSeconds = null
+    const hs = data?.latest_handshake
+    if (typeof hs === 'number') {
+      const nowSec = Math.floor(Date.now() / 1000)
+      ageSeconds = Math.max(0, nowSec - hs)
+    } else if (typeof hs === 'string' && hs) {
+      const t = Date.parse(hs)
+      if (!isNaN(t)) ageSeconds = Math.max(0, Math.floor((Date.now() - t) / 1000))
+    }
+
+    // Heurística robusta:
+    // Conectado si:
+    //  a) backend lo marca, o
+    //  b) hubo handshake en los últimos 180s, o
+    //  c) hay tráfico acumulado
+    const recentHandshake = ageSeconds != null && ageSeconds <= 180
+    const hasTraffic = rx + tx > 0
+    const connected = connectedFlag || recentHandshake || hasTraffic
+
+    verify.value.connected = connected
+    verify.value.lastHandshake = ageSeconds != null ? formatAgoFromSeconds(ageSeconds) : null
+    verify.value.rx = rx
+    verify.value.tx = tx
     verify.value.error = ''
   } catch (e) {
     verify.value.error = getAxiosErr(e)
   } finally {
     verify.value.tries += 1
+    // Si querés cortar cuando conecta, descomentá:
+    // if (verify.value.connected) stopVerifyPolling()
   }
 }
 
@@ -176,9 +223,7 @@ function startVerifyPolling() {
   verify.value.tx = 0
   verify.value.tries = 0
   verify.value.error = ''
-  // Primer intento inmediato
   pollStatusOnce()
-  // Luego cada ~2.5s
   verifyTimer = setInterval(pollStatusOnce, 2500)
 }
 
@@ -214,51 +259,18 @@ function closeScanModal() {
   stopLocalScan()
 }
 
-/** Intenta arreglar Address faltante si tenemos un address del backend */
-function fixOrRejectIni(text) {
-  const withMaybeAddress = ensureAddressInIni(text, autoGen.value?.interface_address || '') || null
-
-  if (!withMaybeAddress) {
-    // No pudimos inyectar Address porque no tenemos fallback
-    return {
-      ok: false,
-      text: null,
-      reason:
-        'La configuración no incluye "Address = ..." y no se pudo inferir automáticamente. Editá el .conf y agregá la línea Address.',
-    }
-  }
-
-  // Validar final
-  if (!isLikelyWgIni(withMaybeAddress)) {
-    return {
-      ok: false,
-      text: null,
-      reason:
-        'La configuración de WireGuard no es válida. Verificá [Interface], Address, [Peer], PublicKey y AllowedIPs.',
-    }
-  }
-  return { ok: true, text: withMaybeAddress }
-}
-
 /* ====== Aplicar config desde QR/archivo ====== */
 function applyConfigAndClose(text) {
   const conf = (text || '').trim()
-  // 1) Intentar inyectar Address si falta
-  const result = fixOrRejectIni(conf)
-  if (!result.ok) {
-    showNotification(result.reason, 'error')
+  if (!isLikelyWgIni(conf)) {
+    showNotification('El QR/archivo no parece una config válida de WireGuard.', 'error')
     return
   }
-
-  const finalConf = result.text
-  newProfile.value.config_data = finalConf
-
-  // Sugerir nombre si falta
+  newProfile.value.config_data = conf
   if (!newProfile.value.name.trim()) {
-    const suggested = proposeProfileName(finalConf)
+    const suggested = proposeProfileName(conf)
     if (suggested) newProfile.value.name = suggested.slice(0, 80)
   }
-
   closeScanModal()
   showNotification('Configuración cargada.', 'success')
 }
@@ -279,12 +291,10 @@ async function chooseLocal() {
       return
     }
 
-    // Permiso de cámara (algunos navegadores lo requieren explícito)
     try {
       currentStream = await navigator.mediaDevices.getUserMedia({
         video: { deviceId: selectedCameraId.value },
       })
-      // liberar porque ZXing tomará control
       currentStream.getTracks().forEach((t) => t.stop())
       currentStream = null
     } catch {
@@ -303,7 +313,6 @@ async function chooseLocal() {
       }
     })
 
-    // Guardar stream para Torch y pausas
     const preview = document.getElementById('preview')
     currentStream = preview?.srcObject || null
   } catch (err) {
@@ -342,7 +351,6 @@ function stopLocalScan() {
   torchEnabled.value = false
 }
 
-/* Pausar cámara cuando se oculta la pestaña (ahorra recursos) */
 function onVisibilityChange() {
   if (!localActive.value) return
   if (document.hidden) {
@@ -363,7 +371,6 @@ async function chooseRemote() {
     remoteCountdown.value = Number(data.expires_in || 300)
     remoteExpired.value = false
 
-    // Countdown
     if (remoteTimer) clearInterval(remoteTimer)
     remoteTimer = setInterval(() => {
       if (remoteCountdown.value > 0) remoteCountdown.value -= 1
@@ -416,7 +423,7 @@ async function importFromFile(e) {
   } catch {
     showNotification('No se pudo leer el archivo.', 'error')
   } finally {
-    e.target.value = '' // reset input
+    e.target.value = ''
   }
 }
 
@@ -427,31 +434,22 @@ async function generateAutoConfig() {
   if (isGenerating.value) return
   isGenerating.value = true
   try {
-    const { data } = await api.post('/vpns/mikrotik-auto', {}) // usa ENV del backend
-    // Asegurar que el INI tenga Address; si falta, lo inyectamos con interface_address
-    const rawConf = (data?.conf_ini || '').trim()
-    const ensured = ensureAddressInIni(rawConf, data?.interface_address || '')
-    if (!ensured) {
-      throw new Error('El backend no devolvió Address y no se pudo inferir.')
-    }
-    if (!isLikelyWgIni(ensured)) {
-      throw new Error('La conf generada es inválida. Faltan campos obligatorios.')
-    }
+    const { data } = await api.post('/vpns/mikrotik-auto', {})
+    const conf = (data?.conf_ini || '').trim()
+    if (!conf) throw new Error('El backend no devolvió conf_ini.')
 
-    newProfile.value.config_data = ensured
+    newProfile.value.config_data = conf
     if (!newProfile.value.name.trim()) {
-      const suggested = proposeProfileName(ensured)
+      const suggested = proposeProfileName(conf)
       if (suggested) newProfile.value.name = suggested.slice(0, 80)
     }
-
     autoGen.value = {
       ...data,
-      conf_ini: ensured,
-      mikrotik_cmd: buildMikrotikCmd({ ...data, interface_address: data?.interface_address }),
+      mikrotik_cmd: buildMikrotikCmd(data),
     }
     autoBoxOpen.value = true
     showNotification('Configuración generada automáticamente.', 'success')
-    // Iniciar verificación automática
+
     stopVerifyPolling()
     startVerifyPolling()
   } catch (err) {
@@ -487,11 +485,7 @@ function canCreate() {
 
 async function createProfile() {
   if (!canCreate()) {
-    // Mensaje más específico de ayuda
-    const msg = /Address\s*=/.test(newProfile.value.config_data || '')
-      ? 'Nombre y Config válidas son obligatorios.'
-      : 'La config debe incluir "Address = ..." dentro de [Interface].'
-    showNotification(msg, 'error')
+    showNotification('Nombre y Config válidas son obligatorios.', 'error')
     return
   }
   if (isSaving.value) return
@@ -523,14 +517,6 @@ async function createProfile() {
 
 async function saveProfile(profile) {
   if (profile._saving) return
-  // Validar que mantenga Address
-  if (!isLikelyWgIni(profile.config_data || '')) {
-    showNotification(
-      'La config debe incluir "Address = ..." en [Interface], PublicKey y AllowedIPs.',
-      'error',
-    )
-    return
-  }
   profile._saving = true
   try {
     const payload = {
@@ -595,29 +581,15 @@ async function deleteProfile(profile) {
   }
 }
 
-/* ====== Utilidad: copiar script MikroTik ====== */
+/* ====== Utilidades UI ====== */
 async function copyMikrotikScript() {
-  const txt = autoGen.value?.mikrotik_cmd || ''
-  if (!txt.trim()) {
-    showNotification('No hay script para copiar.', 'error')
-    return
-  }
   try {
+    const txt = autoGen.value?.mikrotik_cmd || ''
+    if (!txt) throw new Error('Nada para copiar.')
     await navigator.clipboard.writeText(txt)
     showNotification('Script copiado al portapapeles.', 'success')
-  } catch {
-    // Fallback
-    try {
-      const ta = document.createElement('textarea')
-      ta.value = txt
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-      showNotification('Script copiado al portapapeles.', 'success')
-    } catch {
-      showNotification('No se pudo copiar el script.', 'error')
-    }
+  } catch (e) {
+    showNotification(getAxiosErr(e) || 'No se pudo copiar.', 'error')
   }
 }
 
@@ -674,7 +646,7 @@ onMounted(fetchVpnProfiles)
           v-model="newProfile.config_data"
           rows="10"
           spellcheck="false"
-          placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.10.13.X/24&#10;DNS = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = 0.0.0.0/0&#10;Endpoint = host:port"
+          placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;DNS = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = ...&#10;Endpoint = ..."
         />
 
         <!-- Panel autogenerado -->
@@ -721,9 +693,9 @@ onMounted(fetchVpnProfiles)
               <div class="verify-box">
                 <div>
                   <strong>Conexión:</strong>
-                  <span :class="verify.connected ? 'ok' : 'warn'">{{
-                    verify.connected ? 'Conectado' : 'Sin conexión'
-                  }}</span>
+                  <span :class="verify.connected ? 'ok' : 'warn'">
+                    {{ verify.connected ? 'Conectado' : 'Sin conexión' }}
+                  </span>
                 </div>
                 <div><strong>Último handshake:</strong> {{ verify.lastHandshake || '—' }}</div>
                 <div><strong>RX / TX:</strong> {{ verify.rx }} / {{ verify.tx }} bytes</div>
