@@ -1,5 +1,5 @@
 <script setup>
-import { ref, nextTick, onBeforeUnmount, onMounted } from 'vue'
+import { ref, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import QrcodeVue from 'qrcode.vue'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
@@ -10,14 +10,25 @@ import { NotFoundException } from '@zxing/library'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
+function normalizeIni(txt) {
+  if (!txt) return ''
+  // Normaliza saltos de línea y recorta espacios extra
+  let s = String(txt).replace(/\r\n/g, '\n').trim()
+  // Asegura bloques separados por una línea en blanco
+  s = s.replace(/\n{3,}/g, '\n\n')
+  return s
+}
+
 function isLikelyWgIni(txt) {
   if (!txt) return false
-  const s = txt.trim()
+  const s = normalizeIni(txt)
+  // Requerimos Interface, Peer, PublicKey, AllowedIPs y Address (clave que te faltó aquella vez)
   return (
     /\[Interface\]/i.test(s) &&
     /\[Peer\]/i.test(s) &&
     /PublicKey\s*=/.test(s) &&
-    /AllowedIPs\s*=/.test(s)
+    /AllowedIPs\s*=/.test(s) &&
+    /Address\s*=/.test(s)
   )
 }
 
@@ -54,6 +65,10 @@ function buildMikrotikCmd(resp) {
     '# (Opcional) DNS para clientes detrás del MikroTik:',
     '# /ip/dns set servers=1.1.1.1',
   ].join('\n')
+}
+
+async function copyToClipboard(text) {
+  await navigator.clipboard.writeText(text)
 }
 
 /* ====== ZXing / Cámara ====== */
@@ -142,36 +157,16 @@ function formatAgoFromSeconds(sec) {
   return `hace ${h}:${m}:${s}`
 }
 
-/* —— NUEVO: cliente tolerante a rutas y métodos —— */
+/* —— Cliente tolerante a rutas y métodos —— */
+/* —— Cliente limpio y seguro para verificar estado del peer —— */
 async function fetchPeerStatus(pubKey) {
-  // Intentos en orden: GET path (guion / underscore), GET con query, POST con body (dos keys), POST underscore
-  const candidates = [
-    { m: 'get', url: `/vpns/peer-status/${encodeURIComponent(pubKey)}` },
-    { m: 'get', url: `/vpns/peer_status/${encodeURIComponent(pubKey)}` },
-    { m: 'get', url: `/vpns/peer-status`, params: { pub: pubKey } },
-    { m: 'get', url: `/vpns/peer_status`, params: { pub: pubKey } },
-    { m: 'post', url: `/vpns/peer-status`, data: { public_key: pubKey } },
-    { m: 'post', url: `/vpns/peer-status`, data: { peer_public_key: pubKey } },
-    { m: 'post', url: `/vpns/peer_status`, data: { public_key: pubKey } },
-    { m: 'post', url: `/vpns/peer_status`, data: { peer_public_key: pubKey } },
-  ]
-
-  let lastErr
-  for (const c of candidates) {
-    try {
-      const resp =
-        c.m === 'get'
-          ? await api.get(c.url, c.params ? { params: c.params } : undefined)
-          : await api.post(c.url, c.data || {})
-      if (resp?.data) return resp.data
-    } catch (e) {
-      lastErr = e
-      const code = e?.response?.status
-      if ([404, 405, 422].includes(code)) continue
-      break
-    }
+  try {
+    const { data } = await api.get('/vpns/peer-status', { params: { pub: pubKey } })
+    return data
+  } catch (e) {
+    console.error('Error en fetchPeerStatus:', e)
+    throw new Error(e?.response?.data?.detail || e?.message || 'Error al obtener estado del peer.')
   }
-  throw lastErr || new Error('No hay endpoint disponible para peer-status')
 }
 
 async function pollStatusOnce() {
@@ -207,7 +202,6 @@ async function pollStatusOnce() {
     verify.value.error = getAxiosErr(e)
   } finally {
     verify.value.tries += 1
-    // Evitar spam infinito si el endpoint no existe
     if (verify.value.tries >= 40 && !verify.value.connected) {
       stopVerifyPolling()
     }
@@ -235,6 +229,7 @@ onBeforeUnmount(() => {
   cleanupRemote()
   document.removeEventListener('visibilitychange', onVisibilityChange)
   stopVerifyPolling()
+  window.removeEventListener('beforeunload', onBeforeUnload)
 
   if (wsUnsubRot) {
     try {
@@ -245,6 +240,13 @@ onBeforeUnmount(() => {
     wsUnsubRot = null
   }
 })
+
+function onBeforeUnload() {
+  // Evita dejar la cámara prendida si el usuario recarga o cierra
+  stopLocalScan()
+  cleanupRemote()
+}
+window.addEventListener('beforeunload', onBeforeUnload)
 
 /* ====== Notificaciones ====== */
 const notification = ref({ show: false, message: '', type: 'success' })
@@ -271,11 +273,14 @@ function closeScanModal() {
   stopLocalScan()
 }
 
-/* ====== QR / archivo ====== */
+/* ====== QR / archivo / clipboard ====== */
 function applyConfigAndClose(text) {
-  const conf = (text || '').trim()
+  const conf = normalizeIni(text || '')
   if (!isLikelyWgIni(conf)) {
-    showNotification('El QR/archivo no parece una config válida de WireGuard.', 'error')
+    showNotification(
+      'El QR/archivo no parece una config válida de WireGuard (falta Address, Peer o claves).',
+      'error',
+    )
     return
   }
   newProfile.value.config_data = conf
@@ -285,6 +290,16 @@ function applyConfigAndClose(text) {
   }
   closeScanModal()
   showNotification('Configuración cargada.', 'success')
+}
+
+async function pasteFromClipboard() {
+  try {
+    const txt = await navigator.clipboard.readText()
+    if (!txt) throw new Error('El portapapeles está vacío.')
+    applyConfigAndClose(txt)
+  } catch (e) {
+    showNotification(getAxiosErr(e) || 'No se pudo leer del portapapeles.', 'error')
+  }
 }
 
 async function chooseLocal() {
@@ -444,14 +459,13 @@ async function generateAutoConfig() {
   isGenerating.value = true
   try {
     const { data } = await api.post('/vpns/mikrotik-auto', {})
-    const conf = (data?.conf_ini || '').trim()
+    const conf = normalizeIni(data?.conf_ini || '')
     if (!conf) throw new Error('El backend no devolvió conf_ini.')
     newProfile.value.config_data = conf
     if (!newProfile.value.name.trim()) {
       const suggested = proposeProfileName(conf)
       if (suggested) newProfile.value.name = suggested.slice(0, 80)
     }
-    // —— NUEVO: persistimos metadata de device/rotaciones que manda el backend
     autoGen.value = {
       ...data,
       mikrotik_cmd: buildMikrotikCmd(data),
@@ -495,13 +509,14 @@ function canCreate() {
 }
 
 async function createProfile() {
-  if (!canCreate()) return showNotification('Nombre y Config válidas son obligatorios.', 'error')
+  if (!canCreate())
+    return showNotification('Nombre y Config válidas (con Address=) son obligatorios.', 'error')
   if (isSaving.value) return
   isSaving.value = true
   try {
     const body = {
       name: newProfile.value.name.trim(),
-      config_data: newProfile.value.config_data,
+      config_data: normalizeIni(newProfile.value.config_data),
       check_ip: newProfile.value.check_ip.trim(),
     }
     const { data } = await api.post('/vpns', body)
@@ -525,12 +540,19 @@ async function createProfile() {
 
 async function saveProfile(profile) {
   if (profile._saving) return
+  // Validación rápida al guardar
+  if (!isLikelyWgIni(profile.config_data)) {
+    return showNotification(
+      'La config no es válida (revisá Address/Peer/PublicKey/AllowedIPs).',
+      'error',
+    )
+  }
   profile._saving = true
   try {
     const payload = {
       name: profile.name,
       check_ip: profile.check_ip,
-      config_data: profile.config_data,
+      config_data: normalizeIni(profile.config_data),
     }
     await api.put(`/vpns/${profile.id}`, payload)
     showNotification('Perfil actualizado.', 'success')
@@ -592,22 +614,62 @@ async function copyMikrotikScript() {
   try {
     const txt = autoGen.value?.mikrotik_cmd || ''
     if (!txt) throw new Error('Nada para copiar.')
-    await navigator.clipboard.writeText(txt)
+    await copyToClipboard(txt)
     showNotification('Script copiado al portapapeles.', 'success')
   } catch (e) {
     showNotification(getAxiosErr(e) || 'No se pudo copiar.', 'error')
   }
 }
 
+async function copyConfig() {
+  try {
+    const txt = newProfile.value?.config_data?.trim()
+    if (!txt) throw new Error('No hay configuración para copiar.')
+    await copyToClipboard(txt)
+    showNotification('Config copiada al portapapeles.', 'success')
+  } catch (e) {
+    showNotification(getAxiosErr(e) || 'No se pudo copiar.', 'error')
+  }
+}
+
+function downloadConf() {
+  const txt = newProfile.value?.config_data?.trim()
+  if (!txt) {
+    showNotification('No hay configuración para descargar.', 'error')
+    return
+  }
+  const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const base = (newProfile.value.name || 'wireguard').replace(/[^\w.-]+/g, '_')
+  a.download = `${base}.conf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 /* ====== Montaje ====== */
 onMounted(async () => {
   await fetchVpnProfiles()
+  // Autocompletar nombre al pegar manualmente por primera vez
+  watch(
+    () => newProfile.value.config_data,
+    (val, old) => {
+      if (!old && val && !newProfile.value.name.trim() && isLikelyWgIni(val)) {
+        const suggested = proposeProfileName(val)
+        if (suggested) newProfile.value.name = suggested.slice(0, 80)
+      }
+    },
+    { flush: 'post' },
+  )
+
   // WS para escuchar rotaciones y actualizar la UI en vivo
   try {
     await connectWebSocketWhenAuthenticated()
     wsUnsubRot = addWsListener((msg) => {
       if (msg?.type === 'device_credential_rotated' && autoGen.value) {
-        // Si el backend incluye device_id en autoGen, lo validamos
         if (!msg.device_id || msg.device_id === autoGen.value.device_id) {
           autoGen.value.rotations_count = (autoGen.value.rotations_count ?? 0) + 1
           if (msg.ok) autoGen.value.last_auth_ok = msg.ts
@@ -616,7 +678,6 @@ onMounted(async () => {
       }
     })
   } catch (e) {
-    // si no hay WS autenticado aún, no rompemos el flujo
     void e
   }
 })
@@ -664,6 +725,19 @@ onMounted(async () => {
               </svg>
               Escanear
             </button>
+            <button
+              class="btn-qr-scan"
+              @click="pasteFromClipboard"
+              title="Pegar desde portapapeles"
+            >
+              Pegar .conf
+            </button>
+            <button class="btn-qr-scan" @click="copyConfig" title="Copiar config al portapapeles">
+              Copiar conf
+            </button>
+            <button class="btn-qr-scan" @click="downloadConf" title="Descargar archivo .conf">
+              Descargar .conf
+            </button>
           </div>
         </div>
 
@@ -700,7 +774,7 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <!-- NUEVO: métricas de autenticación/rotación -->
+              <!-- Métricas de autenticación/rotación -->
               <div class="auto-grid">
                 <div><strong>Rotaciones:</strong> {{ autoGen.rotations_count ?? 0 }}</div>
                 <div><strong>Último OK:</strong> {{ autoGen.last_auth_ok || '—' }}</div>
