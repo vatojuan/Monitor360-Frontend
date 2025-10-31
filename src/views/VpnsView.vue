@@ -36,6 +36,28 @@ function proposeProfileName(iniText) {
   return ''
 }
 
+/** Construye plantilla CLI para MikroTik a partir de la respuesta /mikrotik-auto */
+function buildMikrotikCmd(resp) {
+  const ep = String(resp?.peer_endpoint || '')
+  const [host, port] = ep.split(':')
+  const addr = resp?.interface_address || ''
+  const allowed = resp?.peer_allowed_ips || '0.0.0.0/0'
+  const srvPub = resp?.peer_public_key || ''
+
+  // NOTA: no fijamos listen-port en el cliente; MikroTik puede usar puerto efímero detrás de NAT
+  return [
+    '# --- Configuración sugerida para el cliente MikroTik ---',
+    '# 1) Crear la interfaz WireGuard (poné tu private-key generada en el propio MikroTik)',
+    '/interface/wireguard add name=wg-m360 comment="Monitor360 VPN (auto)"',
+    `# 2) IP de la interfaz`,
+    `/ip/address add address=${addr} interface=wg-m360`,
+    '# 3) Peer hacia el servidor',
+    `/interface/wireguard/peers add interface=wg-m360 public-key="${srvPub}" endpoint-address=${host} endpoint-port=${port} persistent-keepalive=25 allowed-address=${allowed}`,
+    '# 4) (opcional) Si necesitás default route vía el túnel, ajustá según tu caso',
+    '# /ip/route add dst-address=0.0.0.0/0 gateway=wg-m360 distance=1',
+  ].join('\n')
+}
+
 /* ====== ZXing / Cámara ====== */
 let codeReader = null
 let currentStream = null
@@ -89,6 +111,10 @@ const newProfile = ref({
 const vpnProfiles = ref([])
 const isLoading = ref(false)
 const isSaving = ref(false)
+
+/* ====== Auto-generado backend ====== */
+const isGenerating = ref(false)
+const autoGen = ref(null) // guarda última respuesta útil para mostrar detalles y comando
 
 const notification = ref({ show: false, message: '', type: 'success' })
 function showNotification(message, type = 'success') {
@@ -166,7 +192,7 @@ async function chooseLocal() {
         stopLocalScan()
       }
       if (err && !(err instanceof NotFoundException)) {
-        void err // evita bloque vacío y marca el param como usado
+        void err
       }
     })
 
@@ -293,13 +319,33 @@ async function importFromFile(e) {
   }
 }
 
-/* ====== Copiar config ====== */
-async function copyConfig() {
+/* ====== Generar config automáticamente (backend) ====== */
+async function generateAutoConfig() {
+  if (isGenerating.value) return
+  isGenerating.value = true
   try {
-    await navigator.clipboard.writeText(newProfile.value.config_data || '')
-    showNotification('Configuración copiada al portapapeles.')
-  } catch {
-    showNotification('No se pudo copiar al portapapeles.', 'error')
+    // Podés enviar payload vacío si usás ENV en el backend
+    const { data } = await api.post('/vpns/mikrotik-auto', {})
+    // Rellenar el textarea con el INI
+    const conf = (data?.conf_ini || '').trim()
+    if (!conf) throw new Error('El backend no devolvió conf_ini.')
+    newProfile.value.config_data = conf
+    // Proponer nombre si no hay
+    if (!newProfile.value.name.trim()) {
+      const suggested = proposeProfileName(conf)
+      if (suggested) newProfile.value.name = suggested.slice(0, 80)
+    }
+    // Guardar detalles y comando sugerido
+    autoGen.value = {
+      ...data,
+      mikrotik_cmd: buildMikrotikCmd(data),
+    }
+    showNotification('Configuración generada automáticamente.', 'success')
+  } catch (err) {
+    console.error(err)
+    showNotification(getAxiosErr(err), 'error')
+  } finally {
+    isGenerating.value = false
   }
 }
 
@@ -347,6 +393,7 @@ async function createProfile() {
       _saving: false,
     })
     newProfile.value = { name: '', check_ip: '', config_data: '' }
+    autoGen.value = null
     showNotification('Perfil VPN creado.', 'success')
   } catch (err) {
     console.error('Error al crear perfil:', err)
@@ -452,8 +499,13 @@ onMounted(fetchVpnProfiles)
               Importar .conf
               <input type="file" accept=".conf,.txt" @change="importFromFile" hidden />
             </label>
-            <button @click="copyConfig" class="btn-qr-scan" title="Copiar al portapapeles">
-              Copiar
+            <button
+              @click="generateAutoConfig"
+              class="btn-qr-scan"
+              :disabled="isGenerating"
+              title="Generar automáticamente desde el backend"
+            >
+              {{ isGenerating ? 'Generando…' : 'Generar config (auto)' }}
             </button>
             <button @click="openScanModal" class="btn-qr-scan" title="Escanear Código QR">
               <svg viewBox="0 0 24 24" fill="currentColor">
@@ -465,13 +517,29 @@ onMounted(fetchVpnProfiles)
             </button>
           </div>
         </div>
+
         <textarea
           v-model="newProfile.config_data"
           rows="10"
           spellcheck="false"
           placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;DNS = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = ...&#10;Endpoint = ..."
         />
+
+        <!-- Panel autogenerado -->
+        <div v-if="autoGen" class="auto-box">
+          <div class="auto-grid">
+            <div><strong>Address:</strong> {{ autoGen.interface_address }}</div>
+            <div><strong>Endpoint:</strong> {{ autoGen.peer_endpoint }}</div>
+            <div><strong>AllowedIPs:</strong> {{ autoGen.peer_allowed_ips }}</div>
+            <div><strong>Server PubKey:</strong> {{ autoGen.peer_public_key }}</div>
+          </div>
+          <div class="stack">
+            <label>Comando MikroTik sugerido</label>
+            <pre class="code-block">{{ autoGen.mikrotik_cmd }}</pre>
+          </div>
+        </div>
       </div>
+
       <div class="actions-row">
         <button
           class="btn-primary"
@@ -824,6 +892,7 @@ textarea {
   height: 1rem;
 }
 
+/* Modal QR */
 .qr-scanner-modal {
   position: fixed;
   top: 0;
@@ -889,7 +958,6 @@ textarea {
   fill: var(--primary-color);
   flex-shrink: 0;
 }
-
 .remote-scan-subtitle {
   color: var(--gray);
   margin: -0.5rem 0 1rem 0;
@@ -927,5 +995,32 @@ textarea {
   object-fit: cover;
   border-radius: 12px;
   border: 2px solid #444;
+}
+
+/* Panel autogenerado */
+.auto-box {
+  margin-top: 0.5rem;
+  background: #0f0f0f;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+.auto-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 0.75rem;
+}
+@media (max-width: 720px) {
+  .auto-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.code-block {
+  background: #0b0b0b;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow: auto;
+  white-space: pre;
 }
 </style>
