@@ -1,20 +1,14 @@
 <script setup>
-import { ref, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
-import QrcodeVue from 'qrcode.vue'
+import { ref, onBeforeUnmount, onMounted, watch } from 'vue'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
-import { BrowserQRCodeReader } from '@zxing/browser'
-import { NotFoundException } from '@zxing/library'
 
 /* ====== Helpers ====== */
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
 function normalizeIni(txt) {
   if (!txt) return ''
-  // Normaliza saltos de línea y recorta espacios extra
   let s = String(txt).replace(/\r\n/g, '\n').trim()
-  // Asegura bloques separados por una línea en blanco
   s = s.replace(/\n{3,}/g, '\n\n')
   return s
 }
@@ -22,7 +16,6 @@ function normalizeIni(txt) {
 function isLikelyWgIni(txt) {
   if (!txt) return false
   const s = normalizeIni(txt)
-  // Requerimos Interface, Peer, PublicKey, AllowedIPs y Address (clave que te faltó aquella vez)
   return (
     /\[Interface\]/i.test(s) &&
     /\[Peer\]/i.test(s) &&
@@ -45,12 +38,18 @@ function proposeProfileName(iniText) {
   return ''
 }
 
+/* Si por alguna razón el backend no devolviese `commands`, armamos un fallback. */
 function buildMikrotikCmd(resp) {
+  if (Array.isArray(resp?.commands) && resp.commands.length) {
+    return resp.commands.join('\n')
+  }
   const ep = String(resp?.peer_endpoint || '')
-  const [host, port] = ep.split(':')
+  const [host, portStr] = ep.split(':')
+  const port = portStr && /^\d+$/.test(portStr) ? portStr : '51820'
   const addr = resp?.interface_address || ''
   const allowed = resp?.peer_allowed_ips || '0.0.0.0/0'
   const srvPub = resp?.peer_public_key || ''
+  // No deberíamos llegar acá si el backend ya arma commands con la private-key.
   const clientPriv = resp?.client_private_key || ''
   return [
     '# --- Configuración sugerida para el cliente MikroTik ---',
@@ -71,54 +70,13 @@ async function copyToClipboard(text) {
   await navigator.clipboard.writeText(text)
 }
 
-/* ====== ZXing / Cámara ====== */
-let codeReader = null
-let currentStream = null
-const cameras = ref([])
-const selectedCameraId = ref('')
-
-async function listCameras() {
-  cameras.value = await BrowserQRCodeReader.listVideoInputDevices()
-  const backCam = cameras.value.find((d) => /back|trás|rear|environment/i.test(d.label))
-  selectedCameraId.value = backCam?.deviceId || cameras.value[0]?.deviceId || ''
-}
-
-async function setTorch(on) {
-  try {
-    const track = currentStream?.getVideoTracks?.()[0]
-    const caps = track?.getCapabilities?.()
-    if (caps?.torch) {
-      await track.applyConstraints({ advanced: [{ torch: !!on }] })
-      return true
-    }
-  } catch {
-    return false
-  }
-  return false
-}
-
-/* ====== Estado del modal QR ====== */
-const scanOpen = ref(false)
-const step = ref('choose')
-
-const localActive = ref(false)
-const localError = ref('')
-const localPaused = ref(false)
-const torchEnabled = ref(false)
-
-const pairing = ref(null)
-let wsUnsub = null
-let remoteTimer = null
-const remoteCountdown = ref(0)
-const remoteExpired = ref(false)
-
 /* ====== Formulario / listado ====== */
 const newProfile = ref({ name: '', check_ip: '', config_data: '' })
 const vpnProfiles = ref([])
 const isLoading = ref(false)
 const isSaving = ref(false)
 
-/* ====== Auto-generado backend ====== */
+/* ====== Auto-generado backend (solo comandos) ====== */
 const isGenerating = ref(false)
 const autoGen = ref(null)
 
@@ -157,8 +115,6 @@ function formatAgoFromSeconds(sec) {
   return `hace ${h}:${m}:${s}`
 }
 
-/* —— Cliente tolerante a rutas y métodos —— */
-/* —— Cliente limpio y seguro para verificar estado del peer —— */
 async function fetchPeerStatus(pubKey) {
   try {
     const { data } = await api.get('/vpns/peer-status', { params: { pub: pubKey } })
@@ -178,12 +134,15 @@ async function pollStatusOnce() {
     let tx = Number(data?.tx_bytes || 0)
     let connectedFlag = !!data?.connected
 
-    // epoch (seg) o ISO
     let ageSeconds = null
     const hs = data?.latest_handshake
     if (typeof hs === 'number') {
-      const nowSec = Math.floor(Date.now() / 1000)
-      ageSeconds = Math.max(0, nowSec - hs)
+      if (hs > 0) {
+        const nowSec = Math.floor(Date.now() / 1000)
+        ageSeconds = Math.max(0, nowSec - hs)
+      } else {
+        ageSeconds = null
+      }
     } else if (typeof hs === 'string' && hs) {
       const t = Date.parse(hs)
       if (!isNaN(t)) ageSeconds = Math.max(0, Math.floor((Date.now() - t) / 1000))
@@ -194,7 +153,7 @@ async function pollStatusOnce() {
     const connected = connectedFlag || recentHandshake || hasTraffic
 
     verify.value.connected = connected
-    verify.value.lastHandshake = ageSeconds != null ? formatAgoFromSeconds(ageSeconds) : null
+    verify.value.lastHandshake = ageSeconds != null ? formatAgoFromSeconds(ageSeconds) : '—'
     verify.value.rx = rx
     verify.value.tx = tx
     verify.value.error = ''
@@ -221,16 +180,13 @@ function startVerifyPolling() {
   verifyTimer = setInterval(pollStatusOnce, 2500)
 }
 
-/* ====== WS para QR remoto y para rotaciones ====== */
+/* ====== WS para rotaciones ====== */
 let wsUnsubRot = null
 
 onBeforeUnmount(() => {
-  stopLocalScan()
-  cleanupRemote()
   document.removeEventListener('visibilitychange', onVisibilityChange)
   stopVerifyPolling()
   window.removeEventListener('beforeunload', onBeforeUnload)
-
   if (wsUnsubRot) {
     try {
       removeWsListener(wsUnsubRot)
@@ -240,13 +196,13 @@ onBeforeUnmount(() => {
     wsUnsubRot = null
   }
 })
-
 function onBeforeUnload() {
-  // Evita dejar la cámara prendida si el usuario recarga o cierra
-  stopLocalScan()
-  cleanupRemote()
+  /* noop: ya no dejamos cámara/QR ni streams abiertos */
 }
 window.addEventListener('beforeunload', onBeforeUnload)
+function onVisibilityChange() {
+  /* noop: ya no hay scanner que pausar/reanudar */
+}
 
 /* ====== Notificaciones ====== */
 const notification = ref({ show: false, message: '', type: 'success' })
@@ -255,203 +211,7 @@ function showNotification(message, type = 'success') {
   setTimeout(() => (notification.value.show = false), 4000)
 }
 
-/* ====== Abrir / cerrar modal ====== */
-function openScanModal() {
-  scanOpen.value = true
-  step.value = 'choose'
-  localError.value = ''
-  localActive.value = false
-  localPaused.value = false
-  pairing.value = null
-  remoteCountdown.value = 0
-  remoteExpired.value = false
-}
-
-function closeScanModal() {
-  scanOpen.value = false
-  cleanupRemote()
-  stopLocalScan()
-}
-
-/* ====== QR / archivo / clipboard ====== */
-function applyConfigAndClose(text) {
-  const conf = normalizeIni(text || '')
-  if (!isLikelyWgIni(conf)) {
-    showNotification(
-      'El QR/archivo no parece una config válida de WireGuard (falta Address, Peer o claves).',
-      'error',
-    )
-    return
-  }
-  newProfile.value.config_data = conf
-  if (!newProfile.value.name.trim()) {
-    const suggested = proposeProfileName(conf)
-    if (suggested) newProfile.value.name = suggested.slice(0, 80)
-  }
-  closeScanModal()
-  showNotification('Configuración cargada.', 'success')
-}
-
-async function pasteFromClipboard() {
-  try {
-    const txt = await navigator.clipboard.readText()
-    if (!txt) throw new Error('El portapapeles está vacío.')
-    applyConfigAndClose(txt)
-  } catch (e) {
-    showNotification(getAxiosErr(e) || 'No se pudo leer del portapapeles.', 'error')
-  }
-}
-
-async function chooseLocal() {
-  step.value = 'local'
-  await nextTick()
-  localError.value = ''
-  localActive.value = true
-  localPaused.value = false
-  torchEnabled.value = false
-
-  try {
-    await listCameras()
-    if (!selectedCameraId.value) {
-      localError.value = 'No se encontró ninguna cámara disponible.'
-      return
-    }
-
-    try {
-      currentStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: selectedCameraId.value },
-      })
-      currentStream.getTracks().forEach((t) => t.stop())
-      currentStream = null
-    } catch {
-      localError.value = 'Permiso de cámara denegado o no disponible.'
-      return
-    }
-
-    codeReader = new BrowserQRCodeReader()
-    await codeReader.decodeFromVideoDevice(selectedCameraId.value, 'preview', (result, err) => {
-      if (result) {
-        applyConfigAndClose(result.getText())
-        stopLocalScan()
-      }
-      if (err && !(err instanceof NotFoundException)) {
-        void err
-      }
-    })
-
-    const preview = document.getElementById('preview')
-    currentStream = preview?.srcObject || null
-  } catch (err) {
-    console.error('Error iniciando ZXing:', err)
-    localError.value = 'No se pudo iniciar el lector de QR.'
-  }
-}
-
-async function onChangeCamera() {
-  if (!localActive.value) return
-  stopLocalScan()
-  await sleep(150)
-  await chooseLocal()
-}
-
-async function toggleTorch() {
-  const ok = await setTorch(!torchEnabled.value)
-  if (ok) torchEnabled.value = !torchEnabled.value
-  else showNotification('Este dispositivo no soporta linterna.', 'error')
-}
-
-function stopLocalScan() {
-  try {
-    if (codeReader) {
-      codeReader.reset()
-      codeReader = null
-    }
-    if (currentStream) {
-      currentStream.getTracks().forEach((t) => t.stop?.())
-      currentStream = null
-    }
-  } catch (e) {
-    void e
-  }
-  localActive.value = false
-  torchEnabled.value = false
-}
-
-function onVisibilityChange() {
-  if (!localActive.value) return
-  if (document.hidden) {
-    localPaused.value = true
-    stopLocalScan()
-  } else if (localPaused.value) {
-    chooseLocal()
-  }
-}
-document.addEventListener('visibilitychange', onVisibilityChange)
-
-async function chooseRemote() {
-  step.value = 'remote'
-  try {
-    const { data } = await api.post('/qr/start')
-    pairing.value = { id: data.session_id, url: data.mobile_url, expires_in: data.expires_in }
-    remoteCountdown.value = Number(data.expires_in || 300)
-    remoteExpired.value = false
-
-    if (remoteTimer) clearInterval(remoteTimer)
-    remoteTimer = setInterval(() => {
-      if (remoteCountdown.value > 0) remoteCountdown.value -= 1
-      if (remoteCountdown.value <= 0) {
-        remoteExpired.value = true
-        cleanupRemote()
-        clearInterval(remoteTimer)
-        remoteTimer = null
-      }
-    }, 1000)
-
-    await connectWebSocketWhenAuthenticated()
-    wsUnsub = addWsListener((msg) => {
-      if (msg?.type === 'qr_config' && msg.session_id === pairing.value?.id) {
-        applyConfigAndClose(msg.config_text)
-        cleanupRemote()
-      }
-    })
-  } catch (err) {
-    showNotification(getAxiosErr(err), 'error')
-    step.value = 'choose'
-  }
-}
-
-function cleanupRemote() {
-  if (wsUnsub) {
-    try {
-      removeWsListener(wsUnsub)
-    } catch (e) {
-      void e
-    }
-    wsUnsub = null
-  }
-  if (remoteTimer) {
-    clearInterval(remoteTimer)
-    remoteTimer = null
-  }
-  pairing.value = null
-  remoteCountdown.value = 0
-  remoteExpired.value = false
-}
-
-async function importFromFile(e) {
-  const file = e.target?.files?.[0]
-  if (!file) return
-  try {
-    const txt = await file.text()
-    applyConfigAndClose(txt)
-  } catch {
-    showNotification('No se pudo leer el archivo.', 'error')
-  } finally {
-    e.target.value = ''
-  }
-}
-
-/* ====== Auto config ====== */
+/* ====== Auto config (SOLO COMANDOS) ====== */
 const autoBoxOpen = ref(true)
 
 async function generateAutoConfig() {
@@ -459,22 +219,19 @@ async function generateAutoConfig() {
   isGenerating.value = true
   try {
     const { data } = await api.post('/vpns/mikrotik-auto', {})
-    const conf = normalizeIni(data?.conf_ini || '')
-    if (!conf) throw new Error('El backend no devolvió conf_ini.')
-    newProfile.value.config_data = conf
-    if (!newProfile.value.name.trim()) {
-      const suggested = proposeProfileName(conf)
-      if (suggested) newProfile.value.name = suggested.slice(0, 80)
-    }
+    // NO seteamos config_data ni nombre automáticamente: el flujo ahora es SOLO comandos.
     autoGen.value = {
       ...data,
-      mikrotik_cmd: buildMikrotikCmd(data),
+      mikrotik_cmd:
+        Array.isArray(data?.commands) && data.commands.length
+          ? data.commands.join('\n')
+          : buildMikrotikCmd(data),
       last_auth_ok: data.last_auth_ok || null,
       last_auth_fail: data.last_auth_fail || null,
       rotations_count: data.rotations_count || 0,
     }
     autoBoxOpen.value = true
-    showNotification('Configuración generada automáticamente.', 'success')
+    showNotification('Comandos generados automáticamente.', 'success')
     stopVerifyPolling()
     startVerifyPolling()
   } catch (err) {
@@ -485,7 +242,7 @@ async function generateAutoConfig() {
   }
 }
 
-/* ====== CRUD ====== */
+/* ====== CRUD perfiles (se mantienen igual) ====== */
 async function fetchVpnProfiles() {
   isLoading.value = true
   try {
@@ -540,7 +297,6 @@ async function createProfile() {
 
 async function saveProfile(profile) {
   if (profile._saving) return
-  // Validación rápida al guardar
   if (!isLikelyWgIni(profile.config_data)) {
     return showNotification(
       'La config no es válida (revisá Address/Peer/PublicKey/AllowedIPs).',
@@ -621,39 +377,11 @@ async function copyMikrotikScript() {
   }
 }
 
-async function copyConfig() {
-  try {
-    const txt = newProfile.value?.config_data?.trim()
-    if (!txt) throw new Error('No hay configuración para copiar.')
-    await copyToClipboard(txt)
-    showNotification('Config copiada al portapapeles.', 'success')
-  } catch (e) {
-    showNotification(getAxiosErr(e) || 'No se pudo copiar.', 'error')
-  }
-}
-
-function downloadConf() {
-  const txt = newProfile.value?.config_data?.trim()
-  if (!txt) {
-    showNotification('No hay configuración para descargar.', 'error')
-    return
-  }
-  const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  const base = (newProfile.value.name || 'wireguard').replace(/[^\w.-]+/g, '_')
-  a.download = `${base}.conf`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
-
 /* ====== Montaje ====== */
 onMounted(async () => {
   await fetchVpnProfiles()
-  // Autocompletar nombre al pegar manualmente por primera vez
+
+  // Autocompletar nombre si el usuario tipea una config manualmente
   watch(
     () => newProfile.value.config_data,
     (val, old) => {
@@ -665,7 +393,7 @@ onMounted(async () => {
     { flush: 'post' },
   )
 
-  // WS para escuchar rotaciones y actualizar la UI en vivo
+  // WS para escuchar rotaciones y actualizar UI
   try {
     await connectWebSocketWhenAuthenticated()
     wsUnsubRot = addWsListener((msg) => {
@@ -705,38 +433,13 @@ onMounted(async () => {
         <div class="label-with-action">
           <label>Config WireGuard *</label>
           <div class="actions-right">
-            <label class="file-btn" title="Importar .conf">
-              Importar .conf
-              <input type="file" accept=".conf,.txt" @change="importFromFile" hidden />
-            </label>
             <button
               @click="generateAutoConfig"
               class="btn-qr-scan"
               :disabled="isGenerating"
-              title="Generar automáticamente desde el backend"
+              title="Generar comandos desde el backend"
             >
-              {{ isGenerating ? 'Generando…' : 'Generar config (auto)' }}
-            </button>
-            <button @click="openScanModal" class="btn-qr-scan" title="Escanear Código QR">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path
-                  d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM13 13h2v2h-2zM15 15h2v2h-2zM13 17h2v2h-2zM17 17h2v2h-2zM19 19h2v2h-2zM15 19h2v2h-2zM17 13h2v2h-2zM19 15h2v2h-2z"
-                ></path>
-              </svg>
-              Escanear
-            </button>
-            <button
-              class="btn-qr-scan"
-              @click="pasteFromClipboard"
-              title="Pegar desde portapapeles"
-            >
-              Pegar .conf
-            </button>
-            <button class="btn-qr-scan" @click="copyConfig" title="Copiar config al portapapeles">
-              Copiar conf
-            </button>
-            <button class="btn-qr-scan" @click="downloadConf" title="Descargar archivo .conf">
-              Descargar .conf
+              {{ isGenerating ? 'Generando…' : 'Generar (auto)' }}
             </button>
           </div>
         </div>
@@ -774,7 +477,6 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <!-- Métricas de autenticación/rotación -->
               <div class="auto-grid">
                 <div><strong>Rotaciones:</strong> {{ autoGen.rotations_count ?? 0 }}</div>
                 <div><strong>Último OK:</strong> {{ autoGen.last_auth_ok || '—' }}</div>
@@ -798,9 +500,9 @@ onMounted(async () => {
               <div class="verify-box">
                 <div>
                   <strong>Conexión:</strong>
-                  <span :class="verify.connected ? 'ok' : 'warn'">{{
-                    verify.connected ? 'Conectado' : 'Sin conexión'
-                  }}</span>
+                  <span :class="verify.connected ? 'ok' : 'warn'">
+                    {{ verify.connected ? 'Conectado' : 'Sin conexión' }}
+                  </span>
                 </div>
                 <div><strong>Último handshake:</strong> {{ verify.lastHandshake || '—' }}</div>
                 <div><strong>RX / TX:</strong> {{ verify.rx }} / {{ verify.tx }} bytes</div>
@@ -886,73 +588,6 @@ onMounted(async () => {
 
     <div v-if="notification.show" class="notification" :class="notification.type">
       {{ notification.message }}
-    </div>
-
-    <!-- Modal QR -->
-    <div v-if="scanOpen" class="qr-scanner-modal" @click.self="closeScanModal">
-      <div class="qr-scanner-content">
-        <button @click="closeScanModal" class="btn-close-modal" title="Cerrar">&times;</button>
-
-        <div v-if="step === 'choose'">
-          <h3>¿Cómo querés escanear el QR?</h3>
-          <div class="choose-options">
-            <button @click="chooseLocal" class="btn-choose">
-              <svg viewBox="0 0 24 24">
-                <path
-                  d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"
-                />
-              </svg>
-              <span>Usar cámara de este dispositivo</span>
-            </button>
-            <button @click="chooseRemote" class="btn-choose">
-              <svg viewBox="0 0 24 24">
-                <path
-                  d="M15 7.5V2H9v5.5l3 3 3-3zM7.5 9H2v6h5.5l3-3-3-3zM9 16.5V22h6v-5.5l-3-3-3 3zM16.5 15l-3 3 3 3H22v-6h-5.5z"
-                />
-              </svg>
-              <span>Usar cámara de mi celular</span>
-            </button>
-          </div>
-        </div>
-
-        <div v-else-if="step === 'local'">
-          <h3>Apuntá al código QR de MikroTik</h3>
-          <div v-if="localError" class="text-red-400">{{ localError }}</div>
-          <div class="local-controls" v-else>
-            <select v-if="cameras.length" v-model="selectedCameraId" @change="onChangeCamera">
-              <option v-for="c in cameras" :key="c.deviceId" :value="c.deviceId">
-                {{ c.label || 'Cámara' }}
-              </option>
-            </select>
-            <button class="btn-qr-scan" @click="toggleTorch" title="Linterna">
-              {{ torchEnabled ? 'Apagar linterna' : 'Encender linterna' }}
-            </button>
-          </div>
-          <div class="remote-qr-container">
-            <video id="preview" class="qr-video" autoplay playsinline></video>
-          </div>
-        </div>
-
-        <div v-else-if="step === 'remote'">
-          <h3>1. Escaneá este QR con tu celular</h3>
-          <p class="remote-scan-subtitle">Se abrirá una página para escanear el QR de MikroTik.</p>
-          <div class="remote-qr-container">
-            <QrcodeVue
-              :value="pairing?.url"
-              :size="220"
-              level="H"
-              v-if="pairing?.url && !remoteExpired"
-            />
-            <div v-else class="expired">La sesión expiró.</div>
-          </div>
-          <p v-if="!remoteExpired" class="waiting-text">
-            Esperando datos del celular… ({{ remoteCountdown }}s)
-          </p>
-          <div v-else class="expired-actions">
-            <button class="btn-qr-scan" @click="chooseRemote">Reintentar</button>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -1125,7 +760,7 @@ textarea {
   background: var(--error-red);
 }
 
-/* Botones barra config */
+/* Barra config */
 .label-with-action {
   display: flex;
   justify-content: space-between;
@@ -1136,7 +771,6 @@ textarea {
   gap: 0.5rem;
   align-items: center;
 }
-.file-btn,
 .btn-qr-scan {
   background: #333;
   color: var(--font-color);
@@ -1147,112 +781,6 @@ textarea {
 }
 .btn-qr-scan:hover {
   background: #444;
-}
-.btn-qr-scan svg {
-  width: 1rem;
-  height: 1rem;
-}
-
-/* Modal QR */
-.qr-scanner-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background-color: rgba(0, 0, 0, 0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.qr-scanner-content {
-  background-color: var(--panel);
-  padding: 1.5rem;
-  border-radius: 12px;
-  text-align: center;
-  width: 90%;
-  max-width: 540px;
-  position: relative;
-}
-.btn-close-modal {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: transparent;
-  border: none;
-  color: #999;
-  font-size: 2rem;
-  line-height: 1;
-  cursor: pointer;
-}
-.choose-options {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-top: 1.5rem;
-}
-.btn-choose {
-  background: #2a2a2a;
-  color: var(--font-color);
-  border: 1px solid #444;
-  border-radius: 8px;
-  padding: 1rem;
-  font-size: 1rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  text-align: left;
-}
-.btn-choose:hover {
-  background: #333;
-}
-.btn-choose:disabled {
-  background: #222;
-  color: #555;
-  cursor: not-allowed;
-}
-.btn-choose svg {
-  width: 2.5rem;
-  height: 2.5rem;
-  fill: var(--primary-color);
-  flex-shrink: 0;
-}
-.remote-scan-subtitle {
-  color: var(--gray);
-  margin: -0.5rem 0 1rem 0;
-}
-.remote-qr-container {
-  background: white;
-  padding: 1rem;
-  display: inline-block;
-  border-radius: 8px;
-}
-.waiting-text {
-  margin-top: 1rem;
-  color: var(--primary-color);
-}
-.expired {
-  color: var(--error-red);
-  font-weight: 600;
-  margin-top: 0.5rem;
-}
-.expired-actions {
-  margin-top: 0.75rem;
-}
-
-.local-controls {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 0.5rem;
-}
-.qr-video {
-  width: 100%;
-  max-width: 420px;
-  aspect-ratio: 1 / 1;
-  object-fit: cover;
-  border-radius: 12px;
-  border: 2px solid #444;
 }
 
 /* Panel autogenerado */
