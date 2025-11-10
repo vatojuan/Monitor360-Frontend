@@ -218,8 +218,11 @@ async function generateAutoConfig() {
   if (isGenerating.value) return
   isGenerating.value = true
   try {
-    const { data } = await api.post('/vpns/mikrotik-auto', {})
-    // NO seteamos config_data ni nombre automáticamente: el flujo ahora es SOLO comandos.
+    // Podés dejar {} (usa defaults), pero envío interface explícita para mayor claridad:
+    const payload = { interface: 'm360-srv0' }
+    const { data } = await api.post('/vpns/mikrotik-auto', payload)
+
+    // 1) Guardamos todo lo que viene del backend (commands + conf_ini + metadatos)
     autoGen.value = {
       ...data,
       mikrotik_cmd:
@@ -230,8 +233,23 @@ async function generateAutoConfig() {
       last_auth_fail: data.last_auth_fail || null,
       rotations_count: data.rotations_count || 0,
     }
+
+    // 2) Rellenar el textarea "Config WireGuard *" con el .ini devuelto
+    const confIni = normalizeIni(data?.conf_ini || '')
+    if (confIni) {
+      newProfile.value.config_data = confIni
+
+      // 3) Si el nombre aún está vacío, sugerir uno a partir de Address/Endpoint
+      if (!newProfile.value.name.trim()) {
+        const suggested = proposeProfileName(confIni)
+        if (suggested) newProfile.value.name = suggested.slice(0, 80)
+      }
+    }
+
     autoBoxOpen.value = true
-    showNotification('Comandos generados automáticamente.', 'success')
+    showNotification('Comandos y .ini generados automáticamente.', 'success')
+
+    // 4) Arrancar el polling de estado (usa client_public_key)
     stopVerifyPolling()
     startVerifyPolling()
   } catch (err) {
