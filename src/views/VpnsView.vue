@@ -6,6 +6,7 @@ import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } fr
 /* ====== Helpers ====== */
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
+// Parsea el INI para extraer datos clave
 function parseWgIni(iniText) {
   const res = {
     privateKey: '',
@@ -44,56 +45,52 @@ function parseWgIni(iniText) {
   return res
 }
 
-function proposeProfileName(iniText) {
-  try {
-    const conf = parseWgIni(iniText)
-    if (conf.address && conf.endpoint) return `${conf.address.split('/')[0]} @ ${conf.endpoint}`
-    if (conf.endpoint) return conf.endpoint
-    if (conf.address) return conf.address.split('/')[0]
-  } catch (e) {
-    // Usamos 'e' para evitar error de linter
-    console.debug('Error proponiendo nombre:', e)
-    return ''
-  }
-  return ''
-}
-
+// --- SCRIPT MIKROTIK CORREGIDO (Sintaxis CLI con espacios) ---
 function buildMikrotikCmdFromIni(iniText, clientPrivKeyOverride = null) {
   const conf = parseWgIni(iniText)
+  // Validación básica
   if (!conf.address || !conf.serverPublicKey || !conf.endpoint)
-    return '# Error: Configuración incompleta.'
+    return '# Error: Configuración incompleta en el perfil.'
 
   const privKey = clientPrivKeyOverride || conf.privateKey
   const [host, port] = conf.endpoint.split(':')
-  const ifaceName = 'wg-m360'
+
+  // Variables para el script
+  const iface = 'wg-m360'
   const comment = 'Monitor360 VPN'
   const portVal = port || 51820
   const allowed = conf.allowedIps || '0.0.0.0/0'
 
+  // Usamos sintaxis con ESPACIOS (ej: /interface wireguard add) que es la estándar para Terminal/Winbox
   return [
     `# === Configuración Cliente MikroTik (${comment}) ===`,
     '',
-    '# 1. Limpieza previa',
-    `/interface/wireguard/remove [find where name="${ifaceName}"]`,
-    `/ip/address/remove [find where interface="${ifaceName}"]`,
-    `/interface/wireguard/peers/remove [find where interface="${ifaceName}"]`,
+    '# 1. Limpieza previa (Evita errores de duplicados)',
+    `/interface wireguard remove [find name="${iface}"]`,
+    `/ip address remove [find interface="${iface}"]`,
+    `/interface wireguard peers remove [find interface="${iface}"]`,
     '',
-    '# 2. Crear Interfaz',
-    `/interface/wireguard/add name="${ifaceName}" comment="${comment}" private-key="${privKey}" listen-port=13231`,
+    '# 2. Crear Interfaz WireGuard',
+    `/interface wireguard add name="${iface}" comment="${comment}" private-key="${privKey}" listen-port=13231`,
     '',
-    '# 3. Asignar IP',
-    `/ip/address/add address="${conf.address}" interface="${ifaceName}" comment="${comment}"`,
+    '# 3. Asignar Dirección IP',
+    `/ip address add address="${conf.address}" interface="${iface}" comment="${comment}"`,
     '',
-    '# 4. Configurar Peer',
-    `/interface/wireguard/peers/add interface="${ifaceName}" public-key="${conf.serverPublicKey}" endpoint-address="${host}" endpoint-port=${portVal} allowed-address="${allowed}" persistent-keepalive=25 comment="${comment}"`,
+    '# 4. Configurar Peer (Servidor)',
+    `/interface wireguard peers add interface="${iface}" public-key="${conf.serverPublicKey}" endpoint-address="${host}" endpoint-port=${portVal} allowed-address="${allowed}" persistent-keepalive=25 comment="${comment}"`,
     '',
-    '# 5. Reglas de Firewall',
-    `/ip/firewall/filter/remove [find where comment="Monitor360 WG in"]`,
-    `/ip/firewall/filter/remove [find where comment="Monitor360 WG out"]`,
-    `/ip/firewall/filter/add chain=forward in-interface="${ifaceName}" action=accept comment="Monitor360 WG in" place-before=0`,
-    `/ip/firewall/filter/add chain=forward out-interface="${ifaceName}" action=accept comment="Monitor360 WG out" place-before=0`,
+    '# 5. Reglas de Firewall (Forward - Tráfico del túnel)',
+    '# Elimina reglas viejas para no acumular basura',
+    `/ip firewall filter remove [find comment="Monitor360 WG in"]`,
+    `/ip firewall filter remove [find comment="Monitor360 WG out"]`,
+    '# Agrega reglas al inicio (place-before=0) para asegurar paso',
+    `/ip firewall filter add chain=forward in-interface="${iface}" action=accept comment="Monitor360 WG in" place-before=0`,
+    `/ip firewall filter add chain=forward out-interface="${iface}" action=accept comment="Monitor360 WG out" place-before=0`,
     '',
-    '# Fin.',
+    '# (Opcional) NAT Masquerade si el router debe dar internet por el túnel',
+    `# /ip firewall nat add chain=srcnat out-interface="${iface}" action=masquerade comment="Monitor360 NAT"`,
+    '',
+    '# Configuración finalizada.',
   ].join('\n')
 }
 
@@ -102,7 +99,9 @@ async function copyToClipboard(text) {
     await navigator.clipboard.writeText(text)
     showNotification('📋 Script copiado al portapapeles', 'success')
   } catch (e) {
-    showNotification(getAxiosErr(e), 'error')
+    // Usamos 'e' para que el linter no se queje y para loguear si es necesario
+    console.error(e)
+    showNotification('Error al copiar al portapapeles', 'error')
   }
 }
 
@@ -120,7 +119,7 @@ function downloadConfFile(name, content) {
 }
 
 /* ====== Estado UI ====== */
-const newProfile = ref({ name: '', check_ip: '', config_data: '' })
+const newProfile = ref({ name: '', check_ip: '' })
 const vpnProfiles = ref([])
 const isLoading = ref(false)
 const isCreating = ref(false)
@@ -209,7 +208,7 @@ async function createAutoProfile() {
     const { data: savedProfile } = await api.post('/vpns', payload)
 
     vpnProfiles.value.unshift({ ...savedProfile, _expanded: true })
-    newProfile.value = { name: '', check_ip: '', config_data: '' }
+    newProfile.value = { name: '', check_ip: '' }
     showNotification('Perfil creado y activado.', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
@@ -246,34 +245,18 @@ async function testReachability(profile) {
   }
 }
 
-async function copyMikrotikScript(configData) {
-  try {
-    const script = buildMikrotikCmdFromIni(configData)
-    if (!script) throw new Error('No se pudo generar el script.')
-    await copyToClipboard(script)
-  } catch (e) {
-    showNotification(getAxiosErr(e), 'error')
-  }
-}
-
-// Notificaciones
 const notification = ref({ show: false, message: '', type: '' })
 function showNotification(msg, type = 'success') {
   notification.value = { show: true, message: msg, type }
   setTimeout(() => (notification.value.show = false), 4000)
 }
 
-// Variables WS
+onMounted(fetchVpnProfiles)
+onBeforeUnmount(stopInspector)
+
+// Configuración WS
 let wsUnsubRot = null
-
-onBeforeUnmount(() => {
-  stopInspector()
-  if (wsUnsubRot) removeWsListener(wsUnsubRot)
-})
-
 onMounted(async () => {
-  await fetchVpnProfiles()
-
   // Watch para autocompletar nombre si se edita a mano (si volviéramos a mostrar el campo)
   watch(
     () => newProfile.value.config_data,
@@ -286,18 +269,33 @@ onMounted(async () => {
     { flush: 'post' },
   )
 
-  // WebSocket para eventos en tiempo real
   try {
     await connectWebSocketWhenAuthenticated()
     wsUnsubRot = addWsListener((msg) => {
       if (msg?.type === 'device_credential_rotated') {
-        console.log('Rotación detectada:', msg)
+        console.log('Rotación:', msg)
       }
     })
   } catch (e) {
-    console.error('WS error:', e)
+    void e
   }
 })
+onBeforeUnmount(() => {
+  if (wsUnsubRot) removeWsListener(wsUnsubRot)
+})
+// Funciones auxiliares para proposeProfileName (para que el watch funcione)
+function proposeProfileName(iniText) {
+  try {
+    const conf = parseWgIni(iniText)
+    if (conf.address && conf.endpoint) return `${conf.address.split('/')[0]} @ ${conf.endpoint}`
+    if (conf.endpoint) return conf.endpoint
+    if (conf.address) return conf.address.split('/')[0]
+  } catch (e) {
+    console.debug('Error proponiendo nombre:', e)
+    return ''
+  }
+  return ''
+}
 </script>
 
 <template>
@@ -353,7 +351,10 @@ onMounted(async () => {
               <button class="btn-secondary" @click="downloadConfFile(p.name, p.config_data)">
                 ⬇️ Bajar .conf (PC/Móvil)
               </button>
-              <button class="btn-secondary" @click="copyMikrotikScript(p.config_data)">
+              <button
+                class="btn-secondary"
+                @click="copyToClipboard(buildMikrotikCmdFromIni(p.config_data))"
+              >
                 📋 Copiar Script MikroTik
               </button>
               <button class="btn-default" @click="checkStatus(p)">
@@ -422,6 +423,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* Estilos depurados y mejorados */
 :root {
   --panel: #1b1b1b;
   --bg: #121212;
@@ -528,6 +530,7 @@ button:hover {
   list-style: none;
   padding: 0;
 }
+/* Fondo de tarjeta mejorado para contraste */
 .vpn-card {
   background: #232323;
   border: 1px solid #3a3a3a;
