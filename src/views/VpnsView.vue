@@ -1,59 +1,62 @@
 <script setup>
-import { ref, onBeforeUnmount, onMounted, watch } from 'vue'
+import { ref, onBeforeUnmount, onMounted } from 'vue'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
 
 /* ====== Helpers ====== */
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
-function normalizeIni(txt) {
-  if (!txt) return ''
-  let s = String(txt).replace(/\r\n/g, '\n').trim()
-  s = s.replace(/\n{3,}/g, '\n\n')
-  return s
-}
-
-function isLikelyWgIni(txt) {
-  if (!txt) return false
-  const s = normalizeIni(txt)
-  return (
-    /\[Interface\]/i.test(s) &&
-    /\[Peer\]/i.test(s) &&
-    /PublicKey\s*=/.test(s) &&
-    /AllowedIPs\s*=/.test(s) &&
-    /Address\s*=/.test(s)
-  )
-}
-
-function proposeProfileName(iniText) {
-  try {
-    const addr = (iniText.match(/Address\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
-    const endpoint = (iniText.match(/Endpoint\s*=\s*([^\n\r]+)/i)?.[1] || '').trim()
-    if (addr && endpoint) return `${addr.split('/')[0]} @ ${endpoint}`
-    if (endpoint) return endpoint
-    if (addr) return addr.split('/')[0]
-  } catch {
-    return ''
+// Parsea el INI para extraer datos clave (endpoint, keys) y armar el script de MikroTik en el frontend
+function parseWgIni(iniText) {
+  const res = {
+    privateKey: '',
+    address: '',
+    dns: '',
+    publicKey: '',
+    allowedIps: '',
+    endpoint: '',
+    serverPublicKey: '',
   }
-  return ''
+  if (!iniText) return res
+
+  const lines = iniText.split('\n')
+  let section = ''
+
+  for (let line of lines) {
+    line = line.trim()
+    if (line.startsWith('[')) {
+      section = line.toLowerCase()
+    } else if (line.includes('=')) {
+      let [k, v] = line.split('=', 2)
+      k = k.trim().toLowerCase()
+      v = v.trim()
+
+      if (section === '[interface]') {
+        if (k === 'privatekey') res.privateKey = v
+        if (k === 'address') res.address = v
+        if (k === 'dns') res.dns = v
+      } else if (section === '[peer]') {
+        if (k === 'publickey') res.serverPublicKey = v
+        if (k === 'allowedips') res.allowedIps = v
+        if (k === 'endpoint') res.endpoint = v
+      }
+    }
+  }
+  return res
 }
 
-function buildMikrotikCmd(resp) {
-  if (Array.isArray(resp?.commands) && resp.commands.length) {
-    return resp.commands.join('\n')
-  }
-  const ep = String(resp?.peer_endpoint || '')
-  const [host, portStr] = ep.split(':')
-  const port = portStr && /^\d+$/.test(portStr) ? portStr : '51820'
-  const addr = resp?.interface_address || ''
-  const allowed = resp?.peer_allowed_ips || '0.0.0.0/0'
-  const srvPub = resp?.peer_public_key || ''
-  const clientPriv = resp?.client_private_key || ''
+function buildMikrotikCmdFromIni(iniText, clientPrivKeyOverride = null) {
+  const conf = parseWgIni(iniText)
+  if (!conf.address || !conf.serverPublicKey || !conf.endpoint) return ''
+
+  const privKey = clientPrivKeyOverride || conf.privateKey
+  const [host, port] = conf.endpoint.split(':')
+
   return [
-    '# --- Configuración sugerida para el cliente MikroTik ---',
-    `/interface/wireguard add name=wg-m360 comment="Monitor360 VPN (auto)" private-key="${clientPriv}"`,
-    `/ip/address add address=${addr} interface=wg-m360`,
-    `/interface/wireguard/peers add interface=wg-m360 public-key="${srvPub}" endpoint-address=${host} endpoint-port=${port} persistent-keepalive=25 allowed-address=${allowed}`,
+    '# --- Configuración para MikroTik ---',
+    `/interface/wireguard add name=wg-m360 comment="Monitor360 VPN" private-key="${privKey}"`,
+    `/ip/address add address=${conf.address} interface=wg-m360`,
+    `/interface/wireguard/peers add interface=wg-m360 public-key="${conf.serverPublicKey}" endpoint-address=${host} endpoint-port=${port || 51820} allowed-address=${conf.allowedIps || '0.0.0.0/0'} persistent-keepalive=25`,
   ].join('\n')
 }
 
@@ -61,175 +64,8 @@ async function copyToClipboard(text) {
   await navigator.clipboard.writeText(text)
 }
 
-/* ====== Estado UI ====== */
-const newProfile = ref({ name: '', check_ip: '', config_data: '' })
-const vpnProfiles = ref([])
-const isLoading = ref(false)
-const isSaving = ref(false)
-const isGenerating = ref(false)
-const autoGen = ref(null)
-const showConfig = ref(false)
-
-const autoBoxOpen = ref(true)
-
-/* ====== Verificación de handshake (Polling) ====== */
-const verify = ref({
-  running: false,
-  connected: false,
-  lastHandshake: null,
-  rx: 0,
-  tx: 0,
-  tries: 0,
-  error: '',
-})
-let verifyTimer = null
-
-function stopVerifyPolling() {
-  if (verifyTimer) {
-    clearInterval(verifyTimer)
-    verifyTimer = null
-  }
-  verify.value.running = false
-}
-
-function formatAgoFromSeconds(sec) {
-  if (sec == null || isNaN(sec)) return null
-  const h = Math.floor(sec / 3600)
-    .toString()
-    .padStart(2, '0')
-  const m = Math.floor((sec % 3600) / 60)
-    .toString()
-    .padStart(2, '0')
-  const s = Math.floor(sec % 60)
-    .toString()
-    .padStart(2, '0')
-  return `hace ${h}:${m}:${s}`
-}
-
-async function fetchPeerStatus(pubKey) {
-  try {
-    const { data } = await api.get('/vpns/peer-status', { params: { pub: pubKey } })
-    return data
-  } catch (e) {
-    console.error('Error en fetchPeerStatus:', e)
-    throw new Error(e?.response?.data?.detail || e?.message || 'Error al obtener estado.')
-  }
-}
-
-async function pollStatusOnce() {
-  if (!autoGen.value?.client_public_key) return
-  try {
-    const data = await fetchPeerStatus(autoGen.value.client_public_key)
-    let rx = Number(data?.rx_bytes || 0)
-    let tx = Number(data?.tx_bytes || 0)
-    let connectedFlag = !!data?.connected
-    let ageSeconds = null
-    const hs = data?.latest_handshake
-    if (typeof hs === 'number') {
-      if (hs > 0) {
-        const nowSec = Math.floor(Date.now() / 1000)
-        ageSeconds = Math.max(0, nowSec - hs)
-      }
-    } else if (typeof hs === 'string' && hs) {
-      const t = Date.parse(hs)
-      if (!isNaN(t)) ageSeconds = Math.max(0, Math.floor((Date.now() - t) / 1000))
-    }
-    const recentHandshake = ageSeconds != null && ageSeconds <= 180
-    const hasTraffic = rx + tx > 0
-    verify.value.connected = connectedFlag || recentHandshake || hasTraffic
-    verify.value.lastHandshake = ageSeconds != null ? formatAgoFromSeconds(ageSeconds) : '—'
-    verify.value.rx = rx
-    verify.value.tx = tx
-    verify.value.error = ''
-  } catch (e) {
-    verify.value.error = getAxiosErr(e)
-  } finally {
-    verify.value.tries += 1
-    if (verify.value.tries >= 40 && !verify.value.connected) {
-      stopVerifyPolling()
-    }
-  }
-}
-
-function startVerifyPolling() {
-  if (!autoGen.value?.client_public_key || verify.value.running) return
-  verify.value.running = true
-  verify.value.connected = false
-  verify.value.lastHandshake = null
-  verify.value.rx = 0
-  verify.value.tx = 0
-  verify.value.tries = 0
-  verify.value.error = ''
-  pollStatusOnce()
-  verifyTimer = setInterval(pollStatusOnce, 2500)
-}
-
-/* ====== WS / Lifecycle ====== */
-let wsUnsubRot = null
-onBeforeUnmount(() => {
-  stopVerifyPolling()
-  window.removeEventListener('beforeunload', onBeforeUnload)
-  if (wsUnsubRot) removeWsListener(wsUnsubRot)
-})
-function onBeforeUnload() {}
-window.addEventListener('beforeunload', onBeforeUnload)
-
-/* ====== Notificaciones ====== */
-const notification = ref({ show: false, message: '', type: 'success' })
-function showNotification(message, type = 'success') {
-  notification.value = { show: true, message, type }
-  setTimeout(() => (notification.value.show = false), 4000)
-}
-
-/* ====== Lógica Principal ====== */
-async function generateAutoConfig() {
-  if (isGenerating.value) return
-  isGenerating.value = true
-  try {
-    const payload = { interface: 'm360-srv0' }
-    const { data } = await api.post('/vpns/mikrotik-auto', payload)
-
-    autoGen.value = {
-      ...data,
-      mikrotik_cmd:
-        Array.isArray(data?.commands) && data.commands.length
-          ? data.commands.join('\n')
-          : buildMikrotikCmd(data),
-      last_auth_ok: data.last_auth_ok || null,
-      last_auth_fail: data.last_auth_fail || null,
-      rotations_count: data.rotations_count || 0,
-    }
-
-    const confIni = normalizeIni(data?.conf_ini || '')
-    if (confIni) {
-      newProfile.value.config_data = confIni
-      if (!newProfile.value.name.trim()) {
-        const suggested = proposeProfileName(confIni)
-        if (suggested) newProfile.value.name = suggested.slice(0, 80)
-      }
-    }
-
-    autoBoxOpen.value = true
-    showConfig.value = false
-    showNotification('Configuración generada correctamente.', 'success')
-
-    stopVerifyPolling()
-    startVerifyPolling()
-  } catch (err) {
-    console.error(err)
-    showNotification(getAxiosErr(err), 'error')
-  } finally {
-    isGenerating.value = false
-  }
-}
-
-function downloadClientConf() {
-  const content = newProfile.value.config_data
-  if (!content) return showNotification('No hay configuración para descargar.', 'error')
-
-  const name = (newProfile.value.name || 'wireguard-client').replace(/\s+/g, '_')
-  const filename = `${name}.conf`
-
+function downloadConfFile(name, content) {
+  const filename = `${(name || 'vpn').replace(/\s+/g, '_')}.conf`
   const blob = new Blob([content], { type: 'text/plain' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -241,16 +77,73 @@ function downloadClientConf() {
   URL.revokeObjectURL(url)
 }
 
+/* ====== Estado UI ====== */
+const newProfile = ref({ name: '', check_ip: '' })
+const vpnProfiles = ref([])
+const isLoading = ref(false)
+const isCreating = ref(false)
+
+/* ====== Inspector de Estado (Polling) ====== */
+const inspector = ref({
+  activeProfileId: null,
+  running: false,
+  connected: false,
+  lastHandshake: null,
+  rx: 0,
+  tx: 0,
+  timer: null,
+})
+
+function stopInspector() {
+  if (inspector.value.timer) clearInterval(inspector.value.timer)
+  inspector.value.timer = null
+  inspector.value.running = false
+  inspector.value.activeProfileId = null
+}
+
+async function checkStatus(profile) {
+  if (inspector.value.activeProfileId === profile.id && inspector.value.running) {
+    stopInspector()
+    return
+  }
+
+  stopInspector()
+  inspector.value.activeProfileId = profile.id
+  inspector.value.running = true
+  inspector.value.connected = false
+
+  const pubKey = profile.public_key || profile.server_public_key
+  if (!pubKey) {
+    showNotification('No se encontró Public Key para este perfil.', 'error')
+    stopInspector()
+    return
+  }
+
+  const poll = async () => {
+    if (!inspector.value.running) return
+    try {
+      const { data } = await api.get('/vpns/peer-status', { params: { pub: pubKey } })
+      inspector.value.connected = !!data.connected
+      inspector.value.rx = data.rx_bytes
+      inspector.value.tx = data.tx_bytes
+      inspector.value.lastHandshake = data.latest_handshake
+        ? new Date(data.latest_handshake * 1000).toLocaleTimeString()
+        : 'Nunca'
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  poll()
+  inspector.value.timer = setInterval(poll, 3000)
+}
+
+/* ====== Acciones Perfil ====== */
 async function fetchVpnProfiles() {
   isLoading.value = true
   try {
     const { data } = await api.get('/vpns')
-    vpnProfiles.value = (data || []).map((p) => ({
-      ...p,
-      is_default: !!p.is_default,
-      _expanded: false,
-      _saving: false,
-    }))
+    vpnProfiles.value = (data || []).map((p) => ({ ...p, _expanded: false, _saving: false }))
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
   } finally {
@@ -258,279 +151,167 @@ async function fetchVpnProfiles() {
   }
 }
 
-async function createProfile() {
-  if (!newProfile.value.name.trim()) return showNotification('Falta el nombre.', 'error')
-  if (!isLikelyWgIni(newProfile.value.config_data))
-    return showNotification('Falta la configuración válida.', 'error')
+async function createAutoProfile() {
+  if (!newProfile.value.name.trim()) return showNotification('Nombre requerido', 'error')
+  isCreating.value = true
 
-  if (isSaving.value) return
-  isSaving.value = true
   try {
-    const body = {
-      name: newProfile.value.name.trim(),
-      config_data: normalizeIni(newProfile.value.config_data),
-      check_ip: newProfile.value.check_ip.trim(),
+    // 1. Dry Run: obtener configuración sugerida
+    const { data: autoData } = await api.post('/vpns/mikrotik-auto', { interface: 'm360-srv0' })
+
+    // 2. Crear Real: guardar en BD y activar en WG
+    const payload = {
+      name: newProfile.value.name,
+      check_ip: newProfile.value.check_ip || autoData.interface_address?.split('/')[0],
+      config_data: autoData.conf_ini,
     }
-    const { data } = await api.post('/vpns', body)
-    vpnProfiles.value.unshift({
-      ...data,
-      is_default: !!data.is_default,
-      _expanded: false,
-      _saving: false,
-    })
-    newProfile.value = { name: '', check_ip: '', config_data: '' }
-    autoGen.value = null
-    showConfig.value = false
-    stopVerifyPolling()
-    showNotification('Perfil VPN creado.', 'success')
+
+    const { data: savedProfile } = await api.post('/vpns', payload)
+
+    // 3. Actualizar UI
+    vpnProfiles.value.unshift({ ...savedProfile, _expanded: true })
+    newProfile.value = { name: '', check_ip: '' }
+    showNotification('Perfil creado y activado.', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
   } finally {
-    isSaving.value = false
-  }
-}
-
-async function saveProfile(profile) {
-  if (profile._saving) return
-  if (!isLikelyWgIni(profile.config_data)) return showNotification('Config inválida.', 'error')
-  profile._saving = true
-  try {
-    await api.put(`/vpns/${profile.id}`, {
-      name: profile.name,
-      check_ip: profile.check_ip,
-      config_data: normalizeIni(profile.config_data),
-    })
-    showNotification('Actualizado.', 'success')
-    await fetchVpnProfiles()
-  } catch (err) {
-    showNotification(getAxiosErr(err), 'error')
-  } finally {
-    profile._saving = false
-  }
-}
-
-async function setDefault(profile) {
-  if (profile._saving) return
-  profile._saving = true
-  try {
-    await api.put(`/vpns/${profile.id}`, { is_default: true })
-    await fetchVpnProfiles()
-    showNotification('Marcado como default.', 'success')
-  } catch (err) {
-    showNotification(getAxiosErr(err), 'error')
-  } finally {
-    profile._saving = false
-  }
-}
-
-async function testProfile(profile) {
-  if (!profile.check_ip?.trim()) return showNotification('Falta check_ip.', 'error')
-  try {
-    const { data } = await api.post('/devices/test_reachability', {
-      ip_address: profile.check_ip.trim(),
-      vpn_profile_id: profile.id,
-    })
-    if (data.reachable) showNotification(`OK. Alcanzable (${profile.check_ip}).`, 'success')
-    else showNotification(data.detail || 'No alcanzable.', 'error')
-  } catch (err) {
-    showNotification(`Error: ${getAxiosErr(err)}`, 'error')
+    isCreating.value = false
   }
 }
 
 async function deleteProfile(profile) {
-  if (!confirm(`¿Eliminar "${profile.name}"?`)) return
+  if (!confirm('¿Borrar perfil? Se desconectará el cliente.')) return
   try {
     await api.delete(`/vpns/${profile.id}`)
     vpnProfiles.value = vpnProfiles.value.filter((p) => p.id !== profile.id)
-    showNotification('Eliminado.', 'success')
-  } catch (err) {
-    showNotification(getAxiosErr(err), 'error')
-  }
-}
-
-async function copyMikrotikScript() {
-  try {
-    if (!autoGen.value?.mikrotik_cmd) throw new Error('Nada para copiar.')
-    await copyToClipboard(autoGen.value.mikrotik_cmd)
-    showNotification('Copiado.', 'success')
+    if (inspector.value.activeProfileId === profile.id) stopInspector()
+    showNotification('Eliminado', 'success')
   } catch (e) {
     showNotification(getAxiosErr(e), 'error')
   }
 }
 
-onMounted(async () => {
-  await fetchVpnProfiles()
-  watch(
-    () => newProfile.value.config_data,
-    (val, old) => {
-      if (!old && val && !newProfile.value.name.trim() && isLikelyWgIni(val)) {
-        const suggested = proposeProfileName(val)
-        if (suggested) newProfile.value.name = suggested.slice(0, 80)
-      }
-    },
-    { flush: 'post' },
-  )
-
+async function testReachability(profile) {
+  if (!profile.check_ip) return showNotification('Sin Check IP', 'error')
   try {
-    await connectWebSocketWhenAuthenticated()
-    wsUnsubRot = addWsListener((msg) => {
-      if (msg?.type === 'device_credential_rotated' && autoGen.value) {
-        if (!msg.device_id || msg.device_id === autoGen.value.device_id) {
-          autoGen.value.rotations_count = (autoGen.value.rotations_count ?? 0) + 1
-          msg.ok ? (autoGen.value.last_auth_ok = msg.ts) : (autoGen.value.last_auth_fail = msg.ts)
-        }
-      }
+    const { data } = await api.post('/devices/test_reachability', {
+      ip_address: profile.check_ip,
+      vpn_profile_id: profile.id,
     })
+    showNotification(
+      data.reachable ? '✅ Ping OK' : '❌ Sin respuesta',
+      data.reachable ? 'success' : 'error',
+    )
   } catch (e) {
-    void e
+    showNotification(getAxiosErr(e), 'error')
   }
-})
+}
+
+// Notificaciones
+const notification = ref({ show: false, message: '', type: '' })
+function showNotification(msg, type = 'success') {
+  notification.value = { show: true, message: msg, type }
+  setTimeout(() => (notification.value.show = false), 4000)
+}
+
+onMounted(fetchVpnProfiles)
+onBeforeUnmount(stopInspector)
 </script>
 
 <template>
   <div class="page-wrap">
-    <h1>Perfiles VPN</h1>
+    <h1>Gestión VPN</h1>
 
     <section class="control-section">
-      <h2><i class="icon">➕</i> Nuevo Perfil</h2>
+      <h2><i class="icon">🚀</i> Nuevo Cliente</h2>
       <div class="grid-2">
         <div>
-          <label>Nombre</label>
-          <input v-model="newProfile.name" type="text" placeholder="Ej: Cliente Juan Perez" />
+          <label>Nombre del Cliente / Sitio</label>
+          <input v-model="newProfile.name" type="text" placeholder="Ej: Sucursal Centro" />
         </div>
         <div>
-          <label>Check IP (opcional)</label>
-          <input v-model="newProfile.check_ip" type="text" placeholder="Ej: 192.168.88.1" />
+          <label>Check IP (Opcional)</label>
+          <input
+            v-model="newProfile.check_ip"
+            type="text"
+            placeholder="IP interna para monitoreo"
+          />
         </div>
       </div>
-
-      <div class="stack">
-        <div class="config-actions">
-          <button
-            @click="generateAutoConfig"
-            class="btn-qr-scan full-width"
-            :disabled="isGenerating"
-          >
-            <i class="icon">⚡</i>
-            {{ isGenerating ? 'Generando...' : 'Generar Configuración Automática' }}
-          </button>
-
-          <div class="config-status">
-            <div v-if="newProfile.config_data" class="status-group">
-              <div class="status-ok">✅ Configuración lista</div>
-              <button
-                type="button"
-                class="btn-download-link"
-                @click="downloadClientConf"
-                title="Descargar archivo .conf para clientes"
-              >
-                ⬇️ Descargar archivo .conf (para PC o Movil)
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="autoGen" class="auto-box">
-          <div class="auto-box-header" @click="autoBoxOpen = !autoBoxOpen">
-            <div class="status-chip" :class="verify.connected ? 'ok' : 'warn'">
-              <span class="dot"></span>
-              {{ verify.connected ? 'Conectado' : 'Esperando conexión...' }}
-            </div>
-            <div class="grow"></div>
-            <button class="btn-toggle-text" type="button">
-              {{ autoBoxOpen ? 'Ocultar Detalles' : 'Mostrar Detalles' }}
-            </button>
-          </div>
-
-          <transition name="fade">
-            <div v-if="autoBoxOpen" class="auto-inner">
-              <div class="auto-grid">
-                <div><strong>IP Túnel:</strong> {{ autoGen.interface_address }}</div>
-                <div><strong>Endpoint:</strong> {{ autoGen.peer_endpoint }}</div>
-              </div>
-
-              <div class="stack">
-                <label>Script de Instalación (MikroTik)</label>
-                <div class="code-container">
-                  <pre class="code-block">{{ autoGen.mikrotik_cmd }}</pre>
-                  <button class="btn-copy" @click="copyMikrotikScript" title="Copiar">📋</button>
-                </div>
-
-                <div class="actions-row centered">
-                  <button
-                    v-if="!verify.running"
-                    class="btn-secondary small"
-                    @click="startVerifyPolling"
-                  >
-                    Re-verificar estado
-                  </button>
-                  <span v-else class="loading-dots">Verificando</span>
-                </div>
-              </div>
-            </div>
-          </transition>
-        </div>
-      </div>
-
-      <div class="actions-row end">
-        <button
-          class="btn-primary big"
-          :disabled="!newProfile.name.trim() || !isLikelyWgIni(newProfile.config_data) || isSaving"
-          @click="createProfile"
-        >
-          {{ isSaving ? 'Guardando...' : 'Guardar Perfil' }}
+      <div class="actions-row end mt-4">
+        <button class="btn-primary big" @click="createAutoProfile" :disabled="isCreating">
+          {{ isCreating ? 'Generando...' : '✨ Crear Perfil Automático' }}
         </button>
       </div>
     </section>
 
     <section class="control-section">
-      <h2><i class="icon">🗂️</i> Perfiles</h2>
+      <h2><i class="icon">Vg</i> Perfiles Activos</h2>
       <div v-if="isLoading" class="loading-text">Cargando...</div>
-      <div v-else-if="!vpnProfiles.length" class="empty">No hay perfiles creados.</div>
 
-      <ul v-else class="vpn-list">
+      <ul class="vpn-list">
         <li v-for="p in vpnProfiles" :key="p.id" class="vpn-card">
           <div class="vpn-header" @click="p._expanded = !p._expanded">
-            <div class="title">
-              <span class="name">{{ p.name }}</span>
-              <span v-if="p.is_default" class="badge-default">Default</span>
+            <div class="header-info">
+              <strong>{{ p.name }}</strong>
+              <span class="ip-tag" v-if="p.check_ip">{{ p.check_ip }}</span>
             </div>
-            <button class="btn-toggle-text" type="button">
-              {{ p._expanded ? 'Ocultar' : 'Ver' }}
-            </button>
+            <div
+              v-if="inspector.activeProfileId === p.id"
+              class="mini-status"
+              :class="inspector.connected ? 'ok' : 'bad'"
+            >
+              {{ inspector.connected ? 'Online' : '...' }}
+            </div>
+            <button class="btn-toggle-text">{{ p._expanded ? 'Ocultar' : 'Ver Detalles' }}</button>
           </div>
 
           <div v-if="p._expanded" class="vpn-body">
-            <div class="grid-2">
-              <div>
-                <label>Nombre</label>
-                <input v-model="p.name" type="text" />
-              </div>
-              <div>
-                <label>Check IP</label>
-                <input v-model="p.check_ip" type="text" />
-              </div>
-            </div>
-
-            <div class="actions-row">
-              <button class="btn-primary" :disabled="p._saving" @click.stop="saveProfile(p)">
-                Guardar
-              </button>
-              <button class="btn-secondary" :disabled="p._saving" @click.stop="testProfile(p)">
-                Probar Túnel
-              </button>
-              <button class="btn-danger" :disabled="p._saving" @click.stop="deleteProfile(p)">
-                Eliminar
+            <div class="panel-controls">
+              <button class="btn-secondary" @click="downloadConfFile(p.name, p.config_data)">
+                ⬇️ Bajar .conf (PC/Móvil)
               </button>
               <button
-                class="btn-default"
-                v-if="!p.is_default"
-                :disabled="p._saving"
-                @click.stop="setDefault(p)"
+                class="btn-secondary"
+                @click="copyToClipboard(buildMikrotikCmdFromIni(p.config_data))"
               >
-                Hacer Default
+                📋 Copiar Script MikroTik
               </button>
+              <button class="btn-default" @click="checkStatus(p)">
+                {{
+                  inspector.activeProfileId === p.id && inspector.running
+                    ? '⏹ Detener Monitor'
+                    : '📡 Verificar Estado'
+                }}
+              </button>
+              <div class="grow"></div>
+              <button class="btn-danger small" @click="deleteProfile(p)">🗑️ Eliminar</button>
             </div>
+
+            <transition name="fade">
+              <div v-if="inspector.activeProfileId === p.id" class="status-box">
+                <div class="stat">
+                  <span class="label">Estado:</span>
+                  <span class="val" :class="inspector.connected ? 'c-green' : 'c-red'">
+                    {{ inspector.connected ? 'CONECTADO' : 'BUSCANDO...' }}
+                  </span>
+                </div>
+                <div class="stat">
+                  <span class="label">Último Handshake:</span>
+                  <span class="val">{{ inspector.lastHandshake || '--' }}</span>
+                </div>
+                <div class="stat">
+                  <span class="label">Tráfico:</span>
+                  <span class="val"
+                    >⬇️ {{ (inspector.rx / 1024).toFixed(1) }}KB ⬆️
+                    {{ (inspector.tx / 1024).toFixed(1) }}KB</span
+                  >
+                </div>
+                <div class="stat" style="align-self: center">
+                  <button class="btn-text" @click="testReachability(p)">Ping Check IP</button>
+                </div>
+              </div>
+            </transition>
           </div>
         </li>
       </ul>
@@ -544,258 +325,227 @@ onMounted(async () => {
 
 <style scoped>
 :root {
-  --bg-color: #121212;
   --panel: #1b1b1b;
-  --font-color: #eaeaea;
-  --primary-color: #3b82f6;
+  --bg: #121212;
+  --text: #eaeaea;
   --green: #10b981;
-  --border: #333;
+  --red: #ef4444;
+  --blue: #3b82f6;
 }
-
 .page-wrap {
-  color: var(--font-color);
-  max-width: 800px;
+  max-width: 900px;
   margin: 0 auto;
+  color: var(--text);
 }
 .control-section {
   background: var(--panel);
-  padding: 1.5rem;
+  border: 1px solid #333;
   border-radius: 12px;
+  padding: 1.5rem;
   margin-bottom: 1.5rem;
-  border: 1px solid var(--border);
-}
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-top: 1rem;
 }
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
+.mt-4 {
+  margin-top: 1rem;
+}
 
-.full-width {
+input,
+textarea {
   width: 100%;
-  justify-content: center;
-  padding: 0.8rem;
-  font-size: 1rem;
-  background: #2563eb;
-  border: none;
-}
-.full-width:hover {
-  background: #1d4ed8;
-}
-
-/* Barra de estado de configuración */
-.config-status {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.9rem;
-  margin-top: 0.5rem;
-  gap: 1rem;
-}
-.status-group {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-.status-ok {
-  color: var(--green);
-  font-weight: 600;
-}
-
-/* Botón de descarga estilo enlace pero destacado */
-.btn-download-link {
-  background: transparent;
-  border: 1px solid #444;
-  color: #ddd;
-  padding: 0.3rem 0.8rem;
-  border-radius: 4px;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.btn-download-link:hover {
-  background: #333;
-  color: white;
-  border-color: #666;
-}
-
-.code-input {
-  font-family: monospace;
-  font-size: 0.85rem;
   background: #000;
   border: 1px solid #444;
-  color: #ccc;
-}
-
-.code-container {
-  position: relative;
-}
-.code-block {
-  background: #050505;
-  padding: 1rem;
-  border-radius: 6px;
-  border: 1px solid #333;
-  color: #a3e635;
-  font-size: 0.85rem;
-  overflow-x: auto;
-}
-.btn-copy {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-.btn-copy:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-/* Toggle Button Text */
-.btn-toggle-text {
-  background: transparent;
-  border: none;
-  color: #888;
-  font-size: 0.85rem;
-  cursor: pointer;
-  font-weight: 600;
-}
-.btn-toggle-text:hover {
-  color: #bbb;
-}
-
-.actions-row.end {
-  margin-top: 1.5rem;
-  justify-content: flex-end;
-  display: flex;
-}
-.btn-primary.big {
-  padding: 0.8rem 2rem;
-  font-size: 1rem;
-  font-weight: bold;
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: all 0.2s ease;
-  max-height: 500px;
-  opacity: 1;
-}
-.fade-enter-from,
-.fade-leave-to {
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-}
-
-input {
-  width: 100%;
-  background: #262626;
-  border: 1px solid #404040;
-  color: white;
+  color: #fff;
   padding: 0.7rem;
   border-radius: 6px;
 }
 input:focus {
-  outline: 2px solid var(--primary-color);
+  outline: 2px solid var(--blue);
   border-color: transparent;
 }
 
 button {
   cursor: pointer;
+  padding: 0.6rem 1rem;
   border-radius: 6px;
-  color: white;
-  transition: background 0.2s;
+  border: none;
+  font-weight: 600;
+  color: #fff;
+  transition: opacity 0.2s;
+  font-size: 0.9rem;
+}
+button:hover {
+  opacity: 0.9;
 }
 .btn-primary {
-  background: var(--green);
-  border: none;
-  padding: 0.6rem 1rem;
+  background: var(--blue);
 }
-.btn-primary:hover {
-  background: #059669;
+.btn-primary.big {
+  width: 100%;
+  padding: 0.8rem;
+  font-size: 1rem;
 }
 .btn-secondary {
-  background: transparent;
+  background: #333;
   border: 1px solid #555;
   color: #ddd;
-  padding: 0.5rem 1rem;
 }
 .btn-secondary:hover {
-  background: #333;
-}
-.btn-danger {
-  background: #ef4444;
-  border: none;
-  padding: 0.5rem 1rem;
+  background: #444;
 }
 .btn-default {
   background: #4b5563;
-  border: none;
-  padding: 0.5rem 1rem;
+}
+.btn-danger {
+  background: var(--red);
+}
+.btn-text {
+  background: none;
+  color: var(--blue);
+  text-decoration: underline;
+  padding: 0;
+}
+.btn-toggle-text {
+  background: transparent;
+  color: #888;
+  font-size: 0.85rem;
+}
+.btn-toggle-text:hover {
+  color: #bbb;
 }
 
 .vpn-list {
   list-style: none;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
 }
 .vpn-card {
-  background: #262626;
-  border-radius: 8px;
-  overflow: hidden;
+  background: #222;
   border: 1px solid #333;
+  border-radius: 8px;
+  margin-bottom: 0.8rem;
+  overflow: hidden;
 }
 .vpn-header {
   padding: 1rem;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   cursor: pointer;
   background: #2a2a2a;
 }
 .vpn-header:hover {
   background: #333;
 }
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ip-tag {
+  background: #444;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #ccc;
+  font-family: monospace;
+}
 .vpn-body {
   padding: 1.5rem;
   border-top: 1px solid #333;
   background: #202020;
 }
-.badge-default {
-  background: #f59e0b;
-  color: black;
+
+.panel-controls {
+  display: flex;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+  align-items: center;
+}
+.grow {
+  flex: 1;
+}
+
+.status-box {
+  background: #151515;
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid #333;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1.5rem;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.stat .label {
+  font-size: 0.75rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.stat .val {
+  font-weight: bold;
+  font-size: 0.95rem;
+  font-family: monospace;
+}
+.c-green {
+  color: var(--green);
+}
+.c-red {
+  color: var(--red);
+}
+
+.mini-status {
+  font-size: 0.75rem;
+  font-weight: bold;
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: bold;
-  margin-left: 0.5rem;
+}
+.mini-status.ok {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.1);
+}
+.mini-status.bad {
+  color: #888;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.loading-text,
+.empty {
+  color: #777;
+  text-align: center;
+  padding: 1rem;
 }
 
 .notification {
   position: fixed;
   bottom: 20px;
   right: 20px;
-  padding: 1rem;
+  padding: 1rem 1.5rem;
   border-radius: 8px;
-  color: white;
+  color: #fff;
   font-weight: bold;
   z-index: 9999;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .notification.success {
   background: var(--green);
 }
 .notification.error {
-  background: #ef4444;
+  background: var(--red);
 }
 </style>
