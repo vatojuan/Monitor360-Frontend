@@ -223,7 +223,6 @@ async function generateAutoConfig() {
   }
 }
 
-// --- NUEVO: Función para descargar .conf ---
 function downloadClientConf() {
   const content = newProfile.value.config_data
   if (!content) return showNotification('No hay configuración para descargar.', 'error')
@@ -355,7 +354,6 @@ async function copyMikrotikScript() {
     await copyToClipboard(autoGen.value.mikrotik_cmd)
     showNotification('Copiado.', 'success')
   } catch (e) {
-    // FIX ESLINT: Usamos 'e' para mostrar el error
     showNotification(getAxiosErr(e), 'error')
   }
 }
@@ -419,41 +417,18 @@ onMounted(async () => {
 
           <div class="config-status">
             <div v-if="newProfile.config_data" class="status-group">
-              <div v-if="!showConfig" class="status-ok">✅ Configuración lista</div>
+              <div class="status-ok">✅ Configuración lista</div>
               <button
                 type="button"
                 class="btn-download-link"
                 @click="downloadClientConf"
                 title="Descargar archivo .conf para clientes"
               >
-                ⬇️ Descargar archivo .conf
+                ⬇️ Descargar archivo .conf (para PC o Movil)
               </button>
             </div>
-
-            <a href="#" @click.prevent="showConfig = !showConfig" class="link-toggle">
-              {{
-                showConfig
-                  ? 'Ocultar configuración manual'
-                  : newProfile.config_data
-                    ? 'Ver configuración técnica'
-                    : 'Editar configuración manualmente'
-              }}
-            </a>
           </div>
         </div>
-
-        <transition name="fade">
-          <div v-if="showConfig">
-            <label>Configuración WireGuard (INI)</label>
-            <textarea
-              v-model="newProfile.config_data"
-              rows="10"
-              spellcheck="false"
-              class="code-input"
-              placeholder="[Interface]..."
-            />
-          </div>
-        </transition>
 
         <div v-if="autoGen" class="auto-box">
           <div class="auto-box-header" @click="autoBoxOpen = !autoBoxOpen">
@@ -648,17 +623,6 @@ onMounted(async () => {
   background: #333;
   color: white;
   border-color: #666;
-}
-
-.link-toggle {
-  color: #60a5fa;
-  text-decoration: none;
-  font-size: 0.85rem;
-  border-bottom: 1px dashed #60a5fa;
-}
-.link-toggle:hover {
-  color: #93c5fd;
-  border-bottom-style: solid;
 }
 
 .code-input {
