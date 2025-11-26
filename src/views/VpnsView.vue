@@ -1,12 +1,11 @@
 <script setup>
-import { ref, onBeforeUnmount, onMounted } from 'vue'
+import { ref, onBeforeUnmount, onMounted, watch } from 'vue'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
 
 /* ====== Helpers ====== */
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
-// Parsea el INI para extraer datos clave (endpoint, keys) y armar el script de MikroTik en el frontend
 function parseWgIni(iniText) {
   const res = {
     privateKey: '',
@@ -45,23 +44,66 @@ function parseWgIni(iniText) {
   return res
 }
 
+function proposeProfileName(iniText) {
+  try {
+    const conf = parseWgIni(iniText)
+    if (conf.address && conf.endpoint) return `${conf.address.split('/')[0]} @ ${conf.endpoint}`
+    if (conf.endpoint) return conf.endpoint
+    if (conf.address) return conf.address.split('/')[0]
+  } catch (e) {
+    // Usamos 'e' para evitar error de linter
+    console.debug('Error proponiendo nombre:', e)
+    return ''
+  }
+  return ''
+}
+
 function buildMikrotikCmdFromIni(iniText, clientPrivKeyOverride = null) {
   const conf = parseWgIni(iniText)
-  if (!conf.address || !conf.serverPublicKey || !conf.endpoint) return ''
+  if (!conf.address || !conf.serverPublicKey || !conf.endpoint)
+    return '# Error: Configuración incompleta.'
 
   const privKey = clientPrivKeyOverride || conf.privateKey
   const [host, port] = conf.endpoint.split(':')
+  const ifaceName = 'wg-m360'
+  const comment = 'Monitor360 VPN'
+  const portVal = port || 51820
+  const allowed = conf.allowedIps || '0.0.0.0/0'
 
   return [
-    '# --- Configuración para MikroTik ---',
-    `/interface/wireguard add name=wg-m360 comment="Monitor360 VPN" private-key="${privKey}"`,
-    `/ip/address add address=${conf.address} interface=wg-m360`,
-    `/interface/wireguard/peers add interface=wg-m360 public-key="${conf.serverPublicKey}" endpoint-address=${host} endpoint-port=${port || 51820} allowed-address=${conf.allowedIps || '0.0.0.0/0'} persistent-keepalive=25`,
+    `# === Configuración Cliente MikroTik (${comment}) ===`,
+    '',
+    '# 1. Limpieza previa',
+    `/interface/wireguard/remove [find where name="${ifaceName}"]`,
+    `/ip/address/remove [find where interface="${ifaceName}"]`,
+    `/interface/wireguard/peers/remove [find where interface="${ifaceName}"]`,
+    '',
+    '# 2. Crear Interfaz',
+    `/interface/wireguard/add name="${ifaceName}" comment="${comment}" private-key="${privKey}" listen-port=13231`,
+    '',
+    '# 3. Asignar IP',
+    `/ip/address/add address="${conf.address}" interface="${ifaceName}" comment="${comment}"`,
+    '',
+    '# 4. Configurar Peer',
+    `/interface/wireguard/peers/add interface="${ifaceName}" public-key="${conf.serverPublicKey}" endpoint-address="${host}" endpoint-port=${portVal} allowed-address="${allowed}" persistent-keepalive=25 comment="${comment}"`,
+    '',
+    '# 5. Reglas de Firewall',
+    `/ip/firewall/filter/remove [find where comment="Monitor360 WG in"]`,
+    `/ip/firewall/filter/remove [find where comment="Monitor360 WG out"]`,
+    `/ip/firewall/filter/add chain=forward in-interface="${ifaceName}" action=accept comment="Monitor360 WG in" place-before=0`,
+    `/ip/firewall/filter/add chain=forward out-interface="${ifaceName}" action=accept comment="Monitor360 WG out" place-before=0`,
+    '',
+    '# Fin.',
   ].join('\n')
 }
 
 async function copyToClipboard(text) {
-  await navigator.clipboard.writeText(text)
+  try {
+    await navigator.clipboard.writeText(text)
+    showNotification('📋 Script copiado al portapapeles', 'success')
+  } catch (e) {
+    showNotification(getAxiosErr(e), 'error')
+  }
 }
 
 function downloadConfFile(name, content) {
@@ -78,7 +120,7 @@ function downloadConfFile(name, content) {
 }
 
 /* ====== Estado UI ====== */
-const newProfile = ref({ name: '', check_ip: '' })
+const newProfile = ref({ name: '', check_ip: '', config_data: '' })
 const vpnProfiles = ref([])
 const isLoading = ref(false)
 const isCreating = ref(false)
@@ -156,10 +198,8 @@ async function createAutoProfile() {
   isCreating.value = true
 
   try {
-    // 1. Dry Run: obtener configuración sugerida
     const { data: autoData } = await api.post('/vpns/mikrotik-auto', { interface: 'm360-srv0' })
 
-    // 2. Crear Real: guardar en BD y activar en WG
     const payload = {
       name: newProfile.value.name,
       check_ip: newProfile.value.check_ip || autoData.interface_address?.split('/')[0],
@@ -168,9 +208,8 @@ async function createAutoProfile() {
 
     const { data: savedProfile } = await api.post('/vpns', payload)
 
-    // 3. Actualizar UI
     vpnProfiles.value.unshift({ ...savedProfile, _expanded: true })
-    newProfile.value = { name: '', check_ip: '' }
+    newProfile.value = { name: '', check_ip: '', config_data: '' }
     showNotification('Perfil creado y activado.', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
@@ -207,6 +246,16 @@ async function testReachability(profile) {
   }
 }
 
+async function copyMikrotikScript(configData) {
+  try {
+    const script = buildMikrotikCmdFromIni(configData)
+    if (!script) throw new Error('No se pudo generar el script.')
+    await copyToClipboard(script)
+  } catch (e) {
+    showNotification(getAxiosErr(e), 'error')
+  }
+}
+
 // Notificaciones
 const notification = ref({ show: false, message: '', type: '' })
 function showNotification(msg, type = 'success') {
@@ -214,8 +263,41 @@ function showNotification(msg, type = 'success') {
   setTimeout(() => (notification.value.show = false), 4000)
 }
 
-onMounted(fetchVpnProfiles)
-onBeforeUnmount(stopInspector)
+// Variables WS
+let wsUnsubRot = null
+
+onBeforeUnmount(() => {
+  stopInspector()
+  if (wsUnsubRot) removeWsListener(wsUnsubRot)
+})
+
+onMounted(async () => {
+  await fetchVpnProfiles()
+
+  // Watch para autocompletar nombre si se edita a mano (si volviéramos a mostrar el campo)
+  watch(
+    () => newProfile.value.config_data,
+    (val, old) => {
+      if (!old && val && !newProfile.value.name.trim()) {
+        const suggested = proposeProfileName(val)
+        if (suggested) newProfile.value.name = suggested.slice(0, 80)
+      }
+    },
+    { flush: 'post' },
+  )
+
+  // WebSocket para eventos en tiempo real
+  try {
+    await connectWebSocketWhenAuthenticated()
+    wsUnsubRot = addWsListener((msg) => {
+      if (msg?.type === 'device_credential_rotated') {
+        console.log('Rotación detectada:', msg)
+      }
+    })
+  } catch (e) {
+    console.error('WS error:', e)
+  }
+})
 </script>
 
 <template>
@@ -246,7 +328,7 @@ onBeforeUnmount(stopInspector)
     </section>
 
     <section class="control-section">
-      <h2><i class="icon">Vg</i> Perfiles Activos</h2>
+      <h2><i class="icon">📡</i> Perfiles Activos</h2>
       <div v-if="isLoading" class="loading-text">Cargando...</div>
 
       <ul class="vpn-list">
@@ -271,10 +353,7 @@ onBeforeUnmount(stopInspector)
               <button class="btn-secondary" @click="downloadConfFile(p.name, p.config_data)">
                 ⬇️ Bajar .conf (PC/Móvil)
               </button>
-              <button
-                class="btn-secondary"
-                @click="copyToClipboard(buildMikrotikCmdFromIni(p.config_data))"
-              >
+              <button class="btn-secondary" @click="copyMikrotikScript(p.config_data)">
                 📋 Copiar Script MikroTik
               </button>
               <button class="btn-default" @click="checkStatus(p)">
@@ -312,6 +391,25 @@ onBeforeUnmount(stopInspector)
                 </div>
               </div>
             </transition>
+
+            <details class="tech-details">
+              <summary>Ver Script y Configuración</summary>
+              <div class="grid-2">
+                <div>
+                  <label>Script MikroTik Generado</label>
+                  <textarea
+                    readonly
+                    :value="buildMikrotikCmdFromIni(p.config_data)"
+                    rows="8"
+                    class="code-area"
+                  ></textarea>
+                </div>
+                <div>
+                  <label>Archivo .conf</label>
+                  <textarea readonly :value="p.config_data" rows="8" class="code-area"></textarea>
+                </div>
+              </div>
+            </details>
           </div>
         </li>
       </ul>
@@ -365,6 +463,15 @@ textarea {
 input:focus {
   outline: 2px solid var(--blue);
   border-color: transparent;
+}
+
+/* Textareas de código estilo consola */
+.code-area {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.8rem;
+  color: #a3e635;
+  background: #0a0a0a;
+  border: 1px solid #333;
 }
 
 button {
@@ -422,8 +529,8 @@ button:hover {
   padding: 0;
 }
 .vpn-card {
-  background: #222;
-  border: 1px solid #333;
+  background: #232323;
+  border: 1px solid #3a3a3a;
   border-radius: 8px;
   margin-bottom: 0.8rem;
   overflow: hidden;
@@ -455,7 +562,7 @@ button:hover {
 .vpn-body {
   padding: 1.5rem;
   border-top: 1px solid #333;
-  background: #202020;
+  background: #1e1e1e;
 }
 
 .panel-controls {
@@ -477,6 +584,7 @@ button:hover {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 1.5rem;
+  margin-bottom: 1.5rem;
 }
 .stat {
   display: flex;
@@ -513,6 +621,13 @@ button:hover {
 }
 .mini-status.bad {
   color: #888;
+}
+
+.tech-details summary {
+  cursor: pointer;
+  color: #888;
+  margin-bottom: 0.8rem;
+  font-size: 0.9rem;
 }
 
 .fade-enter-active,
