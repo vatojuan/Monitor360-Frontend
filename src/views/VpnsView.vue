@@ -68,7 +68,7 @@ const isLoading = ref(false)
 const isSaving = ref(false)
 const isGenerating = ref(false)
 const autoGen = ref(null)
-const showConfig = ref(false) // <--- NUEVO: Controla si se ve el textarea
+const showConfig = ref(false)
 
 const autoBoxOpen = ref(true)
 
@@ -210,7 +210,7 @@ async function generateAutoConfig() {
     }
 
     autoBoxOpen.value = true
-    showConfig.value = false // Mantener limpia la UI
+    showConfig.value = false
     showNotification('Configuración generada correctamente.', 'success')
 
     stopVerifyPolling()
@@ -221,6 +221,25 @@ async function generateAutoConfig() {
   } finally {
     isGenerating.value = false
   }
+}
+
+// --- NUEVO: Función para descargar .conf ---
+function downloadClientConf() {
+  const content = newProfile.value.config_data
+  if (!content) return showNotification('No hay configuración para descargar.', 'error')
+
+  const name = (newProfile.value.name || 'wireguard-client').replace(/\s+/g, '_')
+  const filename = `${name}.conf`
+
+  const blob = new Blob([content], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 async function fetchVpnProfiles() {
@@ -241,7 +260,6 @@ async function fetchVpnProfiles() {
 }
 
 async function createProfile() {
-  // Validación básica
   if (!newProfile.value.name.trim()) return showNotification('Falta el nombre.', 'error')
   if (!isLikelyWgIni(newProfile.value.config_data))
     return showNotification('Falta la configuración válida.', 'error')
@@ -273,7 +291,6 @@ async function createProfile() {
   }
 }
 
-/* Resto de funciones (save, delete, etc) igual que antes... */
 async function saveProfile(profile) {
   if (profile._saving) return
   if (!isLikelyWgIni(profile.config_data)) return showNotification('Config inválida.', 'error')
@@ -338,7 +355,7 @@ async function copyMikrotikScript() {
     await copyToClipboard(autoGen.value.mikrotik_cmd)
     showNotification('Copiado.', 'success')
   } catch (e) {
-    // AHORA SÍ usamos 'e' para mostrar el detalle del error
+    // FIX ESLINT: Usamos 'e' para mostrar el error
     showNotification(getAxiosErr(e), 'error')
   }
 }
@@ -401,9 +418,18 @@ onMounted(async () => {
           </button>
 
           <div class="config-status">
-            <div v-if="newProfile.config_data && !showConfig" class="status-ok">
-              ✅ Configuración cargada y lista
+            <div v-if="newProfile.config_data" class="status-group">
+              <div v-if="!showConfig" class="status-ok">✅ Configuración lista</div>
+              <button
+                type="button"
+                class="btn-download-link"
+                @click="downloadClientConf"
+                title="Descargar archivo .conf para clientes"
+              >
+                ⬇️ Descargar archivo .conf
+              </button>
             </div>
+
             <a href="#" @click.prevent="showConfig = !showConfig" class="link-toggle">
               {{
                 showConfig
@@ -436,8 +462,8 @@ onMounted(async () => {
               {{ verify.connected ? 'Conectado' : 'Esperando conexión...' }}
             </div>
             <div class="grow"></div>
-            <button class="btn-toggle" type="button">
-              {{ autoBoxOpen ? '🔼' : '🔽' }}
+            <button class="btn-toggle-text" type="button">
+              {{ autoBoxOpen ? 'Ocultar Detalles' : 'Mostrar Detalles' }}
             </button>
           </div>
 
@@ -494,7 +520,7 @@ onMounted(async () => {
               <span class="name">{{ p.name }}</span>
               <span v-if="p.is_default" class="badge-default">Default</span>
             </div>
-            <button class="btn-toggle" type="button">
+            <button class="btn-toggle-text" type="button">
               {{ p._expanded ? 'Ocultar' : 'Ver' }}
             </button>
           </div>
@@ -542,12 +568,11 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* Estilos base iguales, mejoras visuales aquí: */
 :root {
   --bg-color: #121212;
   --panel: #1b1b1b;
   --font-color: #eaeaea;
-  --primary-color: #3b82f6; /* Azul más moderno */
+  --primary-color: #3b82f6;
   --green: #10b981;
   --border: #333;
 }
@@ -576,7 +601,6 @@ onMounted(async () => {
   gap: 1rem;
 }
 
-/* Botón Generar destacado */
 .full-width {
   width: 100%;
   justify-content: center;
@@ -589,18 +613,43 @@ onMounted(async () => {
   background: #1d4ed8;
 }
 
-/* Toggle link */
+/* Barra de estado de configuración */
 .config-status {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   font-size: 0.9rem;
   margin-top: 0.5rem;
+  gap: 1rem;
+}
+.status-group {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 .status-ok {
   color: var(--green);
   font-weight: 600;
 }
+
+/* Botón de descarga estilo enlace pero destacado */
+.btn-download-link {
+  background: transparent;
+  border: 1px solid #444;
+  color: #ddd;
+  padding: 0.3rem 0.8rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-download-link:hover {
+  background: #333;
+  color: white;
+  border-color: #666;
+}
+
 .link-toggle {
   color: #60a5fa;
   text-decoration: none;
@@ -612,7 +661,6 @@ onMounted(async () => {
   border-bottom-style: solid;
 }
 
-/* Code Input oculto/visible */
 .code-input {
   font-family: monospace;
   font-size: 0.85rem;
@@ -621,7 +669,6 @@ onMounted(async () => {
   color: #ccc;
 }
 
-/* Script Box */
 .code-container {
   position: relative;
 }
@@ -648,7 +695,19 @@ onMounted(async () => {
   background: rgba(255, 255, 255, 0.2);
 }
 
-/* Botón Guardar Grande */
+/* Toggle Button Text */
+.btn-toggle-text {
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn-toggle-text:hover {
+  color: #bbb;
+}
+
 .actions-row.end {
   margin-top: 1.5rem;
   justify-content: flex-end;
@@ -660,7 +719,6 @@ onMounted(async () => {
   font-weight: bold;
 }
 
-/* Transiciones */
 .fade-enter-active,
 .fade-leave-active {
   transition: all 0.2s ease;
@@ -674,7 +732,6 @@ onMounted(async () => {
   overflow: hidden;
 }
 
-/* Inputs generales */
 input {
   width: 100%;
   background: #262626;
@@ -688,7 +745,6 @@ input:focus {
   border-color: transparent;
 }
 
-/* Botones generales */
 button {
   cursor: pointer;
   border-radius: 6px;
@@ -723,7 +779,6 @@ button {
   padding: 0.5rem 1rem;
 }
 
-/* Listado */
 .vpn-list {
   list-style: none;
   padding: 0;
