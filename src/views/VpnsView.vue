@@ -6,7 +6,7 @@ import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } fr
 /* ====== Helpers ====== */
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
-// Parsea el INI para extraer datos clave
+// FIX: Parseo robusto que no rompe las claves que terminan en '='
 function parseWgIni(iniText) {
   const res = {
     privateKey: '',
@@ -24,12 +24,15 @@ function parseWgIni(iniText) {
 
   for (let line of lines) {
     line = line.trim()
+    if (!line || line.startsWith(';') || line.startsWith('#')) continue
+
     if (line.startsWith('[')) {
       section = line.toLowerCase()
     } else if (line.includes('=')) {
-      let [k, v] = line.split('=', 2)
-      k = k.trim().toLowerCase()
-      v = v.trim()
+      // USAMOS INDEXOF para partir solo en el primer '='
+      const eqIdx = line.indexOf('=')
+      const k = line.substring(0, eqIdx).trim().toLowerCase()
+      const v = line.substring(eqIdx + 1).trim()
 
       if (section === '[interface]') {
         if (k === 'privatekey') res.privateKey = v
@@ -45,23 +48,20 @@ function parseWgIni(iniText) {
   return res
 }
 
-// --- SCRIPT MIKROTIK CORREGIDO (Sintaxis CLI con espacios) ---
+// --- SCRIPT MIKROTIK (Sintaxis CLI con espacios) ---
 function buildMikrotikCmdFromIni(iniText, clientPrivKeyOverride = null) {
   const conf = parseWgIni(iniText)
-  // Validación básica
   if (!conf.address || !conf.serverPublicKey || !conf.endpoint)
     return '# Error: Configuración incompleta en el perfil.'
 
   const privKey = clientPrivKeyOverride || conf.privateKey
   const [host, port] = conf.endpoint.split(':')
 
-  // Variables para el script
   const iface = 'wg-m360'
   const comment = 'Monitor360 VPN'
   const portVal = port || 51820
   const allowed = conf.allowedIps || '0.0.0.0/0'
 
-  // Usamos sintaxis con ESPACIOS (ej: /interface wireguard add) que es la estándar para Terminal/Winbox
   return [
     `# === Configuración Cliente MikroTik (${comment}) ===`,
     '',
@@ -99,7 +99,6 @@ async function copyToClipboard(text) {
     await navigator.clipboard.writeText(text)
     showNotification('📋 Script copiado al portapapeles', 'success')
   } catch (e) {
-    // Usamos 'e' para que el linter no se queje y para loguear si es necesario
     console.error(e)
     showNotification('Error al copiar al portapapeles', 'error')
   }
@@ -245,44 +244,31 @@ async function testReachability(profile) {
   }
 }
 
+async function copyMikrotikScript(configData) {
+  try {
+    const script = buildMikrotikCmdFromIni(configData)
+    if (!script) throw new Error('No se pudo generar el script.')
+    await copyToClipboard(script)
+  } catch (e) {
+    showNotification(getAxiosErr(e), 'error')
+  }
+}
+
+// Notificaciones
 const notification = ref({ show: false, message: '', type: '' })
 function showNotification(msg, type = 'success') {
   notification.value = { show: true, message: msg, type }
   setTimeout(() => (notification.value.show = false), 4000)
 }
 
-onMounted(fetchVpnProfiles)
-onBeforeUnmount(stopInspector)
-
-// Configuración WS
+// Variables WS
 let wsUnsubRot = null
-onMounted(async () => {
-  // Watch para autocompletar nombre si se edita a mano (si volviéramos a mostrar el campo)
-  watch(
-    () => newProfile.value.config_data,
-    (val, old) => {
-      if (!old && val && !newProfile.value.name.trim()) {
-        const suggested = proposeProfileName(val)
-        if (suggested) newProfile.value.name = suggested.slice(0, 80)
-      }
-    },
-    { flush: 'post' },
-  )
 
-  try {
-    await connectWebSocketWhenAuthenticated()
-    wsUnsubRot = addWsListener((msg) => {
-      if (msg?.type === 'device_credential_rotated') {
-        console.log('Rotación:', msg)
-      }
-    })
-  } catch (e) {
-    void e
-  }
-})
 onBeforeUnmount(() => {
+  stopInspector()
   if (wsUnsubRot) removeWsListener(wsUnsubRot)
 })
+
 // Funciones auxiliares para proposeProfileName (para que el watch funcione)
 function proposeProfileName(iniText) {
   try {
@@ -296,6 +282,34 @@ function proposeProfileName(iniText) {
   }
   return ''
 }
+
+onMounted(async () => {
+  await fetchVpnProfiles()
+
+  // Watch para autocompletar nombre (si volviéramos a mostrar el campo editable)
+  watch(
+    () => newProfile.value.config_data,
+    (val, old) => {
+      if (!old && val && !newProfile.value.name.trim()) {
+        const suggested = proposeProfileName(val)
+        if (suggested) newProfile.value.name = suggested.slice(0, 80)
+      }
+    },
+    { flush: 'post' },
+  )
+
+  // WebSocket
+  try {
+    await connectWebSocketWhenAuthenticated()
+    wsUnsubRot = addWsListener((msg) => {
+      if (msg?.type === 'device_credential_rotated') {
+        console.log('Rotación detectada:', msg)
+      }
+    })
+  } catch (e) {
+    console.error('WS error:', e)
+  }
+})
 </script>
 
 <template>
@@ -341,7 +355,7 @@ function proposeProfileName(iniText) {
               class="mini-status"
               :class="inspector.connected ? 'ok' : 'bad'"
             >
-              {{ inspector.connected ? 'Online' : '...' }}
+              {{ inspector.connected ? 'Online' : 'Offline' }}
             </div>
             <button class="btn-toggle-text">{{ p._expanded ? 'Ocultar' : 'Ver Detalles' }}</button>
           </div>
@@ -351,10 +365,7 @@ function proposeProfileName(iniText) {
               <button class="btn-secondary" @click="downloadConfFile(p.name, p.config_data)">
                 ⬇️ Bajar .conf (PC/Móvil)
               </button>
-              <button
-                class="btn-secondary"
-                @click="copyToClipboard(buildMikrotikCmdFromIni(p.config_data))"
-              >
+              <button class="btn-secondary" @click="copyMikrotikScript(p.config_data)">
                 📋 Copiar Script MikroTik
               </button>
               <button class="btn-default" @click="checkStatus(p)">
@@ -423,7 +434,6 @@ function proposeProfileName(iniText) {
 </template>
 
 <style scoped>
-/* Estilos depurados y mejorados */
 :root {
   --panel: #1b1b1b;
   --bg: #121212;
@@ -530,10 +540,10 @@ button:hover {
   list-style: none;
   padding: 0;
 }
-/* Fondo de tarjeta mejorado para contraste */
+/* Fondo de tarjeta suavizado, menos negro puro */
 .vpn-card {
-  background: #232323;
-  border: 1px solid #3a3a3a;
+  background: #222;
+  border: 1px solid #333;
   border-radius: 8px;
   margin-bottom: 0.8rem;
   overflow: hidden;
