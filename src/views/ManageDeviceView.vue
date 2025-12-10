@@ -166,7 +166,8 @@ function resetAddForm() {
 async function promoteToMaestro(device) {
   if (!confirm(`¿Promover a "${device.client_name}" como Maestro?`)) return
   try {
-    await api.put(`/devices/${device.id}/promote`) // ⬅️ sin /api
+    // Agregamos , {} para enviar un JSON vacío y evitar errores de red
+    await api.put(`/devices/${device.id}/promote`, {})
     showNotification(`${device.client_name} ahora es Maestro.`, 'success')
     fetchAllDevices()
   } catch (err) {
