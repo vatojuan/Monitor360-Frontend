@@ -12,6 +12,14 @@ const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const sensorDetailsToShow = ref(null)
 
+// --- DEBUG VISUAL ---
+const debugMessages = ref([])
+function addDebug(msg) {
+  // Guardamos últimos 5 mensajes para depurar en pantalla
+  debugMessages.value = [msg, ...debugMessages.value].slice(0, 5)
+}
+// --------------------
+
 // --- Canales (para mostrar nombre en alertas) ---
 const channelsById = ref({})
 
@@ -27,21 +35,6 @@ async function ensureChannelsLoaded() {
   } catch (e) {
     if (import.meta?.env?.DEV) {
       console.error('Error cargando canales:', e?.message || e)
-    }
-  }
-}
-
-// DEBUG: ver lo que llega por WS
-const lastWsEvents = ref([]) // [{t, k, payload}]
-function pushWsEvent(k, payload) {
-  try {
-    lastWsEvents.value = [
-      { t: new Date().toISOString(), k, payload },
-      ...lastWsEvents.value.slice(0, 19),
-    ]
-  } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.debug('[WS] pushWsEvent error:', err?.message || err)
     }
   }
 }
@@ -62,10 +55,7 @@ function toDisplay(v) {
     if (v == null) return '—'
     if (typeof v === 'object') return JSON.stringify(v, null, 2)
     return String(v)
-  } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.warn('toDisplay err:', err?.message || err)
-    }
+  } catch {
     return String(v)
   }
 }
@@ -126,7 +116,12 @@ function normalizeWsPayload(raw) {
     }
 
     // Mensajes de control
-    if (raw.type === 'welcome' || raw.type === 'ready' || raw.type === 'pong') {
+    if (
+      raw.type === 'welcome' ||
+      raw.type === 'ready' ||
+      raw.type === 'pong' ||
+      raw.type === 'hello'
+    ) {
       return []
     }
 
@@ -154,7 +149,6 @@ function trySubscribeSensors() {
   const ids = currentSensorIds()
   if (!ids.length) return
 
-  // Evitar enviar suscripción idéntica
   const same =
     ids.length === lastSubscribedIds.value.length &&
     ids.every((v, i) => v === lastSubscribedIds.value[i])
@@ -163,13 +157,9 @@ function trySubscribeSensors() {
   try {
     ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
     lastSubscribedIds.value = ids.slice()
-    if (import.meta?.env?.DEV) {
-      console.debug('[WS] subscribe_sensors:', ids)
-    }
+    addDebug(`Suscrito a: ${ids.join(',')}`)
   } catch (e) {
-    if (import.meta?.env?.DEV) {
-      console.debug('[WS] subscribe_sensors failed:', e?.message || e)
-    }
+    console.debug('[WS] subscribe error:', e)
   }
 }
 
@@ -188,31 +178,27 @@ function wireWsSyncAndSubs() {
   const sendSyncAndSubs = () => {
     try {
       ws.send(JSON.stringify({ type: 'sync_request', resource: 'sensors_latest' }))
-    } catch (err) {
-      if (import.meta?.env?.DEV) {
-        console.debug('[WS] sync_request failed:', err?.message || err)
-      }
+      addDebug('Enviado sync_request')
+    } catch {
+      /* ignore */
     }
     trySubscribeSensors()
   }
 
-  // Si ya está abierto, disparar ahora
   if (ws.readyState === WebSocket.OPEN) {
     sendSyncAndSubs()
   }
 
-  // Y también en cada reconexión
   const onOpen = () => {
+    addDebug('WS Open')
     sendSyncAndSubs()
   }
   ws.addEventListener('open', onOpen)
   wsOpenUnbind = () => {
     try {
       ws.removeEventListener('open', onOpen)
-    } catch (err) {
-      if (import.meta?.env?.DEV) {
-        console.debug('[WS] removeEventListener open failed:', err?.message || err)
-      }
+    } catch {
+      /* ignore */
     }
   }
 }
@@ -221,29 +207,26 @@ function wireWsSyncAndSubs() {
 let offBus = null
 function attachBusListener() {
   offBus = addWsListener((parsed) => {
-    // Traza
-    const kind =
-      parsed?.type ?? (Array.isArray(parsed) ? 'array' : (parsed && typeof parsed) || 'unknown')
-    pushWsEvent(kind, parsed)
+    // Traza debug visual
+    const kind = parsed?.type ?? 'unknown'
+    // Solo logueamos si no es un simple pong para no saturar
+    if (kind !== 'pong') {
+      const updatesCount = normalizeWsPayload(parsed).length
+      if (updatesCount > 0) {
+        addDebug(`RX: ${updatesCount} updates (tipo: ${kind})`)
+      }
+    }
 
-    // Normalizar a array de updates
+    // Normalizar
     const updates = normalizeWsPayload(parsed)
     if (!updates.length) return
 
-    // Actualización GRANULAR para no romper la reactividad
+    // Aplicar reactivamente
     for (const u of updates) {
       if (u && u.sensor_id != null) {
-        // Forzamos ID a string para evitar problemas de tipos
         const sid = String(u.sensor_id)
-
-        // Debug temporal
-        console.log(`[Dashboard] Update recibido para sensor ${sid}:`, u)
-
-        if (!liveSensorStatus.value[sid]) {
-          liveSensorStatus.value[sid] = {}
-        }
-        // Mergeamos propiedades nuevas sobre el objeto existente
-        Object.assign(liveSensorStatus.value[sid], u)
+        const currentData = liveSensorStatus.value[sid] || {}
+        liveSensorStatus.value[sid] = { ...currentData, ...u }
       }
     }
   })
@@ -251,56 +234,32 @@ function attachBusListener() {
 
 /* ====================== mounted / unmounted ========================= */
 onMounted(async () => {
-  // Asegurar sesión antes de cargar y abrir WS
   try {
     await waitForSession({ requireAuth: true, timeoutMs: 8000 })
-  } catch (e) {
-    if (import.meta?.env?.DEV) {
-      console.warn('[Auth] No hay sesión, redirigiendo a /login:', e?.message || e)
-    }
+  } catch {
     try {
       router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
-    } catch (err) {
-      if (import.meta?.env?.DEV) {
-        console.debug('[Router] push /login fallo:', err?.message || err)
-      }
+    } catch {
+      /* ignore */
     }
     return
   }
 
   await fetchAllMonitors()
 
-  // Conecta WS global (idempotente) y cablea bus + subs
   try {
     await connectWebSocketWhenAuthenticated()
-  } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.warn('[WS] connectWhenAuthenticated falló (continuamos):', err?.message || err)
-    }
+  } catch {
+    /* ignore */
   }
+
   attachBusListener()
   wireWsSyncAndSubs()
 })
 
 onUnmounted(() => {
-  if (typeof offBus === 'function') {
-    try {
-      offBus()
-    } catch (e) {
-      if (import.meta?.env?.DEV) {
-        console.debug('[WS] offBus error:', e?.message || e)
-      }
-    }
-  }
-  if (typeof wsOpenUnbind === 'function') {
-    try {
-      wsOpenUnbind()
-    } catch (e) {
-      if (import.meta?.env?.DEV) {
-        console.debug('[WS] wsOpenUnbind error:', e?.message || e)
-      }
-    }
-  }
+  if (typeof offBus === 'function') offBus()
+  if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
 })
 
 /* ====================== API helpers ========================= */
@@ -309,22 +268,17 @@ async function fetchAllMonitors() {
     const { data } = await api.get('/monitors')
     monitors.value = Array.isArray(data) ? data : []
 
-    // Inicializar estados "pending" para sensores sin datos aún
     monitors.value.forEach((m) => {
       ;(m.sensors || []).forEach((s) => {
-        const sid = String(s.id) // Normalizar ID a string
+        const sid = String(s.id)
         if (!liveSensorStatus.value[sid]) {
           liveSensorStatus.value[sid] = { status: 'pending' }
         }
       })
     })
-
-    // intentar suscribir (por si el WS ya está abierto)
     trySubscribeSensors()
   } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.error('Error fetching monitors:', err?.message || err)
-    }
+    console.error('Error fetching monitors:', err)
     monitors.value = []
   }
 }
@@ -340,10 +294,8 @@ async function confirmDeleteMonitor() {
   try {
     await api.delete(`/monitors/${monitorToDelete.value.monitor_id}`)
     monitors.value = monitors.value.filter((m) => m.monitor_id !== monitorToDelete.value.monitor_id)
-  } catch (err) {
-    if (import.meta?.env?.DEV) {
-      console.error('Error deleting monitor:', err?.message || err)
-    }
+  } catch {
+    /* ignore */
   } finally {
     monitorToDelete.value = null
   }
@@ -352,8 +304,8 @@ async function confirmDeleteMonitor() {
 function getOverallCardStatus(monitor) {
   if (!monitor.sensors || monitor.sensors.length === 0) return false
   return monitor.sensors.some((sensor) => {
-    // Usar String(sensor.id) para buscar en el mapa
-    const status = liveSensorStatus.value[String(sensor.id)]?.status
+    const sid = String(sensor.id)
+    const status = liveSensorStatus.value[sid]?.status
     return (
       status === 'timeout' ||
       status === 'error' ||
@@ -387,17 +339,13 @@ const normalizedConfig = computed(() => {
   if (cfg && typeof cfg === 'string') {
     try {
       return JSON.parse(cfg)
-    } catch (e) {
-      if (import.meta?.env?.DEV) {
-        console.debug('[Modal] config JSON inválido:', e?.message || e)
-      }
+    } catch {
       return {}
     }
   }
   return cfg || {}
 })
 
-// Campos (no-alertas) como lista de pares
 const formattedSensorConfig = computed(() => {
   const config = normalizedConfig.value
   const details = []
@@ -412,7 +360,6 @@ const formattedSensorConfig = computed(() => {
   return details
 })
 
-// Alertas “bonitas”
 const alertsForModal = computed(() => {
   const config = normalizedConfig.value
   const arr = Array.isArray(config?.alerts) ? config.alerts : []
@@ -449,6 +396,13 @@ const alertsForModal = computed(() => {
 
 <template>
   <div>
+    <div class="debug-panel">
+      <h4>Debug WS</h4>
+      <div v-for="(msg, i) in debugMessages" :key="i" class="debug-item">{{ msg }}</div>
+      <hr />
+      <small>Active Sensors: {{ Object.keys(liveSensorStatus).length }}</small>
+    </div>
+
     <div v-if="monitorToDelete" class="modal-overlay" @click.self="monitorToDelete = null">
       <div class="modal-content">
         <h3>Confirmar Eliminación</h3>
@@ -467,7 +421,6 @@ const alertsForModal = computed(() => {
     <div v-if="sensorDetailsToShow" class="modal-overlay" @click.self="sensorDetailsToShow = null">
       <div class="modal-content">
         <h3>Detalles del Sensor: {{ sensorDetailsToShow.name }}</h3>
-
         <table class="details-table">
           <tbody>
             <tr v-for="item in formattedSensorConfig" :key="item.key">
@@ -481,7 +434,6 @@ const alertsForModal = computed(() => {
             </tr>
           </tbody>
         </table>
-
         <div v-if="alertsForModal.length" class="alerts-section">
           <h4>Alertas configuradas</h4>
           <table class="alerts-table">
@@ -505,7 +457,6 @@ const alertsForModal = computed(() => {
             </tbody>
           </table>
         </div>
-
         <div class="modal-actions">
           <button class="btn-secondary" @click="sensorDetailsToShow = null">Cerrar</button>
         </div>
@@ -515,10 +466,7 @@ const alertsForModal = computed(() => {
     <main class="dashboard-grid">
       <div v-if="monitors.length === 0" class="empty-state">
         <h3>No hay monitores activos</h3>
-        <p>
-          Ve a <router-link to="/monitor-builder" class="link">Añadir Monitor</router-link> para
-          crear tu primera tarjeta.
-        </p>
+        <p>Ve a <router-link to="/monitor-builder" class="link">Añadir Monitor</router-link>.</p>
       </div>
 
       <div
@@ -536,9 +484,8 @@ const alertsForModal = computed(() => {
         <div class="card-body">
           <div class="sensors-container">
             <div v-if="!monitor.sensors || monitor.sensors.length === 0" class="no-sensors">
-              Sin sensores configurados.
+              Sin sensores.
             </div>
-
             <div
               v-else
               v-for="sensor in monitor.sensors"
@@ -547,7 +494,6 @@ const alertsForModal = computed(() => {
               @click="goToSensorDetail(sensor.id)"
             >
               <span class="sensor-name">{{ sensor.name }}</span>
-
               <div class="sensor-status-group">
                 <div
                   class="sensor-value"
@@ -563,9 +509,9 @@ const alertsForModal = computed(() => {
                     <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'"
                       >...</span
                     >
-                    <span v-else>{{
-                      (liveSensorStatus[String(sensor.id)]?.latency_ms ?? '—') + ' ms'
-                    }}</span>
+                    <span v-else>
+                      {{ liveSensorStatus[String(sensor.id)]?.latency_ms ?? '—' }} ms
+                    </span>
                   </template>
 
                   <template v-else-if="sensor.sensor_type === 'ethernet'">
@@ -598,7 +544,6 @@ const alertsForModal = computed(() => {
                     {{ liveSensorStatus[String(sensor.id)]?.status || 'pending' }}
                   </template>
                 </div>
-
                 <button class="details-btn" @click="showSensorDetails(sensor, $event)">⋮</button>
               </div>
             </div>
@@ -610,6 +555,26 @@ const alertsForModal = computed(() => {
 </template>
 
 <style scoped>
+.debug-panel {
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 400px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #0f0;
+  font-family: monospace;
+  font-size: 0.8rem;
+  padding: 10px;
+  z-index: 9999;
+  border-top-left-radius: 10px;
+  max-height: 200px;
+  overflow: auto;
+}
+.debug-item {
+  border-bottom: 1px solid #333;
+  padding: 2px 0;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
