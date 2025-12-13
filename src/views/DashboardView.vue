@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
-import { connectWebSocketWhenAuthenticated, addWsListener, getCurrentWebSocket } from '@/lib/ws'
+import { connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
 import { waitForSession } from '@/lib/supabase'
 
 const router = useRouter()
@@ -12,7 +12,7 @@ const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const sensorDetailsToShow = ref(null)
 
-// --- Canales (para mostrar nombre en alertas) ---
+// --- Canales ---
 const channelsById = ref({})
 
 async function ensureChannelsLoaded() {
@@ -25,13 +25,11 @@ async function ensureChannelsLoaded() {
     })
     channelsById.value = map
   } catch (e) {
-    if (import.meta?.env?.DEV) {
-      console.error('Error cargando canales:', e)
-    }
+    if (import.meta?.env?.DEV) console.error(e)
   }
 }
 
-// --- FUNCIÓN HELPER PARA FORMATEAR TRÁFICO ---
+// --- Helpers Formato ---
 function formatBitrate(bits) {
   const n = Number(bits)
   if (!Number.isFinite(n) || n <= 0) return '0 Kbps'
@@ -41,7 +39,13 @@ function formatBitrate(bits) {
   return `${mbps.toFixed(1)} Mbps`
 }
 
-// --- Helpers de visualización (modal) ---
+function formatLatency(ms) {
+  if (ms == null || ms === '') return '—'
+  const n = Number(ms)
+  return Number.isFinite(n) ? n.toFixed(1) : ms
+}
+
+// --- Helpers Visualización ---
 function toDisplay(v) {
   try {
     if (v == null) return '—'
@@ -74,11 +78,10 @@ function alertTypeLabel(t) {
 }
 
 /**
- * Normaliza distintos formatos de payload que pueden venir por WS.
+ * Normaliza payload
  */
 function normalizeWsPayload(raw) {
   if (Array.isArray(raw)) return raw.flatMap(normalizeWsPayload)
-
   if (typeof raw === 'string') {
     try {
       return normalizeWsPayload(JSON.parse(raw))
@@ -86,32 +89,21 @@ function normalizeWsPayload(raw) {
       return []
     }
   }
-
   if (raw && typeof raw === 'object') {
-    if (raw.type === 'sensor_batch' && Array.isArray(raw.items)) {
-      return raw.items
-    }
+    if (raw.type === 'sensor_batch' && Array.isArray(raw.items)) return raw.items
 
-    if (
-      raw.type === 'sensor_update' ||
-      raw.type === 'sensor-status' ||
-      raw.event === 'sensor_update'
-    ) {
+    if (['sensor_update', 'sensor-status'].includes(raw.type) || raw.event === 'sensor_update') {
       const inner = raw.data || raw.payload || raw.sensor || raw.body || null
       if (inner && typeof inner === 'object') return [inner]
     }
 
-    if (['welcome', 'ready', 'pong', 'hello'].includes(raw.type)) {
-      return []
-    }
-
+    if (['welcome', 'ready', 'pong', 'hello'].includes(raw.type)) return []
     if (Object.prototype.hasOwnProperty.call(raw, 'sensor_id')) return [raw]
   }
-
   return []
 }
 
-/* ================= SUBSCRIPCIÓN EXPLÍCITA A SENSORES ================ */
+/* ================= SUBSCRIPCIÓN ================ */
 const lastSubscribedIds = ref([])
 
 function currentSensorIds() {
@@ -137,7 +129,7 @@ function trySubscribeSensors() {
     ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
     lastSubscribedIds.value = ids.slice()
   } catch {
-    // ignore
+    /* ignore */
   }
 }
 
@@ -146,13 +138,58 @@ watch(
   () => trySubscribeSensors(),
 )
 
-// ---- Sync ----
+// =========================================================
+// GESTIÓN DE WEBSOCKET (Nativo + Sync)
+// =========================================================
 let wsOpenUnbind = null
+let directMsgUnbind = null
+
+// Función para procesar mensajes directamente (Bypass de @/lib/ws)
+function handleRawMessage(event) {
+  try {
+    const txt = event.data
+    // Ignorar pongs para rendimiento
+    if (txt.includes('pong')) return
+
+    const parsed = JSON.parse(txt)
+    const updates = normalizeWsPayload(parsed)
+
+    if (updates.length > 0) {
+      for (const u of updates) {
+        if (u && u.sensor_id != null) {
+          const sid = String(u.sensor_id)
+          const currentData = liveSensorStatus.value[sid] || {}
+          // Reactividad directa
+          liveSensorStatus.value[sid] = { ...currentData, ...u }
+        }
+      }
+    }
+  } catch {
+    // Ignorar errores de parseo
+  }
+}
 
 function wireWsSyncAndSubs() {
   const ws = getCurrentWebSocket()
-  if (!ws) return
+  // Si no hay WS, reintentar un poco después (race condition fix)
+  if (!ws) {
+    setTimeout(wireWsSyncAndSubs, 500)
+    return
+  }
 
+  // 1. Escuchar mensajes directamente (Esto es lo que arregla el pintado)
+  ws.removeEventListener('message', handleRawMessage) // Evitar duplicados
+  ws.addEventListener('message', handleRawMessage)
+
+  directMsgUnbind = () => {
+    try {
+      ws.removeEventListener('message', handleRawMessage)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 2. Enviar Sync y Suscripciones
   const sendSyncAndSubs = () => {
     try {
       ws.send(JSON.stringify({ type: 'sync_request', resource: 'sensors_latest' }))
@@ -166,10 +203,10 @@ function wireWsSyncAndSubs() {
     sendSyncAndSubs()
   }
 
-  const onOpen = () => {
-    sendSyncAndSubs()
-  }
+  // 3. Manejar reconexiones
+  const onOpen = () => sendSyncAndSubs()
   ws.addEventListener('open', onOpen)
+
   wsOpenUnbind = () => {
     try {
       ws.removeEventListener('open', onOpen)
@@ -179,24 +216,7 @@ function wireWsSyncAndSubs() {
   }
 }
 
-// ---- Listener de BUS (tiempo real) ----
-let offBus = null
-function attachBusListener() {
-  offBus = addWsListener((parsed) => {
-    const updates = normalizeWsPayload(parsed)
-    if (updates.length > 0) {
-      for (const u of updates) {
-        if (u && u.sensor_id != null) {
-          const sid = String(u.sensor_id)
-          const currentData = liveSensorStatus.value[sid] || {}
-          liveSensorStatus.value[sid] = { ...currentData, ...u }
-        }
-      }
-    }
-  })
-}
-
-/* ====================== mounted / unmounted ========================= */
+/* ====================== Lifecycle ========================= */
 onMounted(async () => {
   try {
     await waitForSession({ requireAuth: true, timeoutMs: 8000 })
@@ -217,16 +237,16 @@ onMounted(async () => {
     /* ignore */
   }
 
-  attachBusListener()
+  // Iniciamos la escucha directa
   wireWsSyncAndSubs()
 })
 
 onUnmounted(() => {
-  if (typeof offBus === 'function') offBus()
   if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
+  if (typeof directMsgUnbind === 'function') directMsgUnbind()
 })
 
-/* ====================== API helpers ========================= */
+/* ====================== API ========================= */
 async function fetchAllMonitors() {
   try {
     const { data } = await api.get('/monitors')
@@ -247,7 +267,7 @@ async function fetchAllMonitors() {
   }
 }
 
-/* ====================== UI actions ========================= */
+/* ====================== UI Actions ========================= */
 function requestDeleteMonitor(monitor, event) {
   if (event?.stopPropagation) event.stopPropagation()
   monitorToDelete.value = monitor
@@ -270,19 +290,14 @@ function getOverallCardStatus(monitor) {
   return monitor.sensors.some((sensor) => {
     const sid = String(sensor.id)
     const status = liveSensorStatus.value[sid]?.status
-    return (
-      status === 'timeout' ||
-      status === 'error' ||
-      status === 'high_latency' ||
-      status === 'link_down'
-    )
+    return ['timeout', 'error', 'high_latency', 'link_down'].includes(status)
   })
 }
 
 function getStatusClass(status) {
-  if (status === 'timeout' || status === 'error' || status === 'link_down') return 'status-timeout'
+  if (['timeout', 'error', 'link_down'].includes(status)) return 'status-timeout'
   if (status === 'high_latency') return 'status-high-latency'
-  if (status === 'ok' || status === 'link_up') return 'status-ok'
+  if (['ok', 'link_up'].includes(status)) return 'status-ok'
   return 'status-pending'
 }
 
@@ -460,7 +475,9 @@ const alertsForModal = computed(() => {
                     <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'"
                       >...</span
                     >
-                    <span v-else> {{ liveSensorStatus[String(sensor.id)]?.latency_ms }} ms </span>
+                    <span v-else>
+                      {{ formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms) }} ms
+                    </span>
                   </template>
 
                   <template v-else-if="sensor.sensor_type === 'ethernet'">
