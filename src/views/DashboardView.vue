@@ -1,4 +1,3 @@
-<!-- src/views/DashboardView.vue -->
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -231,15 +230,22 @@ function attachBusListener() {
     const updates = normalizeWsPayload(parsed)
     if (!updates.length) return
 
-    // Aplicar reactivamente (inmutable) para forzar repintado de tarjetas
-    const newMap = { ...liveSensorStatus.value }
+    // Actualización GRANULAR para no romper la reactividad
     for (const u of updates) {
       if (u && u.sensor_id != null) {
-        const prev = newMap[u.sensor_id] || {}
-        newMap[u.sensor_id] = { ...prev, ...u }
+        // Forzamos ID a string para evitar problemas de tipos
+        const sid = String(u.sensor_id)
+
+        // Debug temporal
+        console.log(`[Dashboard] Update recibido para sensor ${sid}:`, u)
+
+        if (!liveSensorStatus.value[sid]) {
+          liveSensorStatus.value[sid] = {}
+        }
+        // Mergeamos propiedades nuevas sobre el objeto existente
+        Object.assign(liveSensorStatus.value[sid], u)
       }
     }
-    liveSensorStatus.value = newMap
   })
 }
 
@@ -306,8 +312,9 @@ async function fetchAllMonitors() {
     // Inicializar estados "pending" para sensores sin datos aún
     monitors.value.forEach((m) => {
       ;(m.sensors || []).forEach((s) => {
-        if (!liveSensorStatus.value[s.id]) {
-          liveSensorStatus.value[s.id] = { status: 'pending' }
+        const sid = String(s.id) // Normalizar ID a string
+        if (!liveSensorStatus.value[sid]) {
+          liveSensorStatus.value[sid] = { status: 'pending' }
         }
       })
     })
@@ -345,7 +352,8 @@ async function confirmDeleteMonitor() {
 function getOverallCardStatus(monitor) {
   if (!monitor.sensors || monitor.sensors.length === 0) return false
   return monitor.sensors.some((sensor) => {
-    const status = liveSensorStatus.value[sensor.id]?.status
+    // Usar String(sensor.id) para buscar en el mapa
+    const status = liveSensorStatus.value[String(sensor.id)]?.status
     return (
       status === 'timeout' ||
       status === 'error' ||
@@ -543,40 +551,51 @@ const alertsForModal = computed(() => {
               <div class="sensor-status-group">
                 <div
                   class="sensor-value"
-                  :class="getStatusClass(liveSensorStatus[sensor.id]?.status)"
+                  :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
                 >
                   <template v-if="sensor.sensor_type === 'ping'">
-                    <span v-if="liveSensorStatus[sensor.id]?.status === 'timeout'">Timeout</span>
-                    <span v-else-if="liveSensorStatus[sensor.id]?.status === 'error'">Error</span>
-                    <span v-else-if="liveSensorStatus[sensor.id]?.status === 'pending'">...</span>
+                    <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'"
+                      >Timeout</span
+                    >
+                    <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'error'"
+                      >Error</span
+                    >
+                    <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'"
+                      >...</span
+                    >
                     <span v-else>{{
-                      (liveSensorStatus[sensor.id]?.latency_ms ?? '—') + ' ms'
+                      (liveSensorStatus[String(sensor.id)]?.latency_ms ?? '—') + ' ms'
                     }}</span>
                   </template>
 
                   <template v-else-if="sensor.sensor_type === 'ethernet'">
                     <div class="ethernet-data">
                       <span class="ethernet-status">
-                        {{ (liveSensorStatus[sensor.id]?.status || 'pending').replace('_', ' ') }}
+                        {{
+                          (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace(
+                            '_',
+                            ' ',
+                          )
+                        }}
                         <span
                           class="ethernet-speed"
-                          v-if="liveSensorStatus[sensor.id]?.status === 'link_up'"
+                          v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'"
                         >
-                          ({{ liveSensorStatus[sensor.id]?.speed || '—' }})
+                          ({{ liveSensorStatus[String(sensor.id)]?.speed || '—' }})
                         </span>
                       </span>
                       <span
                         class="ethernet-traffic"
-                        v-if="liveSensorStatus[sensor.id]?.status !== 'pending'"
+                        v-if="liveSensorStatus[String(sensor.id)]?.status !== 'pending'"
                       >
-                        ↓ {{ formatBitrate(liveSensorStatus[sensor.id]?.rx_bitrate) }} / ↑
-                        {{ formatBitrate(liveSensorStatus[sensor.id]?.tx_bitrate) }}
+                        ↓ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate) }} / ↑
+                        {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}
                       </span>
                     </div>
                   </template>
 
                   <template v-else>
-                    {{ liveSensorStatus[sensor.id]?.status || 'pending' }}
+                    {{ liveSensorStatus[String(sensor.id)]?.status || 'pending' }}
                   </template>
                 </div>
 
