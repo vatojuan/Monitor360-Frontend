@@ -12,13 +12,6 @@ const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const sensorDetailsToShow = ref(null)
 
-// --- DEBUG VISUAL (Simplificado) ---
-const debugMessages = ref([])
-function addDebug(msg) {
-  debugMessages.value = [msg, ...debugMessages.value].slice(0, 10)
-}
-// -----------------------------------
-
 // --- Canales (para mostrar nombre en alertas) ---
 const channelsById = ref({})
 
@@ -38,7 +31,7 @@ async function ensureChannelsLoaded() {
   }
 }
 
-// --- Helpers Formato ---
+// --- FUNCIÓN HELPER PARA FORMATEAR TRÁFICO ---
 function formatBitrate(bits) {
   const n = Number(bits)
   if (!Number.isFinite(n) || n <= 0) return '0 Kbps'
@@ -48,7 +41,7 @@ function formatBitrate(bits) {
   return `${mbps.toFixed(1)} Mbps`
 }
 
-// --- Helpers de visualización ---
+// --- Helpers de visualización (modal) ---
 function toDisplay(v) {
   try {
     if (v == null) return '—'
@@ -143,7 +136,6 @@ function trySubscribeSensors() {
   try {
     ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
     lastSubscribedIds.value = ids.slice()
-    addDebug(`TX: Subscribe [${ids.length}]`)
   } catch {
     // ignore
   }
@@ -156,49 +148,14 @@ watch(
 
 // ---- Sync ----
 let wsOpenUnbind = null
-let rawSpyUnbind = null
 
 function wireWsSyncAndSubs() {
   const ws = getCurrentWebSocket()
   if (!ws) return
 
-  // === ESPÍA NATIVO (Diagnóstico) ===
-  const rawSpy = (event) => {
-    try {
-      const txt = event.data
-      if (txt.includes('pong')) return
-
-      const parsed = JSON.parse(txt)
-      const type = parsed.type || 'unknown'
-
-      // Log en pantalla
-      addDebug(`RAW IN: ${type}`)
-
-      // Forzar actualización si la librería falla
-      if (type === 'sensor_update') {
-        const updates = normalizeWsPayload(parsed)
-        if (updates.length > 0) {
-          updates.forEach((u) => {
-            if (u.sensor_id) {
-              const sid = String(u.sensor_id)
-              const currentData = liveSensorStatus.value[sid] || {}
-              liveSensorStatus.value[sid] = { ...currentData, ...u }
-            }
-          })
-        }
-      }
-    } catch {
-      // ignore non-json
-    }
-  }
-  ws.addEventListener('message', rawSpy)
-  rawSpyUnbind = () => ws.removeEventListener('message', rawSpy)
-  // ==================================
-
   const sendSyncAndSubs = () => {
     try {
       ws.send(JSON.stringify({ type: 'sync_request', resource: 'sensors_latest' }))
-      addDebug('TX: Sync Request')
     } catch {
       /* ignore */
     }
@@ -210,7 +167,6 @@ function wireWsSyncAndSubs() {
   }
 
   const onOpen = () => {
-    addDebug('WS Event: OPEN')
     sendSyncAndSubs()
   }
   ws.addEventListener('open', onOpen)
@@ -229,7 +185,6 @@ function attachBusListener() {
   offBus = addWsListener((parsed) => {
     const updates = normalizeWsPayload(parsed)
     if (updates.length > 0) {
-      // addDebug(`LIB RX: ${updates.length}`) // opcional
       for (const u of updates) {
         if (u && u.sensor_id != null) {
           const sid = String(u.sensor_id)
@@ -269,7 +224,6 @@ onMounted(async () => {
 onUnmounted(() => {
   if (typeof offBus === 'function') offBus()
   if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
-  if (typeof rawSpyUnbind === 'function') rawSpyUnbind()
 })
 
 /* ====================== API helpers ========================= */
@@ -400,12 +354,6 @@ const alertsForModal = computed(() => {
 
 <template>
   <div>
-    <div class="debug-panel">
-      <div class="debug-header">WS Debug Monitor</div>
-      <div v-for="(msg, i) in debugMessages" :key="i" class="debug-item">{{ msg }}</div>
-      <div class="debug-footer">Status Keys: {{ Object.keys(liveSensorStatus).join(', ') }}</div>
-    </div>
-
     <div v-if="monitorToDelete" class="modal-overlay" @click.self="monitorToDelete = null">
       <div class="modal-content">
         <h3>Confirmar Eliminación</h3>
@@ -556,39 +504,6 @@ const alertsForModal = computed(() => {
 </template>
 
 <style scoped>
-.debug-panel {
-  position: fixed;
-  bottom: 10px;
-  right: 10px;
-  width: 350px;
-  background: rgba(0, 0, 0, 0.85);
-  color: #0f0;
-  font-family: monospace;
-  font-size: 12px;
-  padding: 10px;
-  z-index: 9999;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  pointer-events: none; /* Click through */
-}
-.debug-header {
-  font-weight: bold;
-  border-bottom: 1px solid #444;
-  margin-bottom: 5px;
-  padding-bottom: 2px;
-  color: #fff;
-}
-.debug-item {
-  border-bottom: 1px solid #333;
-  padding: 2px 0;
-  word-break: break-all;
-}
-.debug-footer {
-  margin-top: 5px;
-  color: #888;
-  font-size: 10px;
-}
-
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
