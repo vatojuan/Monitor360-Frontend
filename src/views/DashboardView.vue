@@ -12,13 +12,12 @@ const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const sensorDetailsToShow = ref(null)
 
-// --- DEBUG VISUAL ---
+// --- DEBUG VISUAL (Simplificado) ---
 const debugMessages = ref([])
 function addDebug(msg) {
-  // Guardamos últimos 5 mensajes para depurar en pantalla
-  debugMessages.value = [msg, ...debugMessages.value].slice(0, 5)
+  debugMessages.value = [msg, ...debugMessages.value].slice(0, 10)
 }
-// --------------------
+// -----------------------------------
 
 // --- Canales (para mostrar nombre en alertas) ---
 const channelsById = ref({})
@@ -34,12 +33,12 @@ async function ensureChannelsLoaded() {
     channelsById.value = map
   } catch (e) {
     if (import.meta?.env?.DEV) {
-      console.error('Error cargando canales:', e?.message || e)
+      console.error('Error cargando canales:', e)
     }
   }
 }
 
-// --- FUNCIÓN HELPER PARA FORMATEAR TRÁFICO ---
+// --- Helpers Formato ---
 function formatBitrate(bits) {
   const n = Number(bits)
   if (!Number.isFinite(n) || n <= 0) return '0 Kbps'
@@ -49,7 +48,7 @@ function formatBitrate(bits) {
   return `${mbps.toFixed(1)} Mbps`
 }
 
-// --- Helpers de visualización (modal) ---
+// --- Helpers de visualización ---
 function toDisplay(v) {
   try {
     if (v == null) return '—'
@@ -83,13 +82,10 @@ function alertTypeLabel(t) {
 
 /**
  * Normaliza distintos formatos de payload que pueden venir por WS.
- * Devuelve un array de objetos de estado { sensor_id, status, ... } listos para aplicar.
  */
 function normalizeWsPayload(raw) {
-  // Array de updates
   if (Array.isArray(raw)) return raw.flatMap(normalizeWsPayload)
 
-  // String JSON
   if (typeof raw === 'string') {
     try {
       return normalizeWsPayload(JSON.parse(raw))
@@ -98,14 +94,11 @@ function normalizeWsPayload(raw) {
     }
   }
 
-  // Objeto
   if (raw && typeof raw === 'object') {
-    // { type: 'sensor_batch', items: [...] }
     if (raw.type === 'sensor_batch' && Array.isArray(raw.items)) {
       return raw.items
     }
 
-    // { type:'sensor_update' | 'sensor-status' | event:'sensor_update', data:{...} }
     if (
       raw.type === 'sensor_update' ||
       raw.type === 'sensor-status' ||
@@ -115,17 +108,10 @@ function normalizeWsPayload(raw) {
       if (inner && typeof inner === 'object') return [inner]
     }
 
-    // Mensajes de control
-    if (
-      raw.type === 'welcome' ||
-      raw.type === 'ready' ||
-      raw.type === 'pong' ||
-      raw.type === 'hello'
-    ) {
+    if (['welcome', 'ready', 'pong', 'hello'].includes(raw.type)) {
       return []
     }
 
-    // Estructura plana: { sensor_id, ... }
     if (Object.prototype.hasOwnProperty.call(raw, 'sensor_id')) return [raw]
   }
 
@@ -157,9 +143,9 @@ function trySubscribeSensors() {
   try {
     ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
     lastSubscribedIds.value = ids.slice()
-    addDebug(`Suscrito a: ${ids.join(',')}`)
-  } catch (e) {
-    console.debug('[WS] subscribe error:', e)
+    addDebug(`TX: Subscribe [${ids.length}]`)
+  } catch {
+    // ignore
   }
 }
 
@@ -167,18 +153,52 @@ watch(
   () => monitors.value.map((m) => (m.sensors || []).map((s) => s.id)).flat(),
   () => trySubscribeSensors(),
 )
-/* ==================================================================== */
 
-// ---- Enviar sync + subscribes cuando el WS esté listo o se reconecte ----
+// ---- Sync ----
 let wsOpenUnbind = null
+let rawSpyUnbind = null
+
 function wireWsSyncAndSubs() {
   const ws = getCurrentWebSocket()
   if (!ws) return
 
+  // === ESPÍA NATIVO (Diagnóstico) ===
+  const rawSpy = (event) => {
+    try {
+      const txt = event.data
+      if (txt.includes('pong')) return
+
+      const parsed = JSON.parse(txt)
+      const type = parsed.type || 'unknown'
+
+      // Log en pantalla
+      addDebug(`RAW IN: ${type}`)
+
+      // Forzar actualización si la librería falla
+      if (type === 'sensor_update') {
+        const updates = normalizeWsPayload(parsed)
+        if (updates.length > 0) {
+          updates.forEach((u) => {
+            if (u.sensor_id) {
+              const sid = String(u.sensor_id)
+              const currentData = liveSensorStatus.value[sid] || {}
+              liveSensorStatus.value[sid] = { ...currentData, ...u }
+            }
+          })
+        }
+      }
+    } catch {
+      // ignore non-json
+    }
+  }
+  ws.addEventListener('message', rawSpy)
+  rawSpyUnbind = () => ws.removeEventListener('message', rawSpy)
+  // ==================================
+
   const sendSyncAndSubs = () => {
     try {
       ws.send(JSON.stringify({ type: 'sync_request', resource: 'sensors_latest' }))
-      addDebug('Enviado sync_request')
+      addDebug('TX: Sync Request')
     } catch {
       /* ignore */
     }
@@ -190,7 +210,7 @@ function wireWsSyncAndSubs() {
   }
 
   const onOpen = () => {
-    addDebug('WS Open')
+    addDebug('WS Event: OPEN')
     sendSyncAndSubs()
   }
   ws.addEventListener('open', onOpen)
@@ -207,26 +227,15 @@ function wireWsSyncAndSubs() {
 let offBus = null
 function attachBusListener() {
   offBus = addWsListener((parsed) => {
-    // Traza debug visual
-    const kind = parsed?.type ?? 'unknown'
-    // Solo logueamos si no es un simple pong para no saturar
-    if (kind !== 'pong') {
-      const updatesCount = normalizeWsPayload(parsed).length
-      if (updatesCount > 0) {
-        addDebug(`RX: ${updatesCount} updates (tipo: ${kind})`)
-      }
-    }
-
-    // Normalizar
     const updates = normalizeWsPayload(parsed)
-    if (!updates.length) return
-
-    // Aplicar reactivamente
-    for (const u of updates) {
-      if (u && u.sensor_id != null) {
-        const sid = String(u.sensor_id)
-        const currentData = liveSensorStatus.value[sid] || {}
-        liveSensorStatus.value[sid] = { ...currentData, ...u }
+    if (updates.length > 0) {
+      // addDebug(`LIB RX: ${updates.length}`) // opcional
+      for (const u of updates) {
+        if (u && u.sensor_id != null) {
+          const sid = String(u.sensor_id)
+          const currentData = liveSensorStatus.value[sid] || {}
+          liveSensorStatus.value[sid] = { ...currentData, ...u }
+        }
       }
     }
   })
@@ -260,6 +269,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (typeof offBus === 'function') offBus()
   if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
+  if (typeof rawSpyUnbind === 'function') rawSpyUnbind()
 })
 
 /* ====================== API helpers ========================= */
@@ -278,7 +288,7 @@ async function fetchAllMonitors() {
     })
     trySubscribeSensors()
   } catch (err) {
-    console.error('Error fetching monitors:', err)
+    if (import.meta?.env?.DEV) console.error(err)
     monitors.value = []
   }
 }
@@ -332,7 +342,7 @@ async function showSensorDetails(sensor, event) {
   sensorDetailsToShow.value = sensor
 }
 
-// --------- Datos para el modal ---------
+// --------- Computed ---------
 const normalizedConfig = computed(() => {
   if (!sensorDetailsToShow.value) return {}
   const cfg = sensorDetailsToShow.value.config
@@ -364,17 +374,6 @@ const alertsForModal = computed(() => {
   const config = normalizedConfig.value
   const arr = Array.isArray(config?.alerts) ? config.alerts : []
   return arr.map((a, idx) => {
-    const type = a?.type
-    let umbral = '—'
-    let direccion = '—'
-    if (type === 'high_latency') {
-      umbral = a?.threshold_ms != null ? `${a.threshold_ms} ms` : '—'
-    }
-    if (type === 'traffic_threshold') {
-      if (a?.threshold_mbps != null) umbral = `${a.threshold_mbps} Mbps`
-      if (a?.direction) direccion = a.direction
-    }
-    const cooldown = a?.cooldown_minutes != null ? `${a.cooldown_minutes} min` : '5 min'
     const channel =
       a?.channel_id != null && channelsById.value[a.channel_id]?.name
         ? channelsById.value[a.channel_id].name
@@ -384,11 +383,16 @@ const alertsForModal = computed(() => {
 
     return {
       id: idx,
-      typeLabel: alertTypeLabel(type),
-      umbral,
-      direccion,
+      typeLabel: alertTypeLabel(a?.type),
+      umbral:
+        a?.type === 'high_latency' && a?.threshold_ms
+          ? `${a.threshold_ms} ms`
+          : a?.type === 'traffic_threshold' && a?.threshold_mbps
+            ? `${a.threshold_mbps} Mbps`
+            : '—',
+      direccion: a?.direction || '—',
       channel,
-      cooldown,
+      cooldown: a?.cooldown_minutes != null ? `${a.cooldown_minutes} min` : '5 min',
     }
   })
 })
@@ -397,10 +401,9 @@ const alertsForModal = computed(() => {
 <template>
   <div>
     <div class="debug-panel">
-      <h4>Debug WS</h4>
+      <div class="debug-header">WS Debug Monitor</div>
       <div v-for="(msg, i) in debugMessages" :key="i" class="debug-item">{{ msg }}</div>
-      <hr />
-      <small>Active Sensors: {{ Object.keys(liveSensorStatus).length }}</small>
+      <div class="debug-footer">Status Keys: {{ Object.keys(liveSensorStatus).join(', ') }}</div>
     </div>
 
     <div v-if="monitorToDelete" class="modal-overlay" @click.self="monitorToDelete = null">
@@ -509,9 +512,7 @@ const alertsForModal = computed(() => {
                     <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'"
                       >...</span
                     >
-                    <span v-else>
-                      {{ liveSensorStatus[String(sensor.id)]?.latency_ms ?? '—' }} ms
-                    </span>
+                    <span v-else> {{ liveSensorStatus[String(sensor.id)]?.latency_ms }} ms </span>
                   </template>
 
                   <template v-else-if="sensor.sensor_type === 'ethernet'">
@@ -557,22 +558,35 @@ const alertsForModal = computed(() => {
 <style scoped>
 .debug-panel {
   position: fixed;
-  bottom: 0;
-  right: 0;
-  width: 400px;
-  background: rgba(0, 0, 0, 0.8);
+  bottom: 10px;
+  right: 10px;
+  width: 350px;
+  background: rgba(0, 0, 0, 0.85);
   color: #0f0;
   font-family: monospace;
-  font-size: 0.8rem;
+  font-size: 12px;
   padding: 10px;
   z-index: 9999;
-  border-top-left-radius: 10px;
-  max-height: 200px;
-  overflow: auto;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none; /* Click through */
+}
+.debug-header {
+  font-weight: bold;
+  border-bottom: 1px solid #444;
+  margin-bottom: 5px;
+  padding-bottom: 2px;
+  color: #fff;
 }
 .debug-item {
   border-bottom: 1px solid #333;
   padding: 2px 0;
+  word-break: break-all;
+}
+.debug-footer {
+  margin-top: 5px;
+  color: #888;
+  font-size: 10px;
 }
 
 .dashboard-grid {
