@@ -42,7 +42,8 @@ function formatBitrate(bits) {
 function formatLatency(ms) {
   if (ms == null || ms === '') return '—'
   const n = Number(ms)
-  return Number.isFinite(n) ? n.toFixed(1) : ms
+  // Math.round redondea al entero más cercano (sin decimales)
+  return Number.isFinite(n) ? Math.round(n) : ms
 }
 
 // --- Helpers Visualización ---
