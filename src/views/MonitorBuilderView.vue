@@ -24,7 +24,8 @@ const isEditMode = ref(false)
 const createNewPingSensor = () => ({
   name: '',
   config: {
-    ping_type: 'maestro_to_device',
+    // CAMBIO: Default a 'device_to_external' (Ping desde dispositivo)
+    ping_type: 'device_to_external',
     target_ip: '',
     interval_sec: 60,
     latency_threshold_ms: 150,
@@ -463,14 +464,16 @@ watch(searchQuery, (newQuery) => {
           <div class="form-group span-2">
             <label>Tipo de Ping</label>
             <select v-model="newPingSensor.config.ping_type">
-              <option value="maestro_to_device">Ping al Dispositivo</option>
-              <option value="device_to_external">Ping desde Dispositivo</option>
+              <option value="device_to_external">Ping desde Dispositivo (Salida)</option>
+              <option value="maestro_to_device" v-if="!selectedDevice?.is_maestro">
+                Ping al Dispositivo (Desde Maestro)
+              </option>
             </select>
           </div>
 
           <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
             <label>IP de Destino</label>
-            <input type="text" v-model="newPingSensor.config.target_ip" />
+            <input type="text" v-model="newPingSensor.config.target_ip" placeholder="Ej: 8.8.8.8" />
           </div>
 
           <div class="form-group">
@@ -615,7 +618,7 @@ watch(searchQuery, (newQuery) => {
               required
               placeholder="ej: ether1, vlan10"
             />
-            <p class="form-hint">El nombre exacto en el Mikrotik.</p>
+            <p class="form-hint">El nombre exacto en el dispositivo.</p>
           </div>
 
           <div class="form-group span-3">
