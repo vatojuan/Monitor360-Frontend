@@ -314,16 +314,23 @@ onMounted(async () => {
 
 <template>
   <div class="page-wrap">
-    <h1>Gestión VPN</h1>
+    <div class="header-section">
+      <h1>Gestión VPN</h1>
+      <p>Administra los túneles WireGuard para tus dispositivos remotos.</p>
+    </div>
 
     <section class="control-section">
-      <h2><i class="icon">🚀</i> Nuevo Cliente</h2>
-      <div class="grid-2">
-        <div>
+      <div class="section-title">
+        <i class="icon">🚀</i>
+        <h3>Nuevo Cliente</h3>
+      </div>
+
+      <div class="create-form">
+        <div class="form-group">
           <label>Nombre del Cliente / Sitio</label>
           <input v-model="newProfile.name" type="text" placeholder="Ej: Sucursal Centro" />
         </div>
-        <div>
+        <div class="form-group">
           <label>Check IP (Opcional)</label>
           <input
             v-model="newProfile.check_ip"
@@ -331,100 +338,126 @@ onMounted(async () => {
             placeholder="IP interna para monitoreo"
           />
         </div>
-      </div>
-      <div class="actions-row end mt-4">
-        <button class="btn-primary big" @click="createAutoProfile" :disabled="isCreating">
-          {{ isCreating ? 'Generando...' : '✨ Crear Perfil Automático' }}
-        </button>
+        <div class="form-actions">
+          <button class="btn-primary" @click="createAutoProfile" :disabled="isCreating">
+            {{ isCreating ? 'Generando...' : 'Generar Perfil Automático' }}
+          </button>
+        </div>
       </div>
     </section>
 
     <section class="control-section">
-      <h2><i class="icon">📡</i> Perfiles Activos</h2>
-      <div v-if="isLoading" class="loading-text">Cargando...</div>
+      <div class="section-title">
+        <i class="icon">📡</i>
+        <h3>Perfiles Activos</h3>
+      </div>
 
-      <ul class="vpn-list">
-        <li v-for="p in vpnProfiles" :key="p.id" class="vpn-card">
+      <div v-if="isLoading" class="loading-state">
+        <span class="spinner"></span> Cargando perfiles...
+      </div>
+
+      <ul v-else class="vpn-list">
+        <li
+          v-for="p in vpnProfiles"
+          :key="p.id"
+          class="vpn-card"
+          :class="{ 'is-active': inspector.activeProfileId === p.id }"
+        >
           <div class="vpn-header" @click="p._expanded = !p._expanded">
-            <div class="header-info">
+            <div class="header-main">
+              <span
+                class="status-dot"
+                :class="{ online: inspector.activeProfileId === p.id && inspector.connected }"
+              ></span>
               <strong>{{ p.name }}</strong>
               <span class="ip-tag" v-if="p.check_ip">{{ p.check_ip }}</span>
             </div>
-            <div
-              v-if="inspector.activeProfileId === p.id"
-              class="mini-status"
-              :class="inspector.connected ? 'ok' : 'bad'"
-            >
-              {{ inspector.connected ? 'Online' : 'Offline' }}
+
+            <div class="header-actions">
+              <span class="toggle-icon">{{ p._expanded ? '▲' : '▼' }}</span>
             </div>
-            <button class="btn-toggle-text">{{ p._expanded ? 'Ocultar' : 'Ver Detalles' }}</button>
           </div>
 
           <div v-if="p._expanded" class="vpn-body">
-            <div class="panel-controls">
-              <button class="btn-secondary" @click="downloadConfFile(p.name, p.config_data)">
-                ⬇️ Bajar .conf (PC/Móvil)
-              </button>
-              <button class="btn-secondary" @click="copyMikrotikScript(p.config_data)">
-                📋 Copiar Script MikroTik
-              </button>
-              <button class="btn-default" @click="checkStatus(p)">
-                {{
-                  inspector.activeProfileId === p.id && inspector.running
-                    ? '⏹ Detener Monitor'
-                    : '📡 Verificar Estado'
-                }}
-              </button>
-              <div class="grow"></div>
-              <button class="btn-danger small" @click="deleteProfile(p)">🗑️ Eliminar</button>
+            <div class="toolbar">
+              <div class="tool-group">
+                <button
+                  class="btn-secondary small"
+                  @click="downloadConfFile(p.name, p.config_data)"
+                >
+                  ⬇️ Config
+                </button>
+                <button class="btn-secondary small" @click="copyMikrotikScript(p.config_data)">
+                  📋 Script ROS
+                </button>
+              </div>
+
+              <div class="tool-group">
+                <button
+                  class="btn-monitor small"
+                  :class="{
+                    'is-monitoring': inspector.activeProfileId === p.id && inspector.running,
+                  }"
+                  @click="checkStatus(p)"
+                >
+                  {{
+                    inspector.activeProfileId === p.id && inspector.running
+                      ? '⏹ Detener'
+                      : '📡 Monitorizar'
+                  }}
+                </button>
+                <button class="btn-danger small" @click="deleteProfile(p)">Eliminar</button>
+              </div>
             </div>
 
             <transition name="fade">
-              <div v-if="inspector.activeProfileId === p.id" class="status-box">
-                <div class="stat">
-                  <span class="label">Estado:</span>
-                  <span class="val" :class="inspector.connected ? 'c-green' : 'c-red'">
-                    {{ inspector.connected ? 'CONECTADO' : 'BUSCANDO...' }}
-                  </span>
-                </div>
-                <div class="stat">
-                  <span class="label">Último Handshake:</span>
-                  <span class="val">{{ inspector.lastHandshake || '--' }}</span>
-                </div>
-                <div class="stat">
-                  <span class="label">Tráfico:</span>
-                  <span class="val"
-                    >⬇️ {{ (inspector.rx / 1024).toFixed(1) }}KB ⬆️
-                    {{ (inspector.tx / 1024).toFixed(1) }}KB</span
-                  >
-                </div>
-                <div class="stat" style="align-self: center">
-                  <button class="btn-text" @click="testReachability(p)">Ping Check IP</button>
+              <div v-if="inspector.activeProfileId === p.id" class="inspector-panel">
+                <div class="inspector-grid">
+                  <div class="insp-item">
+                    <span class="insp-label">Estado</span>
+                    <span class="insp-value" :class="inspector.connected ? 'c-green' : 'c-red'">
+                      {{ inspector.connected ? 'CONECTADO' : 'BUSCANDO...' }}
+                    </span>
+                  </div>
+                  <div class="insp-item">
+                    <span class="insp-label">Último Handshake</span>
+                    <span class="insp-value">{{ inspector.lastHandshake || '--' }}</span>
+                  </div>
+                  <div class="insp-item">
+                    <span class="insp-label">Tráfico (RX/TX)</span>
+                    <span class="insp-value">
+                      ⬇️ {{ (inspector.rx / 1024).toFixed(1) }} KB
+                      <span class="divider">|</span>
+                      ⬆️ {{ (inspector.tx / 1024).toFixed(1) }} KB
+                    </span>
+                  </div>
+                  <div class="insp-item action">
+                    <button class="btn-ping" @click="testReachability(p)">Test Ping (ICMP)</button>
+                  </div>
                 </div>
               </div>
             </transition>
 
             <details class="tech-details">
-              <summary>Ver Script y Configuración</summary>
-              <div class="grid-2">
-                <div>
-                  <label>Script MikroTik Generado</label>
-                  <textarea
-                    readonly
-                    :value="buildMikrotikCmdFromIni(p.config_data)"
-                    rows="8"
-                    class="code-area"
-                  ></textarea>
+              <summary>Ver Código y Configuración</summary>
+              <div class="code-grid">
+                <div class="code-block">
+                  <label>Script MikroTik</label>
+                  <textarea readonly :value="buildMikrotikCmdFromIni(p.config_data)"></textarea>
                 </div>
-                <div>
-                  <label>Archivo .conf</label>
-                  <textarea readonly :value="p.config_data" rows="8" class="code-area"></textarea>
+                <div class="code-block">
+                  <label>WireGuard .conf</label>
+                  <textarea readonly :value="p.config_data"></textarea>
                 </div>
               </div>
             </details>
           </div>
         </li>
       </ul>
+
+      <div v-if="!isLoading && vpnProfiles.length === 0" class="empty-state">
+        No hay perfiles VPN creados.
+      </div>
     </section>
 
     <div v-if="notification.show" class="notification" :class="notification.type">
@@ -434,231 +467,344 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* VARIABLES (Mapeadas a las globales del proyecto) */
 :root {
-  --panel: #1b1b1b;
-  --bg: #121212;
-  --text: #eaeaea;
+  /* Si no están definidas globalmente, estos son los fallbacks */
+  --bg-color: #121212;
+  --surface-color: #1e1e1e;
+  --primary-color: #333;
+  --blue: #3b82f6;
   --green: #10b981;
   --red: #ef4444;
-  --blue: #3b82f6;
+  --text-main: #eaeaea;
+  --text-muted: #888;
 }
+
 .page-wrap {
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0 auto;
-  color: var(--text);
+  color: var(--font-color, #eaeaea);
+  padding-bottom: 3rem;
 }
+
+.header-section {
+  margin-bottom: 2rem;
+}
+.header-section h1 {
+  font-size: 1.8rem;
+  margin-bottom: 0.5rem;
+}
+.header-section p {
+  color: var(--gray, #888);
+}
+
+/* SECCIONES PRINCIPALES */
 .control-section {
-  background: var(--panel);
-  border: 1px solid #333;
+  background: var(--surface-color);
+  border: 1px solid var(--primary-color);
   border-radius: 12px;
   padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--primary-color);
+  padding-bottom: 1rem;
+}
+.section-title h3 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+/* FORMULARIO CREACIÓN */
+.create-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto; /* Nombre | IP | Botón */
+  gap: 1rem;
+  align-items: end;
+}
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.form-group label {
+  font-weight: bold;
+  font-size: 0.9rem;
+  color: var(--gray, #888);
+}
+.form-group input {
+  background: var(--surface-color); /* Fondo igual al panel */
+  border: 1px solid var(--primary-color);
+  color: white;
+  padding: 0.8rem;
+  border-radius: 6px;
+  width: 100%;
+}
+.form-group input:focus {
+  outline: 1px solid var(--blue, #3b82f6);
+  border-color: var(--blue, #3b82f6);
+}
+
+/* BOTONES */
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.btn-primary {
+  background-color: var(--blue, #3b82f6);
+  color: white;
+  padding: 0.8rem 1.5rem;
+}
+.btn-primary:hover {
+  filter: brightness(1.1);
+}
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background-color: transparent;
+  border: 1px solid var(--primary-color);
+  color: var(--font-color, #ccc);
+  padding: 0.5rem 1rem;
+}
+.btn-secondary:hover {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.btn-monitor {
+  background-color: var(--primary-color);
+  color: white;
+  padding: 0.5rem 1rem;
+}
+.btn-monitor:hover {
+  filter: brightness(1.2);
+}
+.btn-monitor.is-monitoring {
+  background-color: #f59e0b; /* Ambar para estado 'Detener' */
+  color: black;
+}
+
+.btn-danger {
+  background-color: transparent;
+  border: 1px solid var(--red, #ef4444);
+  color: var(--red, #ef4444);
+  padding: 0.5rem 1rem;
+}
+.btn-danger:hover {
+  background-color: var(--red, #ef4444);
+  color: white;
+}
+
+.btn-ping {
+  background: transparent;
+  color: var(--blue);
+  border: 1px dashed var(--primary-color);
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+}
+.btn-ping:hover {
+  border-color: var(--blue);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+/* LISTADO DE TARJETAS */
+.vpn-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.vpn-card {
+  background-color: var(--bg-color, #121212); /* Fondo ligeramente más oscuro que el panel */
+  border: 1px solid var(--primary-color);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.vpn-card:hover {
+  border-color: #555;
+}
+.vpn-card.is-active {
+  border-color: var(--blue);
+}
+
+.vpn-header {
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  background-color: var(--surface-color); /* Cabecera resalta */
+}
+.vpn-header:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.header-main {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #444;
+  transition: background-color 0.3s;
+}
+.status-dot.online {
+  background-color: var(--green, #10b981);
+  box-shadow: 0 0 8px var(--green, #10b981);
+}
+
+.ip-tag {
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  font-family: monospace;
+  font-size: 0.8rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: var(--gray, #888);
+}
+
+.toggle-icon {
+  font-size: 0.8rem;
+  color: var(--gray, #888);
+}
+
+/* CUERPO DE LA TARJETA */
+.vpn-body {
+  padding: 1.5rem;
+  border-top: 1px solid var(--primary-color);
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.tool-group {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* INSPECTOR PANEL (Rediseñado) */
+.inspector-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--primary-color);
+  border-radius: 8px;
+  padding: 1rem;
   margin-bottom: 1.5rem;
 }
-.grid-2 {
+.inspector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1.5rem;
+  align-items: center;
+}
+.insp-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.insp-item.action {
+  align-items: flex-end;
+}
+.insp-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--gray, #888);
+}
+.insp-value {
+  font-family: monospace;
+  font-size: 1rem;
+  font-weight: bold;
+}
+.c-green {
+  color: var(--green, #10b981);
+}
+.c-red {
+  color: var(--red, #ef4444);
+}
+.divider {
+  color: var(--primary-color);
+  margin: 0 5px;
+}
+
+/* DETALLES TÉCNICOS (Code) */
+.tech-details summary {
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+  outline: none;
+}
+.code-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
-.mt-4 {
-  margin-top: 1rem;
-}
-
-input,
-textarea {
-  width: 100%;
-  background: #000;
-  border: 1px solid #444;
-  color: #fff;
-  padding: 0.7rem;
-  border-radius: 6px;
-}
-input:focus {
-  outline: 2px solid var(--blue);
-  border-color: transparent;
-}
-
-/* Textareas de código estilo consola */
-.code-area {
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 0.8rem;
-  color: #a3e635;
-  background: #0a0a0a;
-  border: 1px solid #333;
-}
-
-button {
-  cursor: pointer;
-  padding: 0.6rem 1rem;
-  border-radius: 6px;
-  border: none;
-  font-weight: 600;
-  color: #fff;
-  transition: opacity 0.2s;
-  font-size: 0.9rem;
-}
-button:hover {
-  opacity: 0.9;
-}
-.btn-primary {
-  background: var(--blue);
-}
-.btn-primary.big {
-  width: 100%;
-  padding: 0.8rem;
-  font-size: 1rem;
-}
-.btn-secondary {
-  background: #333;
-  border: 1px solid #555;
-  color: #ddd;
-}
-.btn-secondary:hover {
-  background: #444;
-}
-.btn-default {
-  background: #4b5563;
-}
-.btn-danger {
-  background: var(--red);
-}
-.btn-text {
-  background: none;
-  color: var(--blue);
-  text-decoration: underline;
-  padding: 0;
-}
-.btn-toggle-text {
-  background: transparent;
-  color: #888;
-  font-size: 0.85rem;
-}
-.btn-toggle-text:hover {
-  color: #bbb;
-}
-
-.vpn-list {
-  list-style: none;
-  padding: 0;
-}
-/* Fondo de tarjeta suavizado, menos negro puro */
-.vpn-card {
-  background: #222;
-  border: 1px solid #333;
-  border-radius: 8px;
-  margin-bottom: 0.8rem;
-  overflow: hidden;
-}
-.vpn-header {
-  padding: 1rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  background: #2a2a2a;
-}
-.vpn-header:hover {
-  background: #333;
-}
-.header-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.ip-tag {
-  background: #444;
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 4px;
-  color: #ccc;
-  font-family: monospace;
-}
-.vpn-body {
-  padding: 1.5rem;
-  border-top: 1px solid #333;
-  background: #1e1e1e;
-}
-
-.panel-controls {
-  display: flex;
-  gap: 0.8rem;
-  flex-wrap: wrap;
-  margin-bottom: 1.5rem;
-  align-items: center;
-}
-.grow {
-  flex: 1;
-}
-
-.status-box {
-  background: #151515;
-  padding: 1rem;
-  border-radius: 8px;
-  border: 1px solid #333;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-}
-.stat {
+.code-block {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.5rem;
 }
-.stat .label {
-  font-size: 0.75rem;
-  color: #888;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+.code-block label {
+  font-size: 0.8rem;
+  color: var(--gray, #888);
 }
-.stat .val {
-  font-weight: bold;
-  font-size: 0.95rem;
-  font-family: monospace;
-}
-.c-green {
-  color: var(--green);
-}
-.c-red {
-  color: var(--red);
-}
-
-.mini-status {
-  font-size: 0.75rem;
-  font-weight: bold;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-.mini-status.ok {
-  color: var(--green);
-  background: rgba(16, 185, 129, 0.1);
-}
-.mini-status.bad {
-  color: #888;
-}
-
-.tech-details summary {
-  cursor: pointer;
-  color: #888;
-  margin-bottom: 0.8rem;
-  font-size: 0.9rem;
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-.loading-text,
-.empty {
-  color: #777;
-  text-align: center;
+textarea {
+  background: #0d0d0d;
+  border: 1px solid var(--primary-color);
+  color: #a3e635; /* Verde consola */
+  font-family: 'Consolas', monospace;
+  font-size: 0.8rem;
   padding: 1rem;
+  border-radius: 6px;
+  resize: vertical;
+  min-height: 150px;
 }
 
+/* UTILIDADES */
+.loading-state,
+.empty-state {
+  text-align: center;
+  padding: 3rem;
+  color: var(--gray, #888);
+  font-style: italic;
+}
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--gray);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* NOTIFICACION */
 .notification {
   position: fixed;
   bottom: 20px;
@@ -675,5 +821,22 @@ button:hover {
 }
 .notification.error {
   background: var(--red);
+}
+
+/* RESPONSIVE */
+@media (max-width: 768px) {
+  .create-form {
+    grid-template-columns: 1fr;
+  }
+  .code-grid {
+    grid-template-columns: 1fr;
+  }
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .tool-group {
+    justify-content: space-between;
+  }
 }
 </style>
