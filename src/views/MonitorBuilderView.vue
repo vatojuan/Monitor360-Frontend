@@ -21,7 +21,6 @@ const isEditMode = ref(false)
 
 // --- Computados ---
 const isMaestro = computed(() => {
-  // Aseguramos booleano real
   return !!selectedDevice.value?.is_maestro
 })
 
@@ -30,8 +29,7 @@ const isMaestro = computed(() => {
 const createNewPingSensor = () => ({
   name: '',
   config: {
-    // POR DEFECTO: Ping desde el dispositivo (Salida)
-    ping_type: 'device_to_external',
+    ping_type: 'device_to_external', // Default seguro
     target_ip: '',
     interval_sec: 60,
     latency_threshold_ms: 150,
@@ -80,6 +78,17 @@ onMounted(() => {
   fetchChannels()
 })
 
+// RESETEO AUTOMÁTICO AL CAMBIAR DE DISPOSITIVO
+watch(selectedDevice, () => {
+  // Reseteamos los formularios para evitar que quede un 'maestro_to_device' pegado
+  newPingSensor.value = createNewPingSensor()
+
+  // Si el nuevo dispositivo es maestro, forzamos explícitamente el tipo
+  if (selectedDevice.value?.is_maestro) {
+    newPingSensor.value.config.ping_type = 'device_to_external'
+  }
+})
+
 function showNotification(message, type = 'success') {
   notification.value = { show: true, message, type }
   setTimeout(() => {
@@ -113,7 +122,7 @@ function safeJsonParse(v, fallback = null) {
 function buildSensorPayload(sensorType, sensorData) {
   const finalConfig = { ...sensorData.config }
 
-  // SANITIZACIÓN: Si es maestro, forzamos device_to_external para evitar errores lógicos
+  // SEGURIDAD FINAL: Si es maestro, IMPOSIBLE guardar como maestro_to_device
   if (sensorType === 'ping' && isMaestro.value) {
     finalConfig.ping_type = 'device_to_external'
   }
@@ -217,15 +226,13 @@ async function handleSaveSensor() {
   }
 }
 
-//
-// --- Abrir / Cerrar formularios ---
 function openFormForCreate(type) {
   isEditMode.value = false
   sensorToEdit.value = null
   newPingSensor.value = createNewPingSensor()
   newEthernetSensor.value = createNewEthernetSensor()
 
-  // AUTOCORRECCIÓN: Si es maestro, forzamos tipo de ping
+  // LÓGICA DE UI: Si es maestro, pre-seleccionar y bloquear
   if (type === 'ping' && isMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
   }
@@ -243,7 +250,11 @@ function openFormForEdit(sensor) {
     uiData.name = sensor.name
     uiData.config = { ...uiData.config, ...cfg }
 
-    // Alertas Ping
+    // Si editamos un sensor viejo en un maestro, forzamos corrección visual
+    if (isMaestro.value) {
+      uiData.config.ping_type = 'device_to_external'
+    }
+
     ;(cfg?.alerts || []).forEach((alert) => {
       if (alert.type === 'timeout') {
         uiData.ui_alert_timeout = {
@@ -271,7 +282,6 @@ function openFormForEdit(sensor) {
       interface_name: cfg.interface_name || '',
       interval_sec: cfg.interval_sec || 30,
     }
-    // Alertas Ethernet
     ;(cfg?.alerts || []).forEach((alert) => {
       if (alert.type === 'speed_change') {
         uiData.ui_alert_speed_change = {
@@ -475,13 +485,16 @@ watch(searchQuery, (newQuery) => {
 
           <div class="form-group span-2">
             <label>Tipo de Ping</label>
-            <select v-model="newPingSensor.config.ping_type">
+            <select v-model="newPingSensor.config.ping_type" :disabled="isMaestro">
               <option value="device_to_external">Ping desde Dispositivo (Salida)</option>
-
               <option value="maestro_to_device" v-if="!isMaestro">
                 Ping al Dispositivo (Desde Maestro)
               </option>
             </select>
+
+            <p v-if="isMaestro" class="form-hint warning-text">
+              ⚠️ Este dispositivo es Maestro. Solo puede realizar pings hacia afuera.
+            </p>
           </div>
 
           <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
@@ -740,7 +753,7 @@ watch(searchQuery, (newQuery) => {
 </template>
 
 <style scoped>
-/* ESTILOS IGUALES AL ORIGINAL (Manteniendo consistencia) */
+/* Estilos existentes */
 .builder-layout {
   max-width: 900px;
   margin: auto;
@@ -777,6 +790,12 @@ h4 {
   border-radius: 4px;
   margin-left: 8px;
   font-weight: bold;
+}
+.warning-text {
+  color: #fbbf24; /* Color Ambar/Amarillo */
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  font-weight: 500;
 }
 .search-wrapper {
   position: relative;
@@ -951,7 +970,7 @@ h4 {
 
 /* --- Estilos del Modal --- */
 .modal-overlay {
-  position: fixed; /* ← corregido: antes tenía coma */
+  position: fixed;
   top: 0;
   left: 0;
   width: 100%;
@@ -1007,6 +1026,13 @@ h4 {
   color: white;
   width: 100%;
 }
+/* Estilo deshabilitado */
+.form-group select:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  background-color: #2a2a2a;
+}
+
 .sub-section {
   grid-column: span 3;
   background-color: var(--surface-color);
