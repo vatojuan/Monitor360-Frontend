@@ -45,7 +45,7 @@ const createNewEthernetSensor = () => ({
   name: '',
   config: {
     interface_name: '',
-    interface_kind: 'auto', // ← agregado para evitar undefined
+    // Eliminado interface_kind (backend lo detecta solo)
     interval_sec: 30,
   },
   ui_alert_speed_change: {
@@ -257,7 +257,11 @@ function openFormForEdit(sensor) {
   } else if (sensor.sensor_type === 'ethernet') {
     const uiData = createNewEthernetSensor()
     uiData.name = sensor.name
-    uiData.config = { ...uiData.config, ...cfg }
+    // Limpiamos config para no arrastrar interface_kind viejo
+    uiData.config = {
+      interface_name: cfg.interface_name || '',
+      interval_sec: cfg.interval_sec || 30,
+    }
     ;(cfg?.alerts || []).forEach((alert) => {
       if (alert.type === 'speed_change') {
         uiData.ui_alert_speed_change = {
@@ -378,7 +382,6 @@ watch(searchQuery, (newQuery) => {
       {{ notification.message }}
     </div>
     <div class="builder-layout">
-      <!-- Sección 1 y 2 -->
       <section class="builder-step">
         <h2><span class="step-number">1</span> Seleccionar Dispositivo</h2>
         <div v-if="!selectedDevice">
@@ -447,12 +450,10 @@ watch(searchQuery, (newQuery) => {
       </section>
     </div>
 
-    <!-- MODAL PARA AÑADIR/EDITAR SENSORES -->
     <div v-if="formToShow" class="modal-overlay" @click.self="closeForm">
       <div class="modal-content">
         <h3>{{ isEditMode ? 'Editar' : 'Añadir' }} Sensor {{ formToShow }}</h3>
 
-        <!-- FORMULARIO PING -->
         <form v-if="formToShow === 'ping'" @submit.prevent="handleSaveSensor" class="config-form">
           <div class="form-group span-3">
             <label>Nombre del Sensor</label>
@@ -596,7 +597,6 @@ watch(searchQuery, (newQuery) => {
           </div>
         </form>
 
-        <!-- FORMULARIO ETHERNET -->
         <form
           v-if="formToShow === 'ethernet'"
           @submit.prevent="handleSaveSensor"
@@ -609,20 +609,16 @@ watch(searchQuery, (newQuery) => {
 
           <div class="form-group">
             <label>Nombre de Interfaz</label>
-            <input type="text" v-model="newEthernetSensor.config.interface_name" required />
-            <p class="form-hint">El nombre exacto en el dispositivo.</p>
-          </div>
-          <div class="form-group">
-            <label>Tipo de Interfaz</label>
-            <select v-model="newEthernetSensor.config.interface_kind">
-              <option value="auto">Auto (detectar automáticamente)</option>
-              <option value="ethernet">Ethernet física</option>
-              <option value="vlan">VLAN lógica</option>
-            </select>
-            <p class="form-hint">Seleccioná VLAN si es una subinterfaz (ej: vlan70-ARBOLEDA).</p>
+            <input
+              type="text"
+              v-model="newEthernetSensor.config.interface_name"
+              required
+              placeholder="ej: ether1, vlan10"
+            />
+            <p class="form-hint">El nombre exacto en el Mikrotik.</p>
           </div>
 
-          <div class="form-group">
+          <div class="form-group span-3">
             <label>Intervalo (seg)</label>
             <input type="number" v-model.number="newEthernetSensor.config.interval_sec" required />
             <p class="form-hint">Frecuencia del chequeo.</p>
