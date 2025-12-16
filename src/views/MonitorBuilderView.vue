@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch, onMounted } from 'vue'
-import api from '@/lib/api' // ← usamos el cliente central (con Bearer)
+import { ref, watch, onMounted, computed } from 'vue'
+import api from '@/lib/api'
 
 //
 // --- Estado General ---
@@ -16,15 +16,21 @@ const formToShow = ref(null)
 const channels = ref([])
 
 // --- Estado para Edición ---
-const sensorToEdit = ref(null) // Contendrá el sensor que se está editando
+const sensorToEdit = ref(null)
 const isEditMode = ref(false)
+
+// --- Computados ---
+const isMaestro = computed(() => {
+  // Aseguramos booleano real
+  return !!selectedDevice.value?.is_maestro
+})
 
 //
 // --- Plantillas de Formularios ---
 const createNewPingSensor = () => ({
   name: '',
   config: {
-    // CAMBIO: Default a 'device_to_external' (Ping desde dispositivo)
+    // POR DEFECTO: Ping desde el dispositivo (Salida)
     ping_type: 'device_to_external',
     target_ip: '',
     interval_sec: 60,
@@ -46,7 +52,6 @@ const createNewEthernetSensor = () => ({
   name: '',
   config: {
     interface_name: '',
-    // Eliminado interface_kind (backend lo detecta solo)
     interval_sec: 30,
   },
   ui_alert_speed_change: {
@@ -107,8 +112,13 @@ function safeJsonParse(v, fallback = null) {
 // --- Lógica de Creación y Edición de Sensores ---
 function buildSensorPayload(sensorType, sensorData) {
   const finalConfig = { ...sensorData.config }
-  finalConfig.alerts = []
 
+  // SANITIZACIÓN: Si es maestro, forzamos device_to_external para evitar errores lógicos
+  if (sensorType === 'ping' && isMaestro.value) {
+    finalConfig.ping_type = 'device_to_external'
+  }
+
+  finalConfig.alerts = []
   const onlyNums = (v, fallback = undefined) => (typeof v === 'number' && !isNaN(v) ? v : fallback)
 
   if (sensorType === 'ping') {
@@ -168,10 +178,7 @@ async function handleSaveSensor() {
     const payload = buildSensorPayload(formToShow.value, sensorData)
 
     if (isEditMode.value && sensorToEdit.value) {
-      // --- Actualización ---
       const { data } = await api.put(`/sensors/${sensorToEdit.value.id}`, payload)
-
-      // Mezclamos para no perder id / sensor_type
       const idx = activeSensors.value.findIndex((s) => s.id === sensorToEdit.value.id)
       if (idx !== -1) {
         activeSensors.value[idx] = {
@@ -182,10 +189,8 @@ async function handleSaveSensor() {
           config: typeof data.config === 'string' ? safeJsonParse(data.config, {}) : data.config,
         }
       }
-
       showNotification('Sensor actualizado.', 'success')
     } else {
-      // --- Creación ---
       if (!currentMonitor.value?.monitor_id) {
         showNotification('Primero crea la tarjeta de monitoreo.', 'error')
         return
@@ -202,8 +207,6 @@ async function handleSaveSensor() {
       })
       showNotification('Sensor añadido.', 'success')
     }
-
-    // Refrescar desde backend por consistencia
     await selectDevice(selectedDevice.value)
     closeForm()
   } catch (err) {
@@ -221,20 +224,26 @@ function openFormForCreate(type) {
   sensorToEdit.value = null
   newPingSensor.value = createNewPingSensor()
   newEthernetSensor.value = createNewEthernetSensor()
+
+  // AUTOCORRECCIÓN: Si es maestro, forzamos tipo de ping
+  if (type === 'ping' && isMaestro.value) {
+    newPingSensor.value.config.ping_type = 'device_to_external'
+  }
+
   formToShow.value = type
 }
 
 function openFormForEdit(sensor) {
   isEditMode.value = true
   sensorToEdit.value = sensor
-
-  // Normalizamos config a objeto por si vino como string
   const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : sensor.config
 
   if (sensor.sensor_type === 'ping') {
     const uiData = createNewPingSensor()
     uiData.name = sensor.name
     uiData.config = { ...uiData.config, ...cfg }
+
+    // Alertas Ping
     ;(cfg?.alerts || []).forEach((alert) => {
       if (alert.type === 'timeout') {
         uiData.ui_alert_timeout = {
@@ -258,11 +267,11 @@ function openFormForEdit(sensor) {
   } else if (sensor.sensor_type === 'ethernet') {
     const uiData = createNewEthernetSensor()
     uiData.name = sensor.name
-    // Limpiamos config para no arrastrar interface_kind viejo
     uiData.config = {
       interface_name: cfg.interface_name || '',
       interval_sec: cfg.interval_sec || 30,
     }
+    // Alertas Ethernet
     ;(cfg?.alerts || []).forEach((alert) => {
       if (alert.type === 'speed_change') {
         uiData.ui_alert_speed_change = {
@@ -404,7 +413,10 @@ watch(searchQuery, (newQuery) => {
         <div v-else class="selected-device-card">
           <div>
             <h3>{{ selectedDevice.client_name }}</h3>
-            <p>{{ selectedDevice.ip_address }}</p>
+            <p>
+              {{ selectedDevice.ip_address }}
+              <span v-if="isMaestro" class="maestro-badge">MAESTRO</span>
+            </p>
           </div>
           <button @click="clearSelectedDevice">Cambiar</button>
         </div>
@@ -465,7 +477,8 @@ watch(searchQuery, (newQuery) => {
             <label>Tipo de Ping</label>
             <select v-model="newPingSensor.config.ping_type">
               <option value="device_to_external">Ping desde Dispositivo (Salida)</option>
-              <option value="maestro_to_device" v-if="!selectedDevice?.is_maestro">
+
+              <option value="maestro_to_device" v-if="!isMaestro">
                 Ping al Dispositivo (Desde Maestro)
               </option>
             </select>
@@ -536,13 +549,12 @@ watch(searchQuery, (newQuery) => {
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (fallos consecutivos)</label>
+                  <label>Tolerancia (fallos)</label>
                   <input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
                     min="1"
                   />
-                  <p class="form-hint">Cuántos fallos seguidos antes de alertar.</p>
                 </div>
               </template>
             </div>
@@ -564,7 +576,6 @@ watch(searchQuery, (newQuery) => {
                     v-model.number="newPingSensor.ui_alert_latency.threshold_ms"
                     min="1"
                   />
-                  <p class="form-hint">Si la latencia supera este valor.</p>
                 </div>
                 <div class="form-group">
                   <label>Enviar a Canal</label>
@@ -582,13 +593,12 @@ watch(searchQuery, (newQuery) => {
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (fallos consecutivos)</label>
+                  <label>Tolerancia (fallos)</label>
                   <input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_latency.tolerance_count"
                     min="1"
                   />
-                  <p class="form-hint">Cuántos fallos seguidos antes de alertar.</p>
                 </div>
               </template>
             </div>
@@ -618,7 +628,7 @@ watch(searchQuery, (newQuery) => {
               required
               placeholder="ej: ether1, vlan10"
             />
-            <p class="form-hint">El nombre exacto en el dispositivo.</p>
+            <p class="form-hint">El nombre exacto en el Mikrotik.</p>
           </div>
 
           <div class="form-group span-3">
@@ -656,13 +666,12 @@ watch(searchQuery, (newQuery) => {
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (eventos consecutivos)</label>
+                  <label>Tolerancia (eventos)</label>
                   <input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_speed_change.tolerance_count"
                     min="1"
                   />
-                  <p class="form-hint">Cuántos cambios seguidos antes de alertar.</p>
                 </div>
               </template>
             </div>
@@ -709,13 +718,12 @@ watch(searchQuery, (newQuery) => {
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (lecturas consecutivas)</label>
+                  <label>Tolerancia (lecturas)</label>
                   <input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_traffic.tolerance_count"
                     min="1"
                   />
-                  <p class="form-hint">Cuántas mediciones seguidas antes de alertar.</p>
                 </div>
               </template>
             </div>
@@ -732,7 +740,7 @@ watch(searchQuery, (newQuery) => {
 </template>
 
 <style scoped>
-/* ... (Estilos existentes) ... */
+/* ESTILOS IGUALES AL ORIGINAL (Manteniendo consistencia) */
 .builder-layout {
   max-width: 900px;
   margin: auto;
@@ -760,6 +768,15 @@ watch(searchQuery, (newQuery) => {
 h2,
 h4 {
   color: #f1f1f1;
+}
+.maestro-badge {
+  background-color: var(--blue);
+  color: white;
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 8px;
+  font-weight: bold;
 }
 .search-wrapper {
   position: relative;
