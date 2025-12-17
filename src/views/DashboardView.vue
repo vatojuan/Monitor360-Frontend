@@ -10,10 +10,61 @@ const router = useRouter()
 const monitors = ref([])
 const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
-const sensorDetailsToShow = ref(null)
+
+// --- Estado para el Modal de Edición ---
+const sensorDetailsToShow = ref(null) // El sensor original siendo editado
+const currentMonitorContext = ref(null) // El monitor padre (para contexto de IP/Maestro)
+const notification = ref({ show: false, message: '', type: 'success' })
+
+// Formularios Reactivos (mismo esquema que MonitorBuilder)
+const createNewPingSensor = () => ({
+  name: '',
+  config: {
+    ping_type: 'device_to_external',
+    target_ip: '',
+    interval_sec: 60,
+    latency_threshold_ms: 150,
+    display_mode: 'realtime',
+    average_count: 5,
+  },
+  ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1 },
+  ui_alert_latency: {
+    enabled: false,
+    threshold_ms: 200,
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+  },
+})
+
+const createNewEthernetSensor = () => ({
+  name: '',
+  config: {
+    interface_name: '',
+    interval_sec: 30,
+  },
+  ui_alert_speed_change: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    tolerance_count: 1,
+  },
+  ui_alert_traffic: {
+    enabled: false,
+    threshold_mbps: 100,
+    direction: 'any',
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+  },
+})
+
+const newPingSensor = ref(createNewPingSensor())
+const newEthernetSensor = ref(createNewEthernetSensor())
 
 // --- Canales ---
 const channelsById = ref({})
+const channelsList = computed(() => Object.values(channelsById.value)) // Para los select
 
 async function ensureChannelsLoaded() {
   if (Object.keys(channelsById.value).length) return
@@ -42,44 +93,34 @@ function formatBitrate(bits) {
 function formatLatency(ms) {
   if (ms == null || ms === '') return '—'
   const n = Number(ms)
-  // Math.round redondea al entero más cercano (sin decimales)
   return Number.isFinite(n) ? Math.round(n) : ms
 }
 
-// --- Helpers Visualización ---
-function toDisplay(v) {
-  try {
-    if (v == null) return '—'
-    if (typeof v === 'object') return JSON.stringify(v, null, 2)
-    return String(v)
-  } catch {
-    return String(v)
-  }
-}
-function isMultilineValue(v) {
-  if (v == null) return false
-  if (typeof v === 'object') return true
-  const s = String(v).trim()
-  return s.includes('\n') || s.length > 80 || s.startsWith('{') || s.startsWith('[')
+function getStatusClass(status) {
+  if (['timeout', 'error', 'link_down'].includes(status)) return 'status-timeout'
+  if (status === 'high_latency') return 'status-high-latency'
+  if (['ok', 'link_up'].includes(status)) return 'status-ok'
+  return 'status-pending'
 }
 
-function alertTypeLabel(t) {
-  switch (t) {
-    case 'timeout':
-      return 'Timeout'
-    case 'high_latency':
-      return 'Latencia alta'
-    case 'speed_change':
-      return 'Cambio de velocidad'
-    case 'traffic_threshold':
-      return 'Umbral de tráfico'
-    default:
-      return t || '—'
+function showNotification(message, type = 'success') {
+  notification.value = { show: true, message, type }
+  setTimeout(() => {
+    notification.value.show = false
+  }, 4000)
+}
+
+function safeJsonParse(v, fallback = {}) {
+  if (typeof v === 'object' && v !== null) return v
+  try {
+    return JSON.parse(v)
+  } catch {
+    return fallback
   }
 }
 
 /**
- * Normaliza payload
+ * Normaliza payload WS
  */
 function normalizeWsPayload(raw) {
   if (Array.isArray(raw)) return raw.flatMap(normalizeWsPayload)
@@ -92,12 +133,10 @@ function normalizeWsPayload(raw) {
   }
   if (raw && typeof raw === 'object') {
     if (raw.type === 'sensor_batch' && Array.isArray(raw.items)) return raw.items
-
     if (['sensor_update', 'sensor-status'].includes(raw.type) || raw.event === 'sensor_update') {
       const inner = raw.data || raw.payload || raw.sensor || raw.body || null
       if (inner && typeof inner === 'object') return [inner]
     }
-
     if (['welcome', 'ready', 'pong', 'hello'].includes(raw.type)) return []
     if (Object.prototype.hasOwnProperty.call(raw, 'sensor_id')) return [raw]
   }
@@ -140,46 +179,39 @@ watch(
 )
 
 // =========================================================
-// GESTIÓN DE WEBSOCKET (Nativo + Sync)
+// GESTIÓN DE WEBSOCKET
 // =========================================================
 let wsOpenUnbind = null
 let directMsgUnbind = null
 
-// Función para procesar mensajes directamente (Bypass de @/lib/ws)
 function handleRawMessage(event) {
   try {
     const txt = event.data
-    // Ignorar pongs para rendimiento
     if (txt.includes('pong')) return
-
     const parsed = JSON.parse(txt)
     const updates = normalizeWsPayload(parsed)
-
     if (updates.length > 0) {
       for (const u of updates) {
         if (u && u.sensor_id != null) {
           const sid = String(u.sensor_id)
           const currentData = liveSensorStatus.value[sid] || {}
-          // Reactividad directa
           liveSensorStatus.value[sid] = { ...currentData, ...u }
         }
       }
     }
   } catch {
-    // Ignorar errores de parseo
+    /* ignore */
   }
 }
 
 function wireWsSyncAndSubs() {
   const ws = getCurrentWebSocket()
-  // Si no hay WS, reintentar un poco después (race condition fix)
   if (!ws) {
     setTimeout(wireWsSyncAndSubs, 500)
     return
   }
 
-  // 1. Escuchar mensajes directamente (Esto es lo que arregla el pintado)
-  ws.removeEventListener('message', handleRawMessage) // Evitar duplicados
+  ws.removeEventListener('message', handleRawMessage)
   ws.addEventListener('message', handleRawMessage)
 
   directMsgUnbind = () => {
@@ -190,7 +222,6 @@ function wireWsSyncAndSubs() {
     }
   }
 
-  // 2. Enviar Sync y Suscripciones
   const sendSyncAndSubs = () => {
     try {
       ws.send(JSON.stringify({ type: 'sync_request', resource: 'sensors_latest' }))
@@ -200,11 +231,8 @@ function wireWsSyncAndSubs() {
     trySubscribeSensors()
   }
 
-  if (ws.readyState === WebSocket.OPEN) {
-    sendSyncAndSubs()
-  }
+  if (ws.readyState === WebSocket.OPEN) sendSyncAndSubs()
 
-  // 3. Manejar reconexiones
   const onOpen = () => sendSyncAndSubs()
   ws.addEventListener('open', onOpen)
 
@@ -223,7 +251,7 @@ onMounted(async () => {
     await waitForSession({ requireAuth: true, timeoutMs: 8000 })
   } catch {
     try {
-      router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
+      router.push({ name: 'login' })
     } catch {
       /* ignore */
     }
@@ -231,14 +259,11 @@ onMounted(async () => {
   }
 
   await fetchAllMonitors()
-
   try {
     await connectWebSocketWhenAuthenticated()
   } catch {
     /* ignore */
   }
-
-  // Iniciamos la escucha directa
   wireWsSyncAndSubs()
 })
 
@@ -252,13 +277,10 @@ async function fetchAllMonitors() {
   try {
     const { data } = await api.get('/monitors')
     monitors.value = Array.isArray(data) ? data : []
-
     monitors.value.forEach((m) => {
       ;(m.sensors || []).forEach((s) => {
         const sid = String(s.id)
-        if (!liveSensorStatus.value[sid]) {
-          liveSensorStatus.value[sid] = { status: 'pending' }
-        }
+        if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
       })
     })
     trySubscribeSensors()
@@ -295,83 +317,146 @@ function getOverallCardStatus(monitor) {
   })
 }
 
-function getStatusClass(status) {
-  if (['timeout', 'error', 'link_down'].includes(status)) return 'status-timeout'
-  if (status === 'high_latency') return 'status-high-latency'
-  if (['ok', 'link_up'].includes(status)) return 'status-ok'
-  return 'status-pending'
-}
-
 function goToSensorDetail(sensorId) {
   router.push(`/sensor/${sensorId}`)
 }
 
-async function showSensorDetails(sensor, event) {
+/* ====================== EDICIÓN DE SENSOR (MODAL) ========================= */
+
+// Abre el modal y rellena el formulario correspondiente
+async function showSensorDetails(sensor, monitor, event) {
   if (event?.stopPropagation) event.stopPropagation()
   await ensureChannelsLoaded()
+
   sensorDetailsToShow.value = sensor
+  currentMonitorContext.value = monitor
+
+  const cfg = safeJsonParse(sensor.config, {})
+
+  if (sensor.sensor_type === 'ping') {
+    const uiData = createNewPingSensor()
+    uiData.name = sensor.name
+    uiData.config = { ...uiData.config, ...cfg }
+
+    // Auto-fix si es maestro
+    // Nota: 'monitor' puede no traer 'is_maestro' directamente si la API no lo une,
+    // pero idealmente 'maestro_id' deberia estar. Si no está, asumimos seguridad.
+    // Aquí confiamos en que el usuario sabe, pero bloqueamos visualmente si tuvieramos el flag.
+    ;(cfg.alerts || []).forEach((a) => {
+      if (a.type === 'timeout') uiData.ui_alert_timeout = { enabled: true, ...a }
+      if (a.type === 'high_latency') uiData.ui_alert_latency = { enabled: true, ...a }
+    })
+    newPingSensor.value = uiData
+  } else if (sensor.sensor_type === 'ethernet') {
+    const uiData = createNewEthernetSensor()
+    uiData.name = sensor.name
+    uiData.config = {
+      interface_name: cfg.interface_name || '',
+      interval_sec: cfg.interval_sec || 30,
+    }
+    ;(cfg.alerts || []).forEach((a) => {
+      if (a.type === 'speed_change') uiData.ui_alert_speed_change = { enabled: true, ...a }
+      if (a.type === 'traffic_threshold') uiData.ui_alert_traffic = { enabled: true, ...a }
+    })
+    newEthernetSensor.value = uiData
+  }
 }
 
-// --------- Computed ---------
-const normalizedConfig = computed(() => {
-  if (!sensorDetailsToShow.value) return {}
-  const cfg = sensorDetailsToShow.value.config
-  if (cfg && typeof cfg === 'string') {
-    try {
-      return JSON.parse(cfg)
-    } catch {
-      return {}
+function closeSensorDetails() {
+  sensorDetailsToShow.value = null
+  currentMonitorContext.value = null
+}
+
+// Construye el payload (Idéntico a MonitorBuilder)
+function buildPayload(type, data) {
+  const config = { ...data.config }
+  config.alerts = []
+
+  const num = (v, d) => (typeof v === 'number' && !isNaN(v) ? v : d)
+
+  if (type === 'ping') {
+    const t = data.ui_alert_timeout
+    if (t.enabled && t.channel_id) {
+      config.alerts.push({
+        type: 'timeout',
+        channel_id: t.channel_id,
+        cooldown_minutes: num(t.cooldown_minutes, 5),
+        tolerance_count: num(t.tolerance_count, 1),
+      })
+    }
+    const l = data.ui_alert_latency
+    if (l.enabled && l.channel_id) {
+      config.alerts.push({
+        type: 'high_latency',
+        threshold_ms: num(l.threshold_ms, 200),
+        channel_id: l.channel_id,
+        cooldown_minutes: num(l.cooldown_minutes, 5),
+        tolerance_count: num(l.tolerance_count, 1),
+      })
+    }
+  } else if (type === 'ethernet') {
+    const s = data.ui_alert_speed_change
+    if (s.enabled && s.channel_id) {
+      config.alerts.push({
+        type: 'speed_change',
+        channel_id: s.channel_id,
+        cooldown_minutes: num(s.cooldown_minutes, 10),
+        tolerance_count: num(s.tolerance_count, 1),
+      })
+    }
+    const tr = data.ui_alert_traffic
+    if (tr.enabled && tr.channel_id) {
+      config.alerts.push({
+        type: 'traffic_threshold',
+        threshold_mbps: num(tr.threshold_mbps, 100),
+        direction: tr.direction,
+        channel_id: tr.channel_id,
+        cooldown_minutes: num(tr.cooldown_minutes, 5),
+        tolerance_count: num(tr.tolerance_count, 1),
+      })
     }
   }
-  return cfg || {}
-})
+  return { name: data.name, config }
+}
 
-const formattedSensorConfig = computed(() => {
-  const config = normalizedConfig.value
-  const details = []
-  for (const key in config) {
-    if (Object.prototype.hasOwnProperty.call(config, key) && key !== 'alerts') {
-      details.push({ key, value: config[key] })
+async function handleUpdateSensor() {
+  if (!sensorDetailsToShow.value) return
+  const type = sensorDetailsToShow.value.sensor_type
+  const uiData = type === 'ping' ? newPingSensor.value : newEthernetSensor.value
+
+  try {
+    const payload = buildPayload(type, uiData)
+    const { data } = await api.put(`/sensors/${sensorDetailsToShow.value.id}`, payload)
+
+    // Actualizar lista localmente
+    const mIdx = monitors.value.findIndex(
+      (m) => m.monitor_id === currentMonitorContext.value.monitor_id,
+    )
+    if (mIdx !== -1) {
+      const sIdx = monitors.value[mIdx].sensors.findIndex(
+        (s) => s.id === sensorDetailsToShow.value.id,
+      )
+      if (sIdx !== -1) {
+        monitors.value[mIdx].sensors[sIdx] = { ...monitors.value[mIdx].sensors[sIdx], ...data }
+      }
     }
-  }
-  if (Array.isArray(config.alerts) && config.alerts.length > 0) {
-    details.push({ key: 'Alertas configuradas', value: `${config.alerts.length}` })
-  }
-  return details
-})
 
-const alertsForModal = computed(() => {
-  const config = normalizedConfig.value
-  const arr = Array.isArray(config?.alerts) ? config.alerts : []
-  return arr.map((a, idx) => {
-    const channel =
-      a?.channel_id != null && channelsById.value[a.channel_id]?.name
-        ? channelsById.value[a.channel_id].name
-        : a?.channel_id != null
-          ? `Canal #${a.channel_id}`
-          : '—'
-
-    return {
-      id: idx,
-      typeLabel: alertTypeLabel(a?.type),
-      umbral:
-        a?.type === 'high_latency' && a?.threshold_ms
-          ? `${a.threshold_ms} ms`
-          : a?.type === 'traffic_threshold' && a?.threshold_mbps
-            ? `${a.threshold_mbps} Mbps`
-            : '—',
-      direccion: a?.direction || '—',
-      channel,
-      cooldown: a?.cooldown_minutes != null ? `${a.cooldown_minutes} min` : '5 min',
-    }
-  })
-})
+    showNotification('Sensor actualizado correctamente')
+    closeSensorDetails()
+  } catch (err) {
+    showNotification(err?.response?.data?.detail || 'Error al actualizar', 'error')
+  }
+}
 </script>
 
 <template>
   <div>
+    <div v-if="notification.show" :class="['notification', notification.type]">
+      {{ notification.message }}
+    </div>
+
     <div v-if="monitorToDelete" class="modal-overlay" @click.self="monitorToDelete = null">
-      <div class="modal-content">
+      <div class="modal-content small">
         <h3>Confirmar Eliminación</h3>
         <p>
           ¿Seguro que quieres eliminar el monitor para
@@ -385,48 +470,205 @@ const alertsForModal = computed(() => {
       </div>
     </div>
 
-    <div v-if="sensorDetailsToShow" class="modal-overlay" @click.self="sensorDetailsToShow = null">
+    <div v-if="sensorDetailsToShow" class="modal-overlay" @click.self="closeSensorDetails">
       <div class="modal-content">
-        <h3>Detalles del Sensor: {{ sensorDetailsToShow.name }}</h3>
-        <table class="details-table">
-          <tbody>
-            <tr v-for="item in formattedSensorConfig" :key="item.key">
-              <th>{{ item.key }}</th>
-              <td>
-                <pre v-if="isMultilineValue(item.value)" class="value-pre">{{
-                  toDisplay(item.value)
-                }}</pre>
-                <span v-else>{{ toDisplay(item.value) }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-if="alertsForModal.length" class="alerts-section">
-          <h4>Alertas configuradas</h4>
-          <table class="alerts-table">
-            <thead>
-              <tr>
-                <th>Tipo</th>
-                <th>Umbral</th>
-                <th>Dirección</th>
-                <th>Canal</th>
-                <th>Cooldown</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in alertsForModal" :key="row.id">
-                <td>{{ row.typeLabel }}</td>
-                <td>{{ row.umbral }}</td>
-                <td>{{ row.direccion }}</td>
-                <td>{{ row.channel }}</td>
-                <td>{{ row.cooldown }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="modal-actions">
-          <button class="btn-secondary" @click="sensorDetailsToShow = null">Cerrar</button>
-        </div>
+        <h3>Editar Sensor: {{ sensorDetailsToShow.sensor_type }}</h3>
+
+        <form
+          v-if="sensorDetailsToShow.sensor_type === 'ping'"
+          @submit.prevent="handleUpdateSensor"
+          class="config-form"
+        >
+          <div class="form-group span-3">
+            <label>Nombre</label>
+            <input type="text" v-model="newPingSensor.name" required />
+          </div>
+          <div class="form-group span-2">
+            <label>Tipo de Ping</label>
+            <select v-model="newPingSensor.config.ping_type">
+              <option value="device_to_external">Desde Dispositivo (Salida)</option>
+              <option value="maestro_to_device">Al Dispositivo (Entrada)</option>
+            </select>
+          </div>
+          <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
+            <label>IP Destino</label>
+            <input type="text" v-model="newPingSensor.config.target_ip" placeholder="8.8.8.8" />
+          </div>
+          <div class="form-group">
+            <label>Intervalo (s)</label>
+            <input type="number" v-model.number="newPingSensor.config.interval_sec" required />
+          </div>
+          <div class="form-group">
+            <label>Umbral (ms)</label>
+            <input type="number" v-model.number="newPingSensor.config.latency_threshold_ms" />
+          </div>
+          <div class="form-group">
+            <label>Modo</label>
+            <select v-model="newPingSensor.config.display_mode">
+              <option value="realtime">Tiempo Real</option>
+              <option value="average">Promedio</option>
+            </select>
+          </div>
+          <div class="form-group" v-if="newPingSensor.config.display_mode === 'average'">
+            <label>Muestras</label>
+            <input type="number" v-model.number="newPingSensor.config.average_count" />
+          </div>
+
+          <div class="sub-section span-3">
+            <h4>Alertas</h4>
+            <div class="alert-config-item">
+              <div class="form-group checkbox-group span-3">
+                <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.enabled" id="eTo" />
+                <label for="eTo">Timeout</label>
+              </div>
+              <template v-if="newPingSensor.ui_alert_timeout.enabled">
+                <div class="form-group">
+                  <label>Canal</label
+                  ><select v-model="newPingSensor.ui_alert_timeout.channel_id">
+                    <option v-for="c in channelsList" :key="c.id" :value="c.id">
+                      {{ c.name }}
+                    </option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>CD (min)</label
+                  ><input
+                    type="number"
+                    v-model.number="newPingSensor.ui_alert_timeout.cooldown_minutes"
+                  />
+                </div>
+                <div class="form-group">
+                  <label>Tol</label
+                  ><input
+                    type="number"
+                    v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
+                  />
+                </div>
+              </template>
+            </div>
+            <div class="alert-config-item mt-1">
+              <div class="form-group checkbox-group span-3">
+                <input type="checkbox" v-model="newPingSensor.ui_alert_latency.enabled" id="eLat" />
+                <label for="eLat">Latencia Alta</label>
+              </div>
+              <template v-if="newPingSensor.ui_alert_latency.enabled">
+                <div class="form-group">
+                  <label>Umbral</label
+                  ><input
+                    type="number"
+                    v-model.number="newPingSensor.ui_alert_latency.threshold_ms"
+                  />
+                </div>
+                <div class="form-group">
+                  <label>Canal</label
+                  ><select v-model="newPingSensor.ui_alert_latency.channel_id">
+                    <option v-for="c in channelsList" :key="c.id" :value="c.id">
+                      {{ c.name }}
+                    </option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>CD (min)</label
+                  ><input
+                    type="number"
+                    v-model.number="newPingSensor.ui_alert_latency.cooldown_minutes"
+                  />
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="modal-actions span-3">
+            <button type="button" class="btn-secondary" @click="closeSensorDetails">
+              Cancelar
+            </button>
+            <button type="submit" class="btn-primary">Guardar Cambios</button>
+          </div>
+        </form>
+
+        <form
+          v-if="sensorDetailsToShow.sensor_type === 'ethernet'"
+          @submit.prevent="handleUpdateSensor"
+          class="config-form"
+        >
+          <div class="form-group span-2">
+            <label>Nombre</label>
+            <input type="text" v-model="newEthernetSensor.name" required />
+          </div>
+          <div class="form-group">
+            <label>Interfaz</label>
+            <input type="text" v-model="newEthernetSensor.config.interface_name" required />
+          </div>
+          <div class="form-group span-3">
+            <label>Intervalo (s)</label>
+            <input type="number" v-model.number="newEthernetSensor.config.interval_sec" required />
+          </div>
+
+          <div class="sub-section span-3">
+            <h4>Alertas</h4>
+            <div class="alert-config-item">
+              <div class="form-group checkbox-group span-3">
+                <input
+                  type="checkbox"
+                  v-model="newEthernetSensor.ui_alert_speed_change.enabled"
+                  id="eSp"
+                />
+                <label for="eSp">Cambio de Velocidad</label>
+              </div>
+              <template v-if="newEthernetSensor.ui_alert_speed_change.enabled">
+                <div class="form-group">
+                  <label>Canal</label
+                  ><select v-model="newEthernetSensor.ui_alert_speed_change.channel_id">
+                    <option v-for="c in channelsList" :key="c.id" :value="c.id">
+                      {{ c.name }}
+                    </option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>CD (min)</label
+                  ><input
+                    type="number"
+                    v-model.number="newEthernetSensor.ui_alert_speed_change.cooldown_minutes"
+                  />
+                </div>
+              </template>
+            </div>
+            <div class="alert-config-item mt-1">
+              <div class="form-group checkbox-group span-3">
+                <input
+                  type="checkbox"
+                  v-model="newEthernetSensor.ui_alert_traffic.enabled"
+                  id="eTr"
+                />
+                <label for="eTr">Umbral Tráfico</label>
+              </div>
+              <template v-if="newEthernetSensor.ui_alert_traffic.enabled">
+                <div class="form-group">
+                  <label>Mbps</label
+                  ><input
+                    type="number"
+                    v-model.number="newEthernetSensor.ui_alert_traffic.threshold_mbps"
+                  />
+                </div>
+                <div class="form-group">
+                  <label>Canal</label
+                  ><select v-model="newEthernetSensor.ui_alert_traffic.channel_id">
+                    <option v-for="c in channelsList" :key="c.id" :value="c.id">
+                      {{ c.name }}
+                    </option>
+                  </select>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="modal-actions span-3">
+            <button type="button" class="btn-secondary" @click="closeSensorDetails">
+              Cancelar
+            </button>
+            <button type="submit" class="btn-primary">Guardar Cambios</button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -476,9 +718,9 @@ const alertsForModal = computed(() => {
                     <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'"
                       >...</span
                     >
-                    <span v-else>
-                      {{ formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms) }} ms
-                    </span>
+                    <span v-else
+                      >{{ formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms) }} ms</span
+                    >
                   </template>
 
                   <template v-else-if="sensor.sensor_type === 'ethernet'">
@@ -507,11 +749,13 @@ const alertsForModal = computed(() => {
                     </div>
                   </template>
 
-                  <template v-else>
-                    {{ liveSensorStatus[String(sensor.id)]?.status || 'pending' }}
-                  </template>
+                  <template v-else>{{
+                    liveSensorStatus[String(sensor.id)]?.status || 'pending'
+                  }}</template>
                 </div>
-                <button class="details-btn" @click="showSensorDetails(sensor, $event)">⋮</button>
+                <button class="details-btn" @click="showSensorDetails(sensor, monitor, $event)">
+                  ✎
+                </button>
               </div>
             </div>
           </div>
@@ -653,6 +897,8 @@ const alertsForModal = computed(() => {
   text-align: center;
   padding: 1rem;
 }
+
+/* MODALS */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -669,11 +915,14 @@ const alertsForModal = computed(() => {
   background-color: var(--surface-color);
   padding: 2rem;
   border-radius: 12px;
-  max-width: 700px;
+  max-width: 800px;
   width: 92%;
   text-align: left;
-  max-height: 80vh;
-  overflow: auto;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.modal-content.small {
+  max-width: 400px;
 }
 .modal-actions {
   display: flex;
@@ -696,65 +945,79 @@ const alertsForModal = computed(() => {
   background-color: var(--secondary-color);
   color: white;
 }
-.details-table {
-  width: 100%;
-  text-align: left;
-  margin-top: 1rem;
-  border-collapse: collapse;
-}
-.details-table th,
-.details-table td {
-  padding: 0.75rem;
-  border-bottom: 1px solid var(--primary-color);
-  vertical-align: top;
-}
-.details-table th {
-  color: var(--gray);
-  text-transform: capitalize;
-  width: 220px;
-}
-.details-table td {
+.btn-primary {
+  background-color: var(--blue);
   color: white;
-  white-space: normal;
-  word-break: break-word;
 }
-.value-pre {
-  background: rgba(255, 255, 255, 0.06);
-  padding: 0.6rem 0.75rem;
+
+/* ESTILOS DE FORMULARIO (Igual que Builder) */
+.config-form {
+  padding: 1rem;
+  background-color: var(--bg-color);
   border-radius: 8px;
-  white-space: pre-wrap;
-  word-break: normal;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-    monospace;
-  font-size: 0.9rem;
-  line-height: 1.25rem;
-  margin: 0;
+  border: 1px solid var(--primary-color);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
 }
-.alerts-section {
-  margin-top: 1.25rem;
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
-.alerts-section h4 {
-  margin: 0 0 0.5rem 0;
+.form-group.span-2 {
+  grid-column: span 2;
 }
-.alerts-table {
-  width: 100%;
-  border-collapse: collapse;
+.form-group.span-3 {
+  grid-column: span 3;
 }
-.alerts-table th,
-.alerts-table td {
-  padding: 0.6rem 0.75rem;
-  border-bottom: 1px solid var(--primary-color);
-}
-.alerts-table th {
+.form-group label {
+  font-weight: bold;
   color: var(--gray);
-  font-size: 0.9rem;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  font-size: 0.85rem;
 }
-.alerts-table td {
+.form-group input,
+.form-group select {
+  padding: 0.6rem;
+  background-color: var(--surface-color);
+  border: 1px solid var(--primary-color);
+  border-radius: 6px;
   color: white;
+  width: 100%;
 }
+.sub-section {
+  grid-column: span 3;
+  background-color: var(--surface-color);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-top: 0.5rem;
+  border: 1px solid var(--primary-color);
+}
+.sub-section h4 {
+  margin: 0 0 0.5rem 0;
+  border-bottom: 1px solid #444;
+  padding-bottom: 0.5rem;
+}
+.alert-config-item {
+  display: contents;
+}
+.alert-config-item > .form-group {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  grid-column: span 3;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.checkbox-group {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+.mt-1 {
+  margin-top: 1rem;
+}
+
 .sensor-status-group {
   display: flex;
   align-items: center;
@@ -764,16 +1027,33 @@ const alertsForModal = computed(() => {
   background: none;
   border: none;
   color: var(--gray);
-  font-size: 1.5rem;
-  font-weight: bold;
+  font-size: 1.2rem;
   cursor: pointer;
-  border-radius: 50%;
   width: 30px;
   height: 30px;
   line-height: 30px;
   text-align: center;
+  border-radius: 50%;
 }
 .details-btn:hover {
   background-color: rgba(255, 255, 255, 0.1);
+  color: var(--blue);
+}
+
+.notification {
+  position: fixed;
+  top: 90px;
+  right: 20px;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  color: white;
+  font-weight: bold;
+  z-index: 3000;
+}
+.notification.success {
+  background-color: var(--green);
+}
+.notification.error {
+  background-color: var(--secondary-color);
 }
 </style>
