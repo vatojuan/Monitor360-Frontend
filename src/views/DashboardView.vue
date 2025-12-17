@@ -18,13 +18,14 @@ const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- COMPUTADO: Lógica de negocio para Ping ---
 const hasParentMaestro = computed(() => {
-  // Verificamos si el monitor (dispositivo) tiene un maestro_id asignado.
   return !!currentMonitorContext.value?.maestro_id
 })
 
-// Formularios Reactivos (mismo esquema que MonitorBuilder)
+// Formularios Reactivos
 const createNewPingSensor = () => ({
   name: '',
+  is_active: true,
+  alerts_paused: false,
   config: {
     ping_type: 'device_to_external',
     target_ip: '',
@@ -45,6 +46,8 @@ const createNewPingSensor = () => ({
 
 const createNewEthernetSensor = () => ({
   name: '',
+  is_active: true,
+  alerts_paused: false,
   config: {
     interface_name: '',
     interval_sec: 30,
@@ -70,7 +73,7 @@ const newEthernetSensor = ref(createNewEthernetSensor())
 
 // --- Canales ---
 const channelsById = ref({})
-const channelsList = computed(() => Object.values(channelsById.value)) // Para los select
+const channelsList = computed(() => Object.values(channelsById.value))
 
 async function ensureChannelsLoaded() {
   if (Object.keys(channelsById.value).length) return
@@ -125,9 +128,6 @@ function safeJsonParse(v, fallback = {}) {
   }
 }
 
-/**
- * Normaliza payload WS
- */
 function normalizeWsPayload(raw) {
   if (Array.isArray(raw)) return raw.flatMap(normalizeWsPayload)
   if (typeof raw === 'string') {
@@ -155,7 +155,11 @@ const lastSubscribedIds = ref([])
 function currentSensorIds() {
   const ids = []
   for (const m of monitors.value) {
-    for (const s of m.sensors || []) ids.push(s.id)
+    if (m.is_active) {
+      for (const s of m.sensors || []) {
+        if (s.is_active) ids.push(s.id)
+      }
+    }
   }
   return ids
 }
@@ -164,12 +168,11 @@ function trySubscribeSensors() {
   const ws = getCurrentWebSocket()
   if (!ws || ws.readyState !== WebSocket.OPEN) return
   const ids = currentSensorIds()
-  if (!ids.length) return
 
   const same =
     ids.length === lastSubscribedIds.value.length &&
     ids.every((v, i) => v === lastSubscribedIds.value[i])
-  if (same) return
+  if (same && ids.length > 0) return
 
   try {
     ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
@@ -184,9 +187,7 @@ watch(
   () => trySubscribeSensors(),
 )
 
-// =========================================================
-// GESTIÓN DE WEBSOCKET
-// =========================================================
+// ================= WS =================
 let wsOpenUnbind = null
 let directMsgUnbind = null
 
@@ -219,7 +220,6 @@ function wireWsSyncAndSubs() {
 
   ws.removeEventListener('message', handleRawMessage)
   ws.addEventListener('message', handleRawMessage)
-
   directMsgUnbind = () => {
     try {
       ws.removeEventListener('message', handleRawMessage)
@@ -238,10 +238,8 @@ function wireWsSyncAndSubs() {
   }
 
   if (ws.readyState === WebSocket.OPEN) sendSyncAndSubs()
-
   const onOpen = () => sendSyncAndSubs()
   ws.addEventListener('open', onOpen)
-
   wsOpenUnbind = () => {
     try {
       ws.removeEventListener('open', onOpen)
@@ -284,6 +282,8 @@ async function fetchAllMonitors() {
     const { data } = await api.get('/monitors')
     monitors.value = Array.isArray(data) ? data : []
     monitors.value.forEach((m) => {
+      if (m.is_active === undefined) m.is_active = true
+      if (m.alerts_paused === undefined) m.alerts_paused = false
       ;(m.sensors || []).forEach((s) => {
         const sid = String(s.id)
         if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
@@ -296,7 +296,32 @@ async function fetchAllMonitors() {
   }
 }
 
-/* ====================== UI Actions ========================= */
+/* ====================== UI Actions (Monitor) ========================= */
+async function toggleMonitorActive(monitor) {
+  const newVal = !monitor.is_active
+  monitor.is_active = newVal
+  try {
+    await api.put(`/monitors/${monitor.monitor_id}`, { is_active: newVal })
+    if (!newVal) trySubscribeSensors()
+    showNotification(newVal ? 'Monitor encendido' : 'Monitor apagado', 'success')
+  } catch {
+    monitor.is_active = !newVal
+    showNotification('Error al cambiar estado del monitor', 'error')
+  }
+}
+
+async function toggleMonitorPause(monitor) {
+  const newVal = !monitor.alerts_paused
+  monitor.alerts_paused = newVal
+  try {
+    await api.put(`/monitors/${monitor.monitor_id}`, { alerts_paused: newVal })
+    showNotification(newVal ? 'Alertas pausadas (Global)' : 'Alertas reanudadas', 'success')
+  } catch {
+    monitor.alerts_paused = !newVal
+    showNotification('Error al cambiar pausa de monitor', 'error')
+  }
+}
+
 function requestDeleteMonitor(monitor, event) {
   if (event?.stopPropagation) event.stopPropagation()
   monitorToDelete.value = monitor
@@ -315,6 +340,7 @@ async function confirmDeleteMonitor() {
 }
 
 function getOverallCardStatus(monitor) {
+  if (!monitor.is_active) return false
   if (!monitor.sensors || monitor.sensors.length === 0) return false
   return monitor.sensors.some((sensor) => {
     const sid = String(sensor.id)
@@ -329,7 +355,6 @@ function goToSensorDetail(sensorId) {
 
 /* ====================== EDICIÓN DE SENSOR (MODAL) ========================= */
 
-// Abre el modal y rellena el formulario correspondiente
 async function showSensorDetails(sensor, monitor, event) {
   if (event?.stopPropagation) event.stopPropagation()
   await ensureChannelsLoaded()
@@ -342,11 +367,11 @@ async function showSensorDetails(sensor, monitor, event) {
   if (sensor.sensor_type === 'ping') {
     const uiData = createNewPingSensor()
     uiData.name = sensor.name
+    uiData.is_active = sensor.is_active !== false
+    uiData.alerts_paused = sensor.alerts_paused === true
+
     uiData.config = { ...uiData.config, ...cfg }
 
-    // CORRECCIÓN LÓGICA:
-    // Si abrimos un sensor 'maestro_to_device' pero el monitor NO tiene padre (maestro_id es null),
-    // forzamos visualmente a 'device_to_external' para evitar guardar configuraciones rotas.
     if (!monitor.maestro_id) {
       uiData.config.ping_type = 'device_to_external'
     }
@@ -359,6 +384,9 @@ async function showSensorDetails(sensor, monitor, event) {
   } else if (sensor.sensor_type === 'ethernet') {
     const uiData = createNewEthernetSensor()
     uiData.name = sensor.name
+    uiData.is_active = sensor.is_active !== false
+    uiData.alerts_paused = sensor.alerts_paused === true
+
     uiData.config = {
       interface_name: cfg.interface_name || '',
       interval_sec: cfg.interval_sec || 30,
@@ -376,11 +404,9 @@ function closeSensorDetails() {
   currentMonitorContext.value = null
 }
 
-// Construye el payload
 function buildPayload(type, data) {
   const config = { ...data.config }
 
-  // SEGURIDAD: Validación final antes de enviar
   if (type === 'ping' && !currentMonitorContext.value?.maestro_id) {
     config.ping_type = 'device_to_external'
   }
@@ -430,7 +456,13 @@ function buildPayload(type, data) {
       })
     }
   }
-  return { name: data.name, config }
+
+  return {
+    name: data.name,
+    config,
+    is_active: data.is_active,
+    alerts_paused: data.alerts_paused,
+  }
 }
 
 async function handleUpdateSensor() {
@@ -456,6 +488,9 @@ async function handleUpdateSensor() {
     }
 
     showNotification('Sensor actualizado correctamente')
+    if (payload.is_active !== sensorDetailsToShow.value.is_active) {
+      trySubscribeSensors()
+    }
     closeSensorDetails()
   } catch (err) {
     showNotification(err?.response?.data?.detail || 'Error al actualizar', 'error')
@@ -493,6 +528,24 @@ async function handleUpdateSensor() {
           @submit.prevent="handleUpdateSensor"
           class="config-form"
         >
+          <div class="sub-section span-3">
+            <h4>Estado del Sensor</h4>
+            <div class="alert-config-item">
+              <div class="form-group checkbox-group">
+                <input type="checkbox" v-model="newPingSensor.is_active" id="pActive" />
+                <label for="pActive" :class="newPingSensor.is_active ? 'c-green' : 'c-gray'">
+                  {{ newPingSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO' }}
+                </label>
+              </div>
+              <div class="form-group checkbox-group">
+                <input type="checkbox" v-model="newPingSensor.alerts_paused" id="pPause" />
+                <label for="pPause" :class="newPingSensor.alerts_paused ? 'c-orange' : ''">
+                  {{ newPingSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS' }}
+                </label>
+              </div>
+            </div>
+          </div>
+
           <div class="form-group span-3">
             <label>Nombre</label>
             <input type="text" v-model="newPingSensor.name" required />
@@ -536,7 +589,7 @@ async function handleUpdateSensor() {
           </div>
 
           <div class="sub-section span-3">
-            <h4>Alertas</h4>
+            <h4>Configuración de Alertas</h4>
             <div class="alert-config-item">
               <div class="form-group checkbox-group span-3">
                 <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.enabled" id="eTo" />
@@ -612,6 +665,26 @@ async function handleUpdateSensor() {
           @submit.prevent="handleUpdateSensor"
           class="config-form"
         >
+          <div class="sub-section span-3">
+            <h4>Estado del Sensor</h4>
+            <div class="alert-config-item">
+              <div class="form-group checkbox-group">
+                <input type="checkbox" v-model="newEthernetSensor.is_active" id="eActive" />
+                <label for="eActive" :class="newEthernetSensor.is_active ? 'c-green' : 'c-gray'">
+                  {{ newEthernetSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO' }}
+                </label>
+              </div>
+              <div class="form-group checkbox-group">
+                <input type="checkbox" v-model="newEthernetSensor.alerts_paused" id="ePause" />
+                <label for="ePause" :class="newEthernetSensor.alerts_paused ? 'c-orange' : ''">
+                  {{
+                    newEthernetSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS'
+                  }}
+                </label>
+              </div>
+            </div>
+          </div>
+
           <div class="form-group span-2">
             <label>Nombre</label>
             <input type="text" v-model="newEthernetSensor.name" required />
@@ -626,7 +699,7 @@ async function handleUpdateSensor() {
           </div>
 
           <div class="sub-section span-3">
-            <h4>Alertas</h4>
+            <h4>Configuración de Alertas</h4>
             <div class="alert-config-item">
               <div class="form-group checkbox-group span-3">
                 <input
@@ -702,13 +775,39 @@ async function handleUpdateSensor() {
       <div
         v-for="monitor in monitors"
         :key="monitor.monitor_id"
-        :class="['monitor-card', { 'status-alert': getOverallCardStatus(monitor) }]"
+        :class="[
+          'monitor-card',
+          { 'status-alert': getOverallCardStatus(monitor), 'is-inactive': !monitor.is_active },
+        ]"
       >
         <div class="card-header">
-          <h3>{{ monitor.client_name }}</h3>
+          <h3>
+            {{ monitor.client_name }}
+            <span v-if="!monitor.is_active" class="off-badge">OFF</span>
+            <span v-if="monitor.alerts_paused" class="pause-badge">⏸️</span>
+          </h3>
           <span class="device-info-header">{{ monitor.ip_address }}</span>
           <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
-          <button class="remove-btn" @click="requestDeleteMonitor(monitor, $event)">×</button>
+
+          <div class="card-actions">
+            <button
+              class="icon-btn"
+              :class="{ 'active-orange': monitor.alerts_paused }"
+              @click="toggleMonitorPause(monitor)"
+              title="Pausar/Reanudar Alertas"
+            >
+              {{ monitor.alerts_paused ? '🔕' : '🔔' }}
+            </button>
+            <button
+              class="icon-btn"
+              :class="{ 'active-red': !monitor.is_active }"
+              @click="toggleMonitorActive(monitor)"
+              title="Encender/Apagar Monitor"
+            >
+              {{ monitor.is_active ? '🔌' : '⚫' }}
+            </button>
+            <button class="remove-btn" @click="requestDeleteMonitor(monitor, $event)">×</button>
+          </div>
         </div>
 
         <div class="card-body">
@@ -721,15 +820,23 @@ async function handleUpdateSensor() {
               v-for="sensor in monitor.sensors"
               :key="sensor.id"
               class="sensor-row"
+              :class="{ 'row-inactive': !sensor.is_active, 'row-paused': sensor.alerts_paused }"
               @click="goToSensorDetail(sensor.id)"
             >
-              <span class="sensor-name">{{ sensor.name }}</span>
+              <span class="sensor-name">
+                {{ sensor.name }}
+                <small v-if="sensor.alerts_paused">⏸️</small>
+              </span>
+
               <div class="sensor-status-group">
                 <div
                   class="sensor-value"
                   :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
                 >
-                  <template v-if="sensor.sensor_type === 'ping'">
+                  <template v-if="!sensor.is_active">
+                    <span class="val-off">OFF</span>
+                  </template>
+                  <template v-else-if="sensor.sensor_type === 'ping'">
                     <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'"
                       >Timeout</span
                     >
@@ -799,6 +906,11 @@ async function handleUpdateSensor() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: opacity 0.3s;
+}
+.monitor-card.is-inactive {
+  opacity: 0.6;
+  border-color: #444;
 }
 .monitor-card.status-alert {
   border-color: var(--secondary-color);
@@ -808,7 +920,7 @@ async function handleUpdateSensor() {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 1rem;
   background-color: var(--primary-color);
 }
 .card-header h3 {
@@ -819,7 +931,20 @@ async function handleUpdateSensor() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
+.off-badge {
+  background: #444;
+  font-size: 0.7rem;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.pause-badge {
+  font-size: 0.9rem;
+}
+
 .device-info-header {
   font-size: 0.85rem;
   color: var(--gray);
@@ -828,12 +953,40 @@ async function handleUpdateSensor() {
 .alert-icon {
   font-size: 1.25rem;
 }
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.icon-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 5px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.icon-btn:hover {
+  opacity: 1;
+}
+.active-orange {
+  opacity: 1;
+  text-shadow: 0 0 5px orange;
+}
+.active-red {
+  opacity: 1;
+  text-shadow: 0 0 5px red;
+}
+
 .remove-btn {
   background: none;
   border: none;
   color: var(--gray);
   font-size: 1.5rem;
   cursor: pointer;
+  margin-left: 0.5rem;
 }
 .card-body {
   padding: 1rem;
@@ -844,6 +997,7 @@ async function handleUpdateSensor() {
   flex-direction: column;
   gap: 0.75rem;
 }
+
 .sensor-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -858,6 +1012,13 @@ async function handleUpdateSensor() {
 .sensor-row:hover {
   background-color: var(--primary-color);
 }
+.sensor-row.row-inactive {
+  opacity: 0.5;
+}
+.sensor-row.row-paused {
+  border-left: 3px solid orange;
+}
+
 .sensor-name {
   font-size: 0.9rem;
   white-space: nowrap;
@@ -867,6 +1028,13 @@ async function handleUpdateSensor() {
 .sensor-value {
   text-align: right;
 }
+.val-off {
+  color: #666;
+  font-weight: bold;
+  font-size: 0.8rem;
+  letter-spacing: 1px;
+}
+
 .ethernet-data {
   display: flex;
   flex-direction: column;
@@ -971,7 +1139,7 @@ async function handleUpdateSensor() {
   color: white;
 }
 
-/* ESTILOS DE FORMULARIO (Igual que Builder) */
+/* ESTILOS DE FORMULARIO */
 .config-form {
   padding: 1rem;
   background-color: var(--bg-color);
@@ -1048,6 +1216,18 @@ async function handleUpdateSensor() {
 }
 .mt-1 {
   margin-top: 1rem;
+}
+.c-green {
+  color: var(--green);
+  font-weight: bold;
+}
+.c-gray {
+  color: #666;
+  font-weight: bold;
+}
+.c-orange {
+  color: #fbbf24;
+  font-weight: bold;
 }
 
 .sensor-status-group {
