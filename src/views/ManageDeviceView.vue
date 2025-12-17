@@ -74,9 +74,9 @@ async function fetchVpnProfiles() {
 
 /**
  * Alta en UN paso:
- *  - VPN: backend levanta túnel, valida credencial y crea el dispositivo.
- *  - Directo: conecta contra la IP y crea.
- *  - Maestro: a través de un Maestro existente.
+ * - VPN: backend levanta túnel, valida credencial y crea el dispositivo.
+ * - Directo: conecta contra la IP y crea.
+ * - Maestro: a través de un Maestro existente.
  */
 async function handleAddDeviceOneStep() {
   // Validaciones mínimas
@@ -168,8 +168,13 @@ async function promoteToMaestro(device) {
   try {
     // Agregamos , {} para enviar un JSON vacío y evitar errores de red
     await api.put(`/devices/${device.id}/promote`, {})
+
+    // --> CORRECCIÓN CLAVE: Actualizar estado local para reactividad inmediata <--
+    device.is_maestro = true
+
     showNotification(`${device.client_name} ahora es Maestro.`, 'success')
-    fetchAllDevices()
+    // Opcional: fetchAllDevices() si quieres asegurar consistencia total,
+    // pero con el cambio local es suficiente para la UX
   } catch (err) {
     console.error('Error al promover a maestro:', err)
     showNotification(err.response?.data?.detail || 'Error al promover.', 'error')
@@ -235,7 +240,6 @@ onMounted(async () => {
       </button>
     </div>
 
-    <!-- ==================== TAB: ALTA EN UN PASO ==================== -->
     <section v-if="currentTab === 'add'" class="control-section">
       <h2><i class="icon">➕</i> Alta de dispositivo (en un paso)</h2>
 
@@ -326,7 +330,6 @@ onMounted(async () => {
       </form>
     </section>
 
-    <!-- ==================== TAB: GESTIONAR ==================== -->
     <section v-if="currentTab === 'manage'" class="control-section">
       <h2><i class="icon">👑</i> Gestionar Dispositivos y Maestros</h2>
       <div v-if="isLoadingDevices" class="loading-text">Cargando...</div>
@@ -345,11 +348,11 @@ onMounted(async () => {
               </select>
               <span class="maestro-badge">Maestro</span>
             </div>
+
             <button v-else @click="promoteToMaestro(device)" class="btn-promote">
               Promover a Maestro
             </button>
 
-            <!-- Eliminar -->
             <button
               class="btn-danger"
               :disabled="deletingId === device.id"

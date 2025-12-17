@@ -19,9 +19,11 @@ const channels = ref([])
 const sensorToEdit = ref(null)
 const isEditMode = ref(false)
 
-// --- Computados ---
-const isMaestro = computed(() => {
-  return !!selectedDevice.value?.is_maestro
+// --- COMPUTADO: LA LÓGICA CORRECTA ---
+const hasParentMaestro = computed(() => {
+  // Verificamos si el dispositivo tiene un padre asignado.
+  // Si maestro_id es null/undefined, es un nodo raíz (Maestro o VPN directa) y nadie le puede hacer ping desde arriba.
+  return !!selectedDevice.value?.maestro_id
 })
 
 //
@@ -78,13 +80,12 @@ onMounted(() => {
   fetchChannels()
 })
 
-// RESETEO AUTOMÁTICO AL CAMBIAR DE DISPOSITIVO
+// RESETEO Y VALIDACIÓN AL CAMBIAR DISPOSITIVO
 watch(selectedDevice, () => {
-  // Reseteamos los formularios para evitar que quede un 'maestro_to_device' pegado
   newPingSensor.value = createNewPingSensor()
 
-  // Si el nuevo dispositivo es maestro, forzamos explícitamente el tipo
-  if (selectedDevice.value?.is_maestro) {
+  // Si NO tiene padre (es maestro o vpn directa), forzamos 'device_to_external'
+  if (!hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
   }
 })
@@ -122,8 +123,8 @@ function safeJsonParse(v, fallback = null) {
 function buildSensorPayload(sensorType, sensorData) {
   const finalConfig = { ...sensorData.config }
 
-  // SEGURIDAD FINAL: Si es maestro, IMPOSIBLE guardar como maestro_to_device
-  if (sensorType === 'ping' && isMaestro.value) {
+  // SEGURIDAD: Si intentan mandar 'maestro_to_device' pero no tiene padre, lo corregimos a la fuerza.
+  if (sensorType === 'ping' && !hasParentMaestro.value) {
     finalConfig.ping_type = 'device_to_external'
   }
 
@@ -232,8 +233,8 @@ function openFormForCreate(type) {
   newPingSensor.value = createNewPingSensor()
   newEthernetSensor.value = createNewEthernetSensor()
 
-  // LÓGICA DE UI: Si es maestro, pre-seleccionar y bloquear
-  if (type === 'ping' && isMaestro.value) {
+  // UI LOGIC: Si no tiene padre, forzamos ping externo
+  if (type === 'ping' && !hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
   }
 
@@ -250,8 +251,8 @@ function openFormForEdit(sensor) {
     uiData.name = sensor.name
     uiData.config = { ...uiData.config, ...cfg }
 
-    // Si editamos un sensor viejo en un maestro, forzamos corrección visual
-    if (isMaestro.value) {
+    // Si editamos un sensor viejo y el dispositivo no tiene padre, corregimos la UI
+    if (!hasParentMaestro.value) {
       uiData.config.ping_type = 'device_to_external'
     }
 
@@ -425,7 +426,7 @@ watch(searchQuery, (newQuery) => {
             <h3>{{ selectedDevice.client_name }}</h3>
             <p>
               {{ selectedDevice.ip_address }}
-              <span v-if="isMaestro" class="maestro-badge">MAESTRO</span>
+              <span v-if="selectedDevice.is_maestro" class="maestro-badge">MAESTRO</span>
             </p>
           </div>
           <button @click="clearSelectedDevice">Cambiar</button>
@@ -485,15 +486,16 @@ watch(searchQuery, (newQuery) => {
 
           <div class="form-group span-2">
             <label>Tipo de Ping</label>
-            <select v-model="newPingSensor.config.ping_type" :disabled="isMaestro">
+            <select v-model="newPingSensor.config.ping_type" :disabled="!hasParentMaestro">
               <option value="device_to_external">Ping desde Dispositivo (Salida)</option>
-              <option value="maestro_to_device" v-if="!isMaestro">
+              <option value="maestro_to_device" v-if="hasParentMaestro">
                 Ping al Dispositivo (Desde Maestro)
               </option>
             </select>
 
-            <p v-if="isMaestro" class="form-hint warning-text">
-              ⚠️ Este dispositivo es Maestro. Solo puede realizar pings hacia afuera.
+            <p v-if="!hasParentMaestro" class="form-hint warning-text">
+              ⚠️ Este dispositivo no tiene un Maestro asignado (es raíz o directo). Solo puede hacer
+              ping hacia afuera.
             </p>
           </div>
 
@@ -562,7 +564,7 @@ watch(searchQuery, (newQuery) => {
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (fallos)</label>
+                  <label>Tolerancia (fallos consecutivos)</label>
                   <input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
@@ -606,7 +608,7 @@ watch(searchQuery, (newQuery) => {
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (fallos)</label>
+                  <label>Tolerancia (fallos consecutivos)</label>
                   <input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_latency.tolerance_count"
@@ -679,7 +681,7 @@ watch(searchQuery, (newQuery) => {
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (eventos)</label>
+                  <label>Tolerancia (eventos consecutivos)</label>
                   <input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_speed_change.tolerance_count"
@@ -731,7 +733,7 @@ watch(searchQuery, (newQuery) => {
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (lecturas)</label>
+                  <label>Tolerancia (lecturas consecutivas)</label>
                   <input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_traffic.tolerance_count"
@@ -753,7 +755,7 @@ watch(searchQuery, (newQuery) => {
 </template>
 
 <style scoped>
-/* Estilos existentes */
+/* Estilos originales preservados */
 .builder-layout {
   max-width: 900px;
   margin: auto;
