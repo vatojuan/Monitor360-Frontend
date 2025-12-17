@@ -52,7 +52,7 @@ const createNewEthernetSensor = () => ({
   name: '',
   config: {
     interface_name: '',
-    interval_sec: 30,
+    interval_sec: 3,
   },
   ui_alert_speed_change: {
     enabled: false,
