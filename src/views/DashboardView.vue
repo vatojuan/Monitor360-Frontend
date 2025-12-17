@@ -16,6 +16,12 @@ const sensorDetailsToShow = ref(null) // El sensor original siendo editado
 const currentMonitorContext = ref(null) // El monitor padre (para contexto de IP/Maestro)
 const notification = ref({ show: false, message: '', type: 'success' })
 
+// --- COMPUTADO: Lógica de negocio para Ping ---
+const hasParentMaestro = computed(() => {
+  // Verificamos si el monitor (dispositivo) tiene un maestro_id asignado.
+  return !!currentMonitorContext.value?.maestro_id
+})
+
 // Formularios Reactivos (mismo esquema que MonitorBuilder)
 const createNewPingSensor = () => ({
   name: '',
@@ -338,10 +344,13 @@ async function showSensorDetails(sensor, monitor, event) {
     uiData.name = sensor.name
     uiData.config = { ...uiData.config, ...cfg }
 
-    // Auto-fix si es maestro
-    // Nota: 'monitor' puede no traer 'is_maestro' directamente si la API no lo une,
-    // pero idealmente 'maestro_id' deberia estar. Si no está, asumimos seguridad.
-    // Aquí confiamos en que el usuario sabe, pero bloqueamos visualmente si tuvieramos el flag.
+    // CORRECCIÓN LÓGICA:
+    // Si abrimos un sensor 'maestro_to_device' pero el monitor NO tiene padre (maestro_id es null),
+    // forzamos visualmente a 'device_to_external' para evitar guardar configuraciones rotas.
+    if (!monitor.maestro_id) {
+      uiData.config.ping_type = 'device_to_external'
+    }
+
     ;(cfg.alerts || []).forEach((a) => {
       if (a.type === 'timeout') uiData.ui_alert_timeout = { enabled: true, ...a }
       if (a.type === 'high_latency') uiData.ui_alert_latency = { enabled: true, ...a }
@@ -367,11 +376,16 @@ function closeSensorDetails() {
   currentMonitorContext.value = null
 }
 
-// Construye el payload (Idéntico a MonitorBuilder)
+// Construye el payload
 function buildPayload(type, data) {
   const config = { ...data.config }
-  config.alerts = []
 
+  // SEGURIDAD: Validación final antes de enviar
+  if (type === 'ping' && !currentMonitorContext.value?.maestro_id) {
+    config.ping_type = 'device_to_external'
+  }
+
+  config.alerts = []
   const num = (v, d) => (typeof v === 'number' && !isNaN(v) ? v : d)
 
   if (type === 'ping') {
@@ -483,23 +497,30 @@ async function handleUpdateSensor() {
             <label>Nombre</label>
             <input type="text" v-model="newPingSensor.name" required />
           </div>
+
           <div class="form-group span-2">
             <label>Tipo de Ping</label>
-            <select v-model="newPingSensor.config.ping_type">
+            <select v-model="newPingSensor.config.ping_type" :disabled="!hasParentMaestro">
               <option value="device_to_external">Desde Dispositivo (Salida)</option>
-              <option value="maestro_to_device">Al Dispositivo (Entrada)</option>
+              <option value="maestro_to_device" v-if="hasParentMaestro">
+                Al Dispositivo (Entrada)
+              </option>
             </select>
+            <p v-if="!hasParentMaestro" class="form-hint warning-text">
+              ⚠️ Este dispositivo no tiene Maestro asignado. Solo puede hacer ping externo.
+            </p>
           </div>
+
           <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
             <label>IP Destino</label>
             <input type="text" v-model="newPingSensor.config.target_ip" placeholder="8.8.8.8" />
           </div>
           <div class="form-group">
-            <label>Intervalo (s)</label>
+            <label>Intervalo (seg)</label>
             <input type="number" v-model.number="newPingSensor.config.interval_sec" required />
           </div>
           <div class="form-group">
-            <label>Umbral (ms)</label>
+            <label>Umbral Latencia (ms)</label>
             <input type="number" v-model.number="newPingSensor.config.latency_threshold_ms" />
           </div>
           <div class="form-group">
@@ -510,7 +531,7 @@ async function handleUpdateSensor() {
             </select>
           </div>
           <div class="form-group" v-if="newPingSensor.config.display_mode === 'average'">
-            <label>Muestras</label>
+            <label>Muestras para Promedio</label>
             <input type="number" v-model.number="newPingSensor.config.average_count" />
           </div>
 
@@ -531,14 +552,14 @@ async function handleUpdateSensor() {
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>CD (min)</label
+                  <label>Enfriamiento (min)</label
                   ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_timeout.cooldown_minutes"
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tol</label
+                  <label>Tolerancia (fallos)</label
                   ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
@@ -553,7 +574,7 @@ async function handleUpdateSensor() {
               </div>
               <template v-if="newPingSensor.ui_alert_latency.enabled">
                 <div class="form-group">
-                  <label>Umbral</label
+                  <label>Umbral (ms)</label
                   ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_latency.threshold_ms"
@@ -568,7 +589,7 @@ async function handleUpdateSensor() {
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>CD (min)</label
+                  <label>Enfriamiento (min)</label
                   ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_latency.cooldown_minutes"
@@ -600,7 +621,7 @@ async function handleUpdateSensor() {
             <input type="text" v-model="newEthernetSensor.config.interface_name" required />
           </div>
           <div class="form-group span-3">
-            <label>Intervalo (s)</label>
+            <label>Intervalo (seg)</label>
             <input type="number" v-model.number="newEthernetSensor.config.interval_sec" required />
           </div>
 
@@ -625,7 +646,7 @@ async function handleUpdateSensor() {
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>CD (min)</label
+                  <label>Enfriamiento (min)</label
                   ><input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_speed_change.cooldown_minutes"
@@ -644,7 +665,7 @@ async function handleUpdateSensor() {
               </div>
               <template v-if="newEthernetSensor.ui_alert_traffic.enabled">
                 <div class="form-group">
-                  <label>Mbps</label
+                  <label>Umbral (Mbps)</label
                   ><input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_traffic.threshold_mbps"
@@ -985,6 +1006,17 @@ async function handleUpdateSensor() {
   color: white;
   width: 100%;
 }
+.form-group select:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  background-color: #2a2a2a;
+}
+.warning-text {
+  color: #fbbf24;
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
 .sub-section {
   grid-column: span 3;
   background-color: var(--surface-color);
