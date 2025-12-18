@@ -155,9 +155,10 @@ const lastSubscribedIds = ref([])
 function currentSensorIds() {
   const ids = []
   for (const m of monitors.value) {
-    if (m.is_active) {
+    // FIX: Verificar null explícitamente o tratar como true
+    if (m.is_active !== false) {
       for (const s of m.sensors || []) {
-        if (s.is_active) ids.push(s.id)
+        if (s.is_active !== false) ids.push(s.id)
       }
     }
   }
@@ -282,9 +283,14 @@ async function fetchAllMonitors() {
     const { data } = await api.get('/monitors')
     monitors.value = Array.isArray(data) ? data : []
     monitors.value.forEach((m) => {
-      if (m.is_active === undefined) m.is_active = true
-      if (m.alerts_paused === undefined) m.alerts_paused = false
+      // CORRECCIÓN CRÍTICA: Tratar NULL como TRUE (Activo)
+      if (m.is_active === null || m.is_active === undefined) m.is_active = true
+      if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
       ;(m.sensors || []).forEach((s) => {
+        // CORRECCIÓN CRÍTICA para Sensores también
+        if (s.is_active === null || s.is_active === undefined) s.is_active = true
+        if (s.alerts_paused === null || s.alerts_paused === undefined) s.alerts_paused = false
+
         const sid = String(s.id)
         if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
       })
@@ -367,6 +373,7 @@ async function showSensorDetails(sensor, monitor, event) {
   if (sensor.sensor_type === 'ping') {
     const uiData = createNewPingSensor()
     uiData.name = sensor.name
+    // Asegurar valores por defecto si viene null
     uiData.is_active = sensor.is_active !== false
     uiData.alerts_paused = sensor.alerts_paused === true
 
@@ -384,6 +391,7 @@ async function showSensorDetails(sensor, monitor, event) {
   } else if (sensor.sensor_type === 'ethernet') {
     const uiData = createNewEthernetSensor()
     uiData.name = sensor.name
+    // Asegurar valores por defecto si viene null
     uiData.is_active = sensor.is_active !== false
     uiData.alerts_paused = sensor.alerts_paused === true
 
