@@ -4,34 +4,38 @@ import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
 import { waitForSession } from '@/lib/supabase'
-import draggable from 'vuedraggable'
+import draggable from 'vuedraggable' // Importamos la librería de Drag&Drop
 
 const router = useRouter()
 
 // --- ESTADO PRINCIPAL ---
+// Ahora 'monitors' lo transformaremos en 'groupedMonitors' para la vista
 const allMonitors = ref([])
 const groupedMonitors = ref({}) // Estructura: { "Grupo A": [monitor1, monitor2], ... }
-const groupOrder = ref([])
+const groupOrder = ref([]) // Para mantener el orden visual de los grupos (si quisieras ordenar grupos)
 
 const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
-const collapsedCards = ref(new Set())
+const collapsedCards = ref(new Set()) // Guardamos IDs de tarjetas colapsadas
 
 // --- Estado Modal Edición Sensor ---
-const sensorDetailsToShow = ref(null)
-const currentMonitorContext = ref(null)
+const sensorDetailsToShow = ref(null) // El sensor original siendo editado
+const currentMonitorContext = ref(null) // El monitor padre (para contexto de IP/Maestro)
 const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- Estado Gestión de Grupos ---
 const showGroupModal = ref(false)
 const newGroupName = ref('')
 
-// --- COMPUTADOS ---
-const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
+// --- COMPUTADOS: Lógica de negocio para Ping ---
+const hasParentMaestro = computed(() => {
+  return !!currentMonitorContext.value?.maestro_id
+})
+
 const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
 
-// --- FORMULARIOS ---
+// Formularios Reactivos
 const createNewPingSensor = () => ({
   name: '',
   is_active: true,
@@ -53,11 +57,15 @@ const createNewPingSensor = () => ({
     tolerance_count: 1,
   },
 })
+
 const createNewEthernetSensor = () => ({
   name: '',
   is_active: true,
   alerts_paused: false,
-  config: { interface_name: '', interval_sec: 30 },
+  config: {
+    interface_name: '',
+    interval_sec: 30,
+  },
   ui_alert_speed_change: {
     enabled: false,
     channel_id: null,
@@ -73,13 +81,16 @@ const createNewEthernetSensor = () => ({
     tolerance_count: 1,
   },
 })
+
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
 
 // --- LOGICA DE GRUPOS Y ORDENAMIENTO ---
 
+// Función para procesar la lista plana en grupos
 function refreshGroupedMonitors() {
   const groups = {}
+  // Ordenar por posición primero
   const sorted = [...allMonitors.value].sort((a, b) => (a.position || 0) - (b.position || 0))
 
   sorted.forEach((m) => {
@@ -87,16 +98,29 @@ function refreshGroupedMonitors() {
     if (!groups[gName]) groups[gName] = []
     groups[gName].push(m)
   })
+
+  // Asegurar que 'Sin Grupo' siempre exista si está vacío es opcional,
+  // pero aquí solo mostramos grupos que tienen algo o que acabamos de crear.
   groupedMonitors.value = groups
 }
 
+// Handler para el evento 'change' de Draggable
 async function onDragChange(evt, groupName) {
+  // Cuando soltamos una tarjeta, recalcular posiciones y guardar
+  // evt puede ser 'added', 'removed', 'moved'
+
+  // Reconstruir el payload plano para enviar al backend
   const payloadItems = []
+
+  // Iteramos sobre todos los grupos visuales para asignar nuevas posiciones globales o relativas
+  let globalPosCounter = 0
 
   for (const [gName, monitors] of Object.entries(groupedMonitors.value)) {
     monitors.forEach((m, index) => {
+      // Actualizamos modelo local
       m.group_name = gName
-      m.position = index
+      m.position = index // Posición relativa al grupo (o globalPosCounter si prefieres global)
+
       payloadItems.push({
         monitor_id: m.monitor_id,
         group_name: gName,
@@ -105,15 +129,19 @@ async function onDragChange(evt, groupName) {
     })
   }
 
+  // Guardar en Backend (Silenciosamente o con notif sutil)
   try {
     await api.post('/monitors/reorder', { items: payloadItems })
   } catch (e) {
+    console.error('Error guardando orden', e)
     showNotification('Error guardando el nuevo orden', 'error')
   }
 }
 
 function addNewGroup() {
   if (!newGroupName.value) return
+  // Simplemente agregamos una clave vacía al objeto reactivo para que aparezca la swimlane
+  // Al arrastrar algo ahí, se persistirá.
   if (!groupedMonitors.value[newGroupName.value]) {
     groupedMonitors.value[newGroupName.value] = []
   }
@@ -130,26 +158,18 @@ function toggleCardCollapse(monitorId) {
   }
 }
 
-// --- API & LIFECYCLE ---
-
-async function fetchAllMonitors() {
+// --- Helpers Formato ---
+async function ensureChannelsLoaded() {
+  if (Object.keys(channelsById.value).length) return
   try {
-    const { data } = await api.get('/monitors')
-    allMonitors.value = Array.isArray(data) ? data : []
-
-    allMonitors.value.forEach((m) => {
-      if (m.is_active === undefined || m.is_active === null) m.is_active = true
-      if (m.alerts_paused === undefined || m.alerts_paused === null) m.alerts_paused = false
-      ;(m.sensors || []).forEach((s) => {
-        const sid = String(s.id)
-        if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
-      })
+    const { data } = await api.get('/channels')
+    const map = {}
+    ;(Array.isArray(data) ? data : []).forEach((c) => {
+      map[c.id] = c
     })
-
-    refreshGroupedMonitors()
-    trySubscribeSensors()
-  } catch (err) {
-    console.error(err)
+    channelsById.value = map
+  } catch (e) {
+    if (import.meta?.env?.DEV) console.error(e)
   }
 }
 
@@ -158,57 +178,36 @@ function formatBitrate(bits) {
   if (!Number.isFinite(n) || n <= 0) return '0 Kbps'
   const kbps = n / 1000
   if (kbps < 1000) return `${kbps.toFixed(1)} Kbps`
-  return `${(kbps / 1000).toFixed(1)} Mbps`
+  const mbps = kbps / 1000
+  return `${mbps.toFixed(1)} Mbps`
 }
+
 function formatLatency(ms) {
   if (ms == null || ms === '') return '—'
   const n = Number(ms)
   return Number.isFinite(n) ? Math.round(n) : ms
 }
+
 function getStatusClass(status) {
   if (['timeout', 'error', 'link_down'].includes(status)) return 'status-timeout'
   if (status === 'high_latency') return 'status-high-latency'
   if (['ok', 'link_up'].includes(status)) return 'status-ok'
   return 'status-pending'
 }
-function safeJsonParse(v, f = {}) {
+
+function showNotification(message, type = 'success') {
+  notification.value = { show: true, message, type }
+  setTimeout(() => {
+    notification.value.show = false
+  }, 4000)
+}
+
+function safeJsonParse(v, fallback = {}) {
+  if (typeof v === 'object' && v !== null) return v
   try {
     return JSON.parse(v)
   } catch {
-    return f
-  }
-}
-function showNotification(m, t = 'success') {
-  notification.value = { show: true, message: m, type: t }
-  setTimeout(() => (notification.value.show = false), 4000)
-}
-
-async function ensureChannelsLoaded() {
-  if (Object.keys(channelsById.value).length) return
-  try {
-    const { data } = await api.get('/channels')
-    data.forEach((c) => (channelsById.value[c.id] = c))
-  } catch {
-    /* ignore */
-  }
-}
-
-// WS Logic
-let wsOpenUnbind = null,
-  directMsgUnbind = null
-function handleRawMessage(evt) {
-  try {
-    const parsed = JSON.parse(evt.data)
-    const updates = normalizeWsPayload(parsed)
-    updates.forEach((u) => {
-      if (u.sensor_id)
-        liveSensorStatus.value[String(u.sensor_id)] = {
-          ...liveSensorStatus.value[String(u.sensor_id)],
-          ...u,
-        }
-    })
-  } catch {
-    /* ignore */
+    return fallback
   }
 }
 
@@ -222,29 +221,83 @@ function normalizeWsPayload(raw) {
     }
   }
   if (raw && typeof raw === 'object') {
-    if (['sensor_update', 'sensor-status'].includes(raw.type)) {
-      const i = raw.data || raw.payload
-      if (i) return [i]
+    if (raw.type === 'sensor_batch' && Array.isArray(raw.items)) return raw.items
+    if (['sensor_update', 'sensor-status'].includes(raw.type) || raw.event === 'sensor_update') {
+      const inner = raw.data || raw.payload || raw.sensor || raw.body || null
+      if (inner && typeof inner === 'object') return [inner]
     }
+    if (['welcome', 'ready', 'pong', 'hello'].includes(raw.type)) return []
     if (Object.prototype.hasOwnProperty.call(raw, 'sensor_id')) return [raw]
   }
   return []
 }
 
+/* ================= SUBSCRIPCIÓN ================ */
+const lastSubscribedIds = ref([])
+
 function currentSensorIds() {
-  return allMonitors.value.flatMap((m) =>
-    m.is_active ? (m.sensors || []).filter((s) => s.is_active).map((s) => s.id) : [],
-  )
+  const ids = []
+  for (const m of allMonitors.value) {
+    // Usamos allMonitors que es la fuente de verdad
+    // FIX: Verificar null explícitamente o tratar como true
+    if (m.is_active !== false) {
+      for (const s of m.sensors || []) {
+        if (s.is_active !== false) ids.push(s.id)
+      }
+    }
+  }
+  return ids
 }
 
 function trySubscribeSensors() {
   const ws = getCurrentWebSocket()
-  if (!ws || ws.readyState !== 1) return
+  if (!ws || ws.readyState !== WebSocket.OPEN) return
   const ids = currentSensorIds()
-  ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
+
+  const same =
+    ids.length === lastSubscribedIds.value.length &&
+    ids.every((v, i) => v === lastSubscribedIds.value[i])
+  // Enviamos siempre si hay cambios de grupo/orden o simplemente para refrescar
+  if (same && ids.length > 0) return
+
+  try {
+    ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
+    lastSubscribedIds.value = ids.slice()
+  } catch {
+    /* ignore */
+  }
 }
 
-watch(() => allMonitors.value, trySubscribeSensors, { deep: true })
+// Watch sobre allMonitors para cambios profundos
+watch(
+  () => allMonitors.value,
+  () => trySubscribeSensors(),
+  { deep: true },
+)
+
+// ================= WS =================
+let wsOpenUnbind = null
+let directMsgUnbind = null
+
+function handleRawMessage(event) {
+  try {
+    const txt = event.data
+    if (txt.includes('pong')) return
+    const parsed = JSON.parse(txt)
+    const updates = normalizeWsPayload(parsed)
+    if (updates.length > 0) {
+      for (const u of updates) {
+        if (u && u.sensor_id != null) {
+          const sid = String(u.sensor_id)
+          const currentData = liveSensorStatus.value[sid] || {}
+          liveSensorStatus.value[sid] = { ...currentData, ...u }
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 function wireWsSyncAndSubs() {
   const ws = getCurrentWebSocket()
@@ -255,19 +308,6 @@ function wireWsSyncAndSubs() {
 
   ws.removeEventListener('message', handleRawMessage)
   ws.addEventListener('message', handleRawMessage)
-
-  if (ws.readyState === 1) trySubscribeSensors()
-
-  const onOpen = () => trySubscribeSensors()
-  ws.addEventListener('open', onOpen)
-
-  wsOpenUnbind = () => {
-    try {
-      ws.removeEventListener('open', onOpen)
-    } catch {
-      /* ignore */
-    }
-  }
   directMsgUnbind = () => {
     try {
       ws.removeEventListener('message', handleRawMessage)
@@ -275,16 +315,47 @@ function wireWsSyncAndSubs() {
       /* ignore */
     }
   }
+
+  const sendSyncAndSubs = () => {
+    try {
+      ws.send(JSON.stringify({ type: 'sync_request', resource: 'sensors_latest' }))
+    } catch {
+      /* ignore */
+    }
+    trySubscribeSensors()
+  }
+
+  if (ws.readyState === WebSocket.OPEN) sendSyncAndSubs()
+  const onOpen = () => sendSyncAndSubs()
+  ws.addEventListener('open', onOpen)
+  wsOpenUnbind = () => {
+    try {
+      ws.removeEventListener('open', onOpen)
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
+/* ====================== Lifecycle ========================= */
 onMounted(async () => {
   try {
-    await waitForSession({ requireAuth: true })
+    await waitForSession({ requireAuth: true, timeoutMs: 8000 })
   } catch {
+    try {
+      router.push({ name: 'login' })
+    } catch {
+      /* ignore */
+    }
     return
   }
+
   await fetchAllMonitors()
-  await connectWebSocketWhenAuthenticated()
+  try {
+    await connectWebSocketWhenAuthenticated()
+  } catch {
+    /* ignore */
+  }
   wireWsSyncAndSubs()
 })
 
@@ -293,84 +364,147 @@ onUnmounted(() => {
   if (typeof directMsgUnbind === 'function') directMsgUnbind()
 })
 
-// --- UI ACTIONS ---
+/* ====================== API ========================= */
+async function fetchAllMonitors() {
+  try {
+    const { data } = await api.get('/monitors')
+    allMonitors.value = Array.isArray(data) ? data : []
+    allMonitors.value.forEach((m) => {
+      // CORRECCIÓN CRÍTICA: Tratar NULL como TRUE (Activo)
+      if (m.is_active === null || m.is_active === undefined) m.is_active = true
+      if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
+      ;(m.sensors || []).forEach((s) => {
+        // CORRECCIÓN CRÍTICA para Sensores también
+        if (s.is_active === null || s.is_active === undefined) s.is_active = true
+        if (s.alerts_paused === null || s.alerts_paused === undefined) s.alerts_paused = false
+
+        const sid = String(s.id)
+        if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
+      })
+    })
+
+    // REFRESCAR GRUPOS
+    refreshGroupedMonitors()
+
+    trySubscribeSensors()
+  } catch (err) {
+    if (import.meta?.env?.DEV) console.error(err)
+    allMonitors.value = [] // Fallback
+  }
+}
+
+/* ====================== UI Actions (Monitor) ========================= */
 async function toggleMonitorActive(monitor) {
   const newVal = !monitor.is_active
   monitor.is_active = newVal
   try {
     await api.put(`/monitors/${monitor.monitor_id}`, { is_active: newVal })
     if (!newVal) trySubscribeSensors()
-    showNotification(newVal ? 'Monitor ON' : 'Monitor OFF')
+    showNotification(newVal ? 'Monitor encendido' : 'Monitor apagado', 'success')
   } catch {
     monitor.is_active = !newVal
-    showNotification('Error', 'error')
+    showNotification('Error al cambiar estado del monitor', 'error')
   }
 }
+
 async function toggleMonitorPause(monitor) {
   const newVal = !monitor.alerts_paused
   monitor.alerts_paused = newVal
   try {
     await api.put(`/monitors/${monitor.monitor_id}`, { alerts_paused: newVal })
-    showNotification(newVal ? 'Alertas Pausadas' : 'Alertas Activas')
+    showNotification(newVal ? 'Alertas pausadas (Global)' : 'Alertas reanudadas', 'success')
   } catch {
     monitor.alerts_paused = !newVal
-    showNotification('Error', 'error')
+    showNotification('Error al cambiar pausa de monitor', 'error')
   }
 }
-function getOverallCardStatus(monitor) {
-  if (!monitor.is_active) return false
-  if (!monitor.sensors?.length) return false
-  return monitor.sensors.some((s) => {
-    const st = liveSensorStatus.value[String(s.id)]?.status
-    return ['timeout', 'error', 'high_latency', 'link_down'].includes(st)
-  })
+
+function requestDeleteMonitor(monitor, event) {
+  if (event?.stopPropagation) event.stopPropagation()
+  monitorToDelete.value = monitor
 }
+
 async function confirmDeleteMonitor() {
   if (!monitorToDelete.value) return
   try {
     await api.delete(`/monitors/${monitorToDelete.value.monitor_id}`)
-    await fetchAllMonitors()
-    monitorToDelete.value = null
+    // Borrar localmente de allMonitors y refrescar grupos
+    allMonitors.value = allMonitors.value.filter(
+      (m) => m.monitor_id !== monitorToDelete.value.monitor_id,
+    )
+    refreshGroupedMonitors()
   } catch {
     /* ignore */
+  } finally {
+    monitorToDelete.value = null
   }
-}
-function requestDeleteMonitor(m, e) {
-  e?.stopPropagation()
-  monitorToDelete.value = m
 }
 
-// --- EDICION SENSOR ---
-async function showSensorDetails(s, m, e) {
-  e?.stopPropagation()
+function getOverallCardStatus(monitor) {
+  if (!monitor.is_active) return false
+  if (!monitor.sensors || monitor.sensors.length === 0) return false
+  return monitor.sensors.some((sensor) => {
+    const sid = String(sensor.id)
+    const status = liveSensorStatus.value[sid]?.status
+    return ['timeout', 'error', 'high_latency', 'link_down'].includes(status)
+  })
+}
+
+function goToSensorDetail(sensorId) {
+  router.push(`/sensor/${sensorId}`)
+}
+
+/* ====================== EDICIÓN DE SENSOR (MODAL) ========================= */
+
+async function showSensorDetails(sensor, monitor, event) {
+  if (event?.stopPropagation) event.stopPropagation()
   await ensureChannelsLoaded()
-  sensorDetailsToShow.value = s
-  currentMonitorContext.value = m
-  const cfg = safeJsonParse(s.config)
-  if (s.sensor_type === 'ping') {
-    const d = createNewPingSensor()
-    d.name = s.name
-    d.is_active = s.is_active !== false
-    d.alerts_paused = s.alerts_paused === true
-    d.config = { ...d.config, ...cfg }
-    if (!m.maestro_id) d.config.ping_type = 'device_to_external'
+
+  sensorDetailsToShow.value = sensor
+  currentMonitorContext.value = monitor
+
+  const cfg = safeJsonParse(sensor.config, {})
+
+  if (sensor.sensor_type === 'ping') {
+    const uiData = createNewPingSensor()
+    uiData.name = sensor.name
+    // Asegurar valores por defecto si viene null
+    uiData.is_active = sensor.is_active !== false
+    uiData.alerts_paused = sensor.alerts_paused === true
+
+    uiData.config = { ...uiData.config, ...cfg }
+
+    if (!monitor.maestro_id) {
+      uiData.config.ping_type = 'device_to_external'
+    }
+
     ;(cfg.alerts || []).forEach((a) => {
-      if (a.type === 'timeout') d.ui_alert_timeout = { enabled: true, ...a }
-      if (a.type === 'high_latency') d.ui_alert_latency = { enabled: true, ...a }
+      if (a.type === 'timeout') uiData.ui_alert_timeout = { enabled: true, ...a }
+      if (a.type === 'high_latency') uiData.ui_alert_latency = { enabled: true, ...a }
     })
-    newPingSensor.value = d
-  } else {
-    const d = createNewEthernetSensor()
-    d.name = s.name
-    d.is_active = s.is_active !== false
-    d.alerts_paused = s.alerts_paused === true
-    d.config = { interface_name: cfg.interface_name || '', interval_sec: cfg.interval_sec || 30 }
+    newPingSensor.value = uiData
+  } else if (sensor.sensor_type === 'ethernet') {
+    const uiData = createNewEthernetSensor()
+    uiData.name = sensor.name
+    // Asegurar valores por defecto si viene null
+    uiData.is_active = sensor.is_active !== false
+    uiData.alerts_paused = sensor.alerts_paused === true
+
+    uiData.config = {
+      interface_name: cfg.interface_name || '',
+      interval_sec: cfg.interval_sec || 30,
+    }
     ;(cfg.alerts || []).forEach((a) => {
-      if (a.type === 'speed_change') d.ui_alert_speed_change = { enabled: true, ...a }
-      if (a.type === 'traffic_threshold') d.ui_alert_traffic = { enabled: true, ...a }
+      if (a.type === 'speed_change') uiData.ui_alert_speed_change = { enabled: true, ...a }
+      if (a.type === 'traffic_threshold') uiData.ui_alert_traffic = { enabled: true, ...a }
     })
-    newEthernetSensor.value = d
+    newEthernetSensor.value = uiData
   }
+}
+
+function closeSensorDetails() {
+  sensorDetailsToShow.value = null
+  currentMonitorContext.value = null
 }
 
 function buildPayload(type, data) {
@@ -443,23 +577,32 @@ async function handleUpdateSensor() {
     const payload = buildPayload(type, uiData)
     const { data } = await api.put(`/sensors/${sensorDetailsToShow.value.id}`, payload)
 
-    const m = allMonitors.value.find((m) => m.monitor_id === currentMonitorContext.value.monitor_id)
-    if (m) {
-      const idx = m.sensors.findIndex((s) => s.id === sensorDetailsToShow.value.id)
-      if (idx !== -1) m.sensors[idx] = { ...m.sensors[idx], ...data }
+    // Actualizar lista localmente (allMonitors es la fuente de verdad)
+    const mIdx = allMonitors.value.findIndex(
+      (m) => m.monitor_id === currentMonitorContext.value.monitor_id,
+    )
+    if (mIdx !== -1) {
+      const sIdx = allMonitors.value[mIdx].sensors.findIndex(
+        (s) => s.id === sensorDetailsToShow.value.id,
+      )
+      if (sIdx !== -1) {
+        allMonitors.value[mIdx].sensors[sIdx] = {
+          ...allMonitors.value[mIdx].sensors[sIdx],
+          ...data,
+        }
+      }
     }
+    // Refrescar grupos (aunque el sensor no cambia grupo, por consistencia)
+    refreshGroupedMonitors()
 
     showNotification('Sensor actualizado correctamente')
-    if (payload.is_active !== sensorDetailsToShow.value.is_active) trySubscribeSensors()
-    sensorDetailsToShow.value = null
-  } catch (e) {
-    showNotification(e.message || 'Error', 'error')
+    if (payload.is_active !== sensorDetailsToShow.value.is_active) {
+      trySubscribeSensors()
+    }
+    closeSensorDetails()
+  } catch (err) {
+    showNotification(err?.response?.data?.detail || 'Error al actualizar', 'error')
   }
-}
-
-function closeSensorDetails() {
-  sensorDetailsToShow.value = null
-  currentMonitorContext.value = null
 }
 </script>
 
