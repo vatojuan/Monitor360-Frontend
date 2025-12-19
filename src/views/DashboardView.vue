@@ -1,37 +1,39 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
 import { waitForSession } from '@/lib/supabase'
-import draggable from 'vuedraggable' // Asegúrate de tener instalado: npm install vuedraggable@next
+import draggable from 'vuedraggable'
 
 const router = useRouter()
 
-// --- ESTADO ---
-const allMonitors = ref([]) // Lista plana original (fuente de verdad)
-const groupedMonitors = ref({}) // Estructura visual: { "Grupo": [monitors...] }
+// --- ESTADO PRINCIPAL ---
+const allMonitors = ref([])
+const groupedMonitors = ref({})
+const activeGroup = ref(null) // El grupo seleccionado actualmente
+
 const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
-const collapsedCards = ref(new Set()) // IDs de tarjetas colapsadas
+const collapsedCards = ref(new Set())
 
-// --- Estado Modal Edición Sensor ---
+// --- Modal Edición ---
 const sensorDetailsToShow = ref(null)
 const currentMonitorContext = ref(null)
+const editMonitorGroup = ref('') // Para mover de grupo
 const notification = ref({ show: false, message: '', type: 'success' })
 
-// --- Estado Gestión de Grupos ---
+// --- Gestión de Grupos ---
 const showGroupModal = ref(false)
 const newGroupName = ref('')
 
 // --- COMPUTADOS ---
-const hasParentMaestro = computed(() => {
-  return !!currentMonitorContext.value?.maestro_id
-})
+const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
 const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
+const availableGroups = computed(() => Object.keys(groupedMonitors.value).sort())
 
-// --- FORMULARIOS (Tu código original) ---
+// --- FORMULARIOS (Tu código original exacto) ---
 const createNewPingSensor = () => ({
   name: '',
   is_active: true,
@@ -76,46 +78,42 @@ const createNewEthernetSensor = () => ({
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
 
-// --- LOGICA DE GRUPOS Y DRAG & DROP ---
+// --- LÓGICA DE GRUPOS ---
 
 function refreshGroupedMonitors() {
   const groups = {}
-  // Ordenar primero por posición guardada
   const sorted = [...allMonitors.value].sort((a, b) => (a.position || 0) - (b.position || 0))
 
   sorted.forEach((m) => {
-    const gName = m.group_name || 'Sin Grupo'
+    const gName = m.group_name || 'General'
     if (!groups[gName]) groups[gName] = []
     groups[gName].push(m)
   })
+
   groupedMonitors.value = groups
+
+  // Selección automática de grupo si no hay uno activo
+  const groupNames = Object.keys(groups).sort()
+  if (groupNames.length > 0) {
+    if (!activeGroup.value || !groups[activeGroup.value]) {
+      activeGroup.value = groupNames[0]
+    }
+  } else {
+    activeGroup.value = null
+  }
 }
 
-async function onDragChange(evt, groupName) {
-  // Recalcular posiciones y grupos para todos los monitores en el grupo afectado
-  const payloadItems = []
-
-  // Recorremos todos los grupos visuales para reconstruir el estado
-  for (const [gName, monitors] of Object.entries(groupedMonitors.value)) {
-    monitors.forEach((m, index) => {
-      // Actualizamos el objeto local
-      m.group_name = gName
-      m.position = index
-
-      payloadItems.push({
-        monitor_id: m.monitor_id,
-        group_name: gName,
-        position: index,
-      })
-    })
+function getGroupStatusClass(groupName) {
+  const monitors = groupedMonitors.value[groupName] || []
+  let hasAlert = false
+  for (const m of monitors) {
+    if (!m.is_active) continue
+    if (getOverallCardStatus(m)) {
+      hasAlert = true
+      break
+    }
   }
-
-  try {
-    // Guardar en backend (silencioso)
-    await api.post('/monitors/reorder', { items: payloadItems })
-  } catch (e) {
-    showNotification('Error guardando orden', 'error')
-  }
+  return hasAlert ? 'dot-red' : 'dot-green'
 }
 
 function addNewGroup() {
@@ -123,20 +121,55 @@ function addNewGroup() {
   if (!groupedMonitors.value[newGroupName.value]) {
     groupedMonitors.value[newGroupName.value] = []
   }
+  activeGroup.value = newGroupName.value
   showGroupModal.value = false
   newGroupName.value = ''
 }
 
-// --- LOGICA COLAPSO ---
-function toggleCardCollapse(monitorId) {
-  if (collapsedCards.value.has(monitorId)) {
-    collapsedCards.value.delete(monitorId)
-  } else {
-    collapsedCards.value.add(monitorId)
+// Linter Fix: Eliminado argumento 'evt' no usado
+async function onDragChange() {
+  if (!activeGroup.value) return
+
+  const monitorsInGroup = groupedMonitors.value[activeGroup.value]
+  const payloadItems = []
+
+  monitorsInGroup.forEach((m, index) => {
+    m.position = index
+    payloadItems.push({
+      monitor_id: m.monitor_id,
+      group_name: activeGroup.value,
+      position: index,
+    })
+  })
+
+  try {
+    await api.post('/monitors/reorder', { items: payloadItems })
+  } catch {
+    showNotification('Error guardando orden', 'error')
   }
 }
 
-// --- HELPERS (Tus originales) ---
+// --- API & LIFECYCLE ---
+async function fetchAllMonitors() {
+  try {
+    const { data } = await api.get('/monitors')
+    allMonitors.value = Array.isArray(data) ? data : []
+    allMonitors.value.forEach((m) => {
+      if (m.is_active === undefined || m.is_active === null) m.is_active = true
+      if (m.alerts_paused === undefined || m.alerts_paused === null) m.alerts_paused = false
+      ;(m.sensors || []).forEach((s) => {
+        const sid = String(s.id)
+        if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
+      })
+    })
+    refreshGroupedMonitors()
+    trySubscribeSensors()
+  } catch (err) {
+    console.error(err)
+  }
+}
+
+// --- UTILIDADES ---
 function formatBitrate(bits) {
   const n = Number(bits)
   if (!Number.isFinite(n) || n <= 0) return '0 Kbps'
@@ -166,6 +199,11 @@ function safeJsonParse(v, f = {}) {
     return f
   }
 }
+function toggleCardCollapse(mid) {
+  collapsedCards.value.has(mid) ? collapsedCards.value.delete(mid) : collapsedCards.value.add(mid)
+}
+
+// --- WEBSOCKETS ---
 function normalizeWsPayload(raw) {
   if (Array.isArray(raw)) return raw.flatMap(normalizeWsPayload)
   if (typeof raw === 'string') {
@@ -184,39 +222,31 @@ function normalizeWsPayload(raw) {
   }
   return []
 }
-
-// --- API & LIFECYCLE ---
+function currentSensorIds() {
+  return allMonitors.value.flatMap((m) =>
+    m.is_active !== false
+      ? (m.sensors || []).filter((s) => s.is_active !== false).map((s) => s.id)
+      : [],
+  )
+}
+function trySubscribeSensors() {
+  const ws = getCurrentWebSocket()
+  if (!ws || ws.readyState !== 1) return
+  const ids = currentSensorIds()
+  if (ids.length > 0) ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
+}
+watch(() => allMonitors.value, trySubscribeSensors, { deep: true })
 async function ensureChannelsLoaded() {
-  if (Object.keys(channelsById.value).length) return
-  try {
-    const { data } = await api.get('/channels')
-    data.forEach((c) => (channelsById.value[c.id] = c))
-  } catch {
-    /* ignore */
+  if (!Object.keys(channelsById.value).length) {
+    try {
+      const { data } = await api.get('/channels')
+      data.forEach((c) => (channelsById.value[c.id] = c))
+    } catch {
+      /* ignore */
+    }
   }
 }
 
-async function fetchAllMonitors() {
-  try {
-    const { data } = await api.get('/monitors')
-    allMonitors.value = Array.isArray(data) ? data : []
-    allMonitors.value.forEach((m) => {
-      // Defaults seguros
-      if (m.is_active === undefined || m.is_active === null) m.is_active = true
-      if (m.alerts_paused === undefined || m.alerts_paused === null) m.alerts_paused = false
-      ;(m.sensors || []).forEach((s) => {
-        const sid = String(s.id)
-        if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
-      })
-    })
-    refreshGroupedMonitors()
-    trySubscribeSensors()
-  } catch (err) {
-    console.error(err)
-  }
-}
-
-// WS Logic
 let wsOpenUnbind = null,
   directMsgUnbind = null
 function handleRawMessage(evt) {
@@ -234,21 +264,6 @@ function handleRawMessage(evt) {
     /* ignore */
   }
 }
-function currentSensorIds() {
-  return allMonitors.value.flatMap((m) =>
-    m.is_active !== false
-      ? (m.sensors || []).filter((s) => s.is_active !== false).map((s) => s.id)
-      : [],
-  )
-}
-function trySubscribeSensors() {
-  const ws = getCurrentWebSocket()
-  if (!ws || ws.readyState !== 1) return
-  const ids = currentSensorIds()
-  if (ids.length > 0) ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
-}
-watch(() => allMonitors.value, trySubscribeSensors, { deep: true })
-
 function wireWsSyncAndSubs() {
   const ws = getCurrentWebSocket()
   if (!ws) {
@@ -291,7 +306,7 @@ onUnmounted(() => {
   if (typeof directMsgUnbind === 'function') directMsgUnbind()
 })
 
-// --- UI ACTIONS ---
+// --- ACCIONES DE TARJETA ---
 async function toggleMonitorActive(monitor) {
   const newVal = !monitor.is_active
   monitor.is_active = newVal
@@ -315,9 +330,13 @@ async function toggleMonitorPause(monitor) {
     showNotification('Error', 'error')
   }
 }
-function requestDeleteMonitor(m, e) {
-  e?.stopPropagation()
-  monitorToDelete.value = m
+function getOverallCardStatus(monitor) {
+  if (monitor.is_active === false) return false
+  if (!monitor.sensors || !monitor.sensors.length) return false
+  return monitor.sensors.some((s) => {
+    const st = liveSensorStatus.value[String(s.id)]?.status
+    return ['timeout', 'error', 'high_latency', 'link_down'].includes(st)
+  })
 }
 async function confirmDeleteMonitor() {
   if (!monitorToDelete.value) return
@@ -327,32 +346,28 @@ async function confirmDeleteMonitor() {
       (m) => m.monitor_id !== monitorToDelete.value.monitor_id,
     )
     refreshGroupedMonitors()
+    monitorToDelete.value = null
   } catch {
     /* ignore */
-  } finally {
-    monitorToDelete.value = null
   }
 }
-function getOverallCardStatus(monitor) {
-  if (monitor.is_active === false) return false
-  if (!monitor.sensors || !monitor.sensors.length) return false
-  return monitor.sensors.some((s) => {
-    const st = liveSensorStatus.value[String(s.id)]?.status
-    return ['timeout', 'error', 'high_latency', 'link_down'].includes(st)
-  })
+function requestDeleteMonitor(m, e) {
+  e?.stopPropagation()
+  monitorToDelete.value = m
 }
 function goToSensorDetail(id) {
   router.push(`/sensor/${id}`)
 }
 
-// --- EDICION SENSOR ---
+// --- MODAL EDICION + CAMBIO DE GRUPO ---
 async function showSensorDetails(s, m, e) {
   e?.stopPropagation()
   await ensureChannelsLoaded()
   sensorDetailsToShow.value = s
   currentMonitorContext.value = m
-  const cfg = safeJsonParse(s.config)
+  editMonitorGroup.value = m.group_name || 'Sin Grupo'
 
+  const cfg = safeJsonParse(s.config)
   if (s.sensor_type === 'ping') {
     const d = createNewPingSensor()
     d.name = s.name
@@ -378,11 +393,30 @@ async function showSensorDetails(s, m, e) {
     newEthernetSensor.value = d
   }
 }
+
 async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
+
+  // 1. Cambio de Grupo
+  const newGroup = editMonitorGroup.value
+  if (newGroup !== currentMonitorContext.value.group_name) {
+    try {
+      await api.put(`/monitors/${currentMonitorContext.value.monitor_id}`, { group_name: newGroup })
+      const mLocal = allMonitors.value.find(
+        (m) => m.monitor_id === currentMonitorContext.value.monitor_id,
+      )
+      if (mLocal) mLocal.group_name = newGroup
+      refreshGroupedMonitors()
+      // Saltamos al grupo nuevo para que el usuario vea su cambio
+      activeGroup.value = newGroup
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  // 2. Actualizar Sensor
   const type = sensorDetailsToShow.value.sensor_type
   const uiData = type === 'ping' ? newPingSensor.value : newEthernetSensor.value
-
   const config = { ...uiData.config }
   config.alerts = []
   const num = (v, d) => (typeof v === 'number' && !isNaN(v) ? v : d)
@@ -405,7 +439,7 @@ async function handleUpdateSensor() {
         cooldown_minutes: num(l.cooldown_minutes, 5),
         tolerance_count: num(l.tolerance_count, 1),
       })
-  } else if (type === 'ethernet') {
+  } else {
     const s = uiData.ui_alert_speed_change
     if (s.enabled && s.channel_id)
       config.alerts.push({
@@ -435,27 +469,17 @@ async function handleUpdateSensor() {
     }
     const { data } = await api.put(`/sensors/${sensorDetailsToShow.value.id}`, payload)
 
-    // Update local en allMonitors para que refreshGroupedMonitors lo tome
-    const mIdx = allMonitors.value.findIndex(
-      (m) => m.monitor_id === currentMonitorContext.value.monitor_id,
-    )
-    if (mIdx !== -1) {
-      const sIdx = allMonitors.value[mIdx].sensors.findIndex(
-        (s) => s.id === sensorDetailsToShow.value.id,
-      )
-      if (sIdx !== -1) {
-        allMonitors.value[mIdx].sensors[sIdx] = {
-          ...allMonitors.value[mIdx].sensors[sIdx],
-          ...data,
-        }
-      }
+    const m = allMonitors.value.find((m) => m.monitor_id === currentMonitorContext.value.monitor_id)
+    if (m) {
+      const idx = m.sensors.findIndex((s) => s.id === sensorDetailsToShow.value.id)
+      if (idx !== -1) m.sensors[idx] = { ...m.sensors[idx], ...data }
     }
 
-    showNotification('Sensor actualizado correctamente')
+    showNotification('Guardado correctamente')
     if (payload.is_active !== sensorDetailsToShow.value.is_active) trySubscribeSensors()
     closeSensorDetails()
-  } catch (err) {
-    showNotification(err?.response?.data?.detail || 'Error al actualizar', 'error')
+  } catch {
+    showNotification('Error al guardar', 'error')
   }
 }
 function closeSensorDetails() {
@@ -465,20 +489,219 @@ function closeSensorDetails() {
 </script>
 
 <template>
-  <div>
-    <div class="toolbar-section">
-      <h2>Panel de Control</h2>
-      <button class="btn-group-create" @click="showGroupModal = true">+ Nuevo Grupo</button>
-    </div>
+  <div class="layout-container">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h3>GRUPOS</h3>
+        <button class="btn-add-group" @click="showGroupModal = true" title="Crear Grupo">+</button>
+      </div>
+      <ul class="group-list">
+        <li
+          v-for="gName in Object.keys(groupedMonitors).sort()"
+          :key="gName"
+          :class="{ active: activeGroup === gName }"
+          @click="activeGroup = gName"
+        >
+          <span :class="['status-dot', getGroupStatusClass(gName)]"></span>
+          <span class="group-name">{{ gName }}</span>
+          <span class="badge">{{ groupedMonitors[gName].length }}</span>
+        </li>
+      </ul>
+    </aside>
 
-    <div v-if="notification.show" :class="['notification', notification.type]">
-      {{ notification.message }}
-    </div>
+    <main class="main-content">
+      <header class="content-header" v-if="activeGroup">
+        <h2>{{ activeGroup }}</h2>
+        <div class="header-actions">
+          <router-link to="/monitor-builder" class="btn-primary">Añadir Dispositivo</router-link>
+        </div>
+      </header>
+      <div v-else class="empty-selection">
+        <p>Selecciona o crea un grupo</p>
+      </div>
+
+      <div v-if="notification.show" :class="['notification', notification.type]">
+        {{ notification.message }}
+      </div>
+
+      <div class="scroll-area" v-if="activeGroup && groupedMonitors[activeGroup]">
+        <draggable
+          :list="groupedMonitors[activeGroup]"
+          group="monitors"
+          item-key="monitor_id"
+          class="dashboard-grid"
+          @change="onDragChange"
+          :animation="200"
+          handle=".drag-handle"
+        >
+          <template #item="{ element: monitor }">
+            <div
+              :class="[
+                'monitor-card',
+                {
+                  'status-alert': getOverallCardStatus(monitor),
+                  'is-inactive': !monitor.is_active,
+                  'is-collapsed': collapsedCards.has(monitor.monitor_id),
+                },
+              ]"
+            >
+              <div class="card-header" @dblclick="toggleCardCollapse(monitor.monitor_id)">
+                <div class="header-left">
+                  <span class="drag-handle">::</span>
+                  <div class="title-wrapper">
+                    <h3>
+                      {{ monitor.client_name }}
+                      <span v-if="!monitor.is_active" class="off-badge">OFF</span>
+                      <span v-if="monitor.alerts_paused" class="pause-badge">⏸️</span>
+                    </h3>
+                  </div>
+                </div>
+
+                <div class="card-actions-right">
+                  <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">{{
+                    monitor.ip_address
+                  }}</span>
+                  <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
+
+                  <button class="action-icon-btn" @click="toggleCardCollapse(monitor.monitor_id)">
+                    {{ collapsedCards.has(monitor.monitor_id) ? '🔽' : '🔼' }}
+                  </button>
+                  <button
+                    class="action-icon-btn"
+                    :class="{ 'active-orange': monitor.alerts_paused }"
+                    @click="toggleMonitorPause(monitor)"
+                  >
+                    {{ monitor.alerts_paused ? '🔕' : '🔔' }}
+                  </button>
+                  <button
+                    class="action-icon-btn"
+                    :class="{ 'active-red': !monitor.is_active }"
+                    @click="toggleMonitorActive(monitor)"
+                  >
+                    {{ monitor.is_active ? '🔌' : '⚫' }}
+                  </button>
+                  <button class="remove-btn" @click="requestDeleteMonitor(monitor, $event)">
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="!collapsedCards.has(monitor.monitor_id)" class="card-body">
+                <div class="sensors-container">
+                  <div v-if="!monitor.sensors || monitor.sensors.length === 0" class="no-sensors">
+                    Sin sensores.
+                  </div>
+                  <div
+                    v-else
+                    v-for="sensor in monitor.sensors"
+                    :key="sensor.id"
+                    class="sensor-row"
+                    :class="{
+                      'row-inactive': !sensor.is_active,
+                      'row-paused': sensor.alerts_paused,
+                    }"
+                    @click="goToSensorDetail(sensor.id)"
+                  >
+                    <span class="sensor-name">
+                      {{ sensor.name }}
+                      <small v-if="sensor.alerts_paused">⏸️</small>
+                    </span>
+
+                    <div class="sensor-status-group">
+                      <div
+                        class="sensor-value"
+                        :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
+                      >
+                        <template v-if="!sensor.is_active">
+                          <span class="val-off">OFF</span>
+                        </template>
+
+                        <template v-else-if="sensor.sensor_type === 'ping'">
+                          <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'"
+                            >Timeout</span
+                          >
+                          <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'error'"
+                            >Error</span
+                          >
+                          <span
+                            v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'"
+                            >...</span
+                          >
+                          <span v-else
+                            >{{
+                              formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms)
+                            }}
+                            ms</span
+                          >
+                        </template>
+
+                        <template v-else-if="sensor.sensor_type === 'ethernet'">
+                          <div class="ethernet-data">
+                            <span class="ethernet-status">
+                              {{
+                                (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace(
+                                  '_',
+                                  ' ',
+                                )
+                              }}
+                              <span
+                                class="ethernet-speed"
+                                v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'"
+                              >
+                                ({{ liveSensorStatus[String(sensor.id)]?.speed || '—' }})
+                              </span>
+                            </span>
+                            <span
+                              class="ethernet-traffic"
+                              v-if="liveSensorStatus[String(sensor.id)]?.status !== 'pending'"
+                            >
+                              ↓
+                              {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate) }} /
+                              ↑ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}
+                            </span>
+                          </div>
+                        </template>
+
+                        <template v-else>{{
+                          liveSensorStatus[String(sensor.id)]?.status || 'pending'
+                        }}</template>
+                      </div>
+                      <button
+                        class="details-btn"
+                        @click="showSensorDetails(sensor, monitor, $event)"
+                      >
+                        ✎
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else class="card-body collapsed-summary">
+                <span
+                  v-if="getOverallCardStatus(monitor)"
+                  class="status-timeout"
+                  style="font-weight: bold"
+                  >⚠️ Problemas detectados</span
+                >
+                <span v-else class="status-ok"
+                  >Sistema Operativo ({{ monitor.sensors.length }} sensores)</span
+                >
+              </div>
+            </div>
+          </template>
+        </draggable>
+      </div>
+    </main>
 
     <div v-if="showGroupModal" class="modal-overlay" @click.self="showGroupModal = false">
       <div class="modal-content small">
         <h3>Crear Nuevo Grupo</h3>
-        <input v-model="newGroupName" placeholder="Ej: Clientes VIP" class="full-width-input" />
+        <input
+          v-model="newGroupName"
+          placeholder="Nombre (Ej: Clientes VIP)"
+          class="full-width-input"
+        />
         <div class="modal-actions">
           <button class="btn-secondary" @click="showGroupModal = false">Cancelar</button>
           <button class="btn-primary" @click="addNewGroup">Crear</button>
@@ -486,24 +709,20 @@ function closeSensorDetails() {
       </div>
     </div>
 
-    <div v-if="monitorToDelete" class="modal-overlay" @click.self="monitorToDelete = null">
+    <div v-if="monitorToDelete" class="modal-overlay">
       <div class="modal-content small">
-        <h3>Confirmar Eliminación</h3>
-        <p>
-          ¿Seguro que quieres eliminar el monitor para
-          <strong>{{ monitorToDelete.client_name }}</strong
-          >?
-        </p>
+        <h3>Borrar Monitor</h3>
+        <p>¿Seguro?</p>
         <div class="modal-actions">
-          <button class="btn-secondary" @click="monitorToDelete = null">Cancelar</button>
-          <button class="btn-danger" @click="confirmDeleteMonitor">Eliminar</button>
+          <button @click="monitorToDelete = null" class="btn-secondary">No</button>
+          <button @click="confirmDeleteMonitor" class="btn-danger">Si</button>
         </div>
       </div>
     </div>
 
     <div v-if="sensorDetailsToShow" class="modal-overlay" @click.self="closeSensorDetails">
       <div class="modal-content">
-        <h3>Editar Sensor: {{ sensorDetailsToShow.name }}</h3>
+        <h3>Editar: {{ sensorDetailsToShow.name }}</h3>
 
         <form
           v-if="sensorDetailsToShow.sensor_type === 'ping'"
@@ -511,19 +730,26 @@ function closeSensorDetails() {
           class="config-form"
         >
           <div class="sub-section span-3">
-            <h4>Estado del Sensor</h4>
-            <div class="alert-config-item">
+            <h4>Configuración General</h4>
+            <div class="general-config-grid">
               <div class="form-group checkbox-group">
                 <input type="checkbox" v-model="newPingSensor.is_active" id="pActive" />
-                <label for="pActive" :class="newPingSensor.is_active ? 'text-green' : 'text-gray'">
+                <label for="pActive" :class="newPingSensor.is_active ? 'c-green' : 'c-gray'">
                   {{ newPingSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO' }}
                 </label>
               </div>
               <div class="form-group checkbox-group">
                 <input type="checkbox" v-model="newPingSensor.alerts_paused" id="pPause" />
-                <label for="pPause" :class="newPingSensor.alerts_paused ? 'text-orange' : ''">
+                <label for="pPause" :class="newPingSensor.alerts_paused ? 'c-orange' : ''">
                   {{ newPingSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS' }}
                 </label>
+              </div>
+              <div class="form-group" style="grid-column: span 2">
+                <label>Mover a Grupo</label>
+                <select v-model="editMonitorGroup">
+                  <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
+                  <option value="Sin Grupo">Sin Grupo</option>
+                </select>
               </div>
             </div>
           </div>
@@ -532,24 +758,20 @@ function closeSensorDetails() {
             <label>Nombre</label><input type="text" v-model="newPingSensor.name" required />
           </div>
           <div class="form-group span-2">
-            <label>Tipo de Ping</label>
+            <label>Tipo</label>
             <select v-model="newPingSensor.config.ping_type" :disabled="!hasParentMaestro">
-              <option value="device_to_external">Desde Dispositivo (Salida)</option>
+              <option value="device_to_external">Salida (Desde Disp.)</option>
               <option value="maestro_to_device" v-if="hasParentMaestro">
-                Al Dispositivo (Entrada)
+                Entrada (Desde Maestro)
               </option>
             </select>
-            <p v-if="!hasParentMaestro" class="form-hint warning-text">
-              ⚠️ Sin Maestro. Solo ping externo.
-            </p>
           </div>
           <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
-            <label>IP Destino</label
-            ><input type="text" v-model="newPingSensor.config.target_ip" placeholder="8.8.8.8" />
+            <label>IP Destino</label><input type="text" v-model="newPingSensor.config.target_ip" />
           </div>
           <div class="form-group">
             <label>Intervalo (s)</label
-            ><input type="number" v-model.number="newPingSensor.config.interval_sec" required />
+            ><input type="number" v-model.number="newPingSensor.config.interval_sec" />
           </div>
           <div class="form-group">
             <label>Umbral (ms)</label
@@ -648,24 +870,26 @@ function closeSensorDetails() {
           class="config-form"
         >
           <div class="sub-section span-3">
-            <h4>Estado del Sensor</h4>
-            <div class="alert-config-item">
+            <h4>Configuración General</h4>
+            <div class="general-config-grid">
               <div class="form-group checkbox-group">
                 <input type="checkbox" v-model="newEthernetSensor.is_active" id="eActive" />
-                <label
-                  for="eActive"
-                  :class="newEthernetSensor.is_active ? 'text-green' : 'text-gray'"
-                >
-                  {{ newEthernetSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO' }}
-                </label>
+                <label for="eActive" :class="newEthernetSensor.is_active ? 'c-green' : 'c-gray'">{{
+                  newEthernetSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO'
+                }}</label>
               </div>
               <div class="form-group checkbox-group">
                 <input type="checkbox" v-model="newEthernetSensor.alerts_paused" id="ePause" />
-                <label for="ePause" :class="newEthernetSensor.alerts_paused ? 'text-orange' : ''">
-                  {{
-                    newEthernetSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS'
-                  }}
-                </label>
+                <label for="ePause" :class="newEthernetSensor.alerts_paused ? 'c-orange' : ''">{{
+                  newEthernetSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS'
+                }}</label>
+              </div>
+              <div class="form-group" style="grid-column: span 2">
+                <label>Mover a Grupo</label>
+                <select v-model="editMonitorGroup">
+                  <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
+                  <option value="Sin Grupo">Sin Grupo</option>
+                </select>
               </div>
             </div>
           </div>
@@ -744,284 +968,167 @@ function closeSensorDetails() {
         </form>
       </div>
     </div>
-
-    <div class="board-layout">
-      <div
-        v-if="allMonitors.length === 0 && Object.keys(groupedMonitors).length === 0"
-        class="empty-state"
-      >
-        <h3>No hay monitores activos</h3>
-        <p>Ve a <router-link to="/monitor-builder" class="link">Añadir Monitor</router-link>.</p>
-      </div>
-
-      <div v-for="(monitors, groupName) in groupedMonitors" :key="groupName" class="swimlane">
-        <div class="swimlane-header">
-          <h3>
-            {{ groupName }} <span class="count-badge">{{ monitors.length }}</span>
-          </h3>
-        </div>
-
-        <draggable
-          :list="monitors"
-          group="monitors"
-          item-key="monitor_id"
-          class="dashboard-grid"
-          @change="(evt) => onDragChange(evt, groupName)"
-          :animation="200"
-        >
-          <template #item="{ element: monitor }">
-            <div
-              :class="[
-                'monitor-card',
-                {
-                  'status-alert': getOverallCardStatus(monitor),
-                  'is-inactive': !monitor.is_active,
-                  'is-collapsed': collapsedCards.has(monitor.monitor_id),
-                },
-              ]"
-            >
-              <div class="card-header" @dblclick="toggleCardCollapse(monitor.monitor_id)">
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    flex-grow: 1;
-                    overflow: hidden;
-                  "
-                >
-                  <span class="drag-handle">::</span>
-                  <h3
-                    style="
-                      margin: 0;
-                      font-size: 1.1rem;
-                      color: white;
-                      white-space: nowrap;
-                      overflow: hidden;
-                      text-overflow: ellipsis;
-                    "
-                  >
-                    {{ monitor.client_name }}
-                    <span v-if="!monitor.is_active" class="off-badge">OFF</span>
-                    <span v-if="monitor.alerts_paused" class="pause-badge">⏸️</span>
-                  </h3>
-                </div>
-
-                <div class="card-actions-right">
-                  <span class="device-info-header" v-if="!collapsedCards.has(monitor.monitor_id)">{{
-                    monitor.ip_address
-                  }}</span>
-                  <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
-
-                  <button
-                    class="action-icon-btn"
-                    @click="toggleCardCollapse(monitor.monitor_id)"
-                    :title="collapsedCards.has(monitor.monitor_id) ? 'Expandir' : 'Colapsar'"
-                  >
-                    {{ collapsedCards.has(monitor.monitor_id) ? '🔽' : '🔼' }}
-                  </button>
-                  <button
-                    class="action-icon-btn"
-                    :class="{ 'active-orange': monitor.alerts_paused }"
-                    @click="toggleMonitorPause(monitor)"
-                    title="Pausar Alertas"
-                  >
-                    {{ monitor.alerts_paused ? '🔕' : '🔔' }}
-                  </button>
-                  <button
-                    class="action-icon-btn"
-                    :class="{ 'active-red': !monitor.is_active }"
-                    @click="toggleMonitorActive(monitor)"
-                    title="Encender/Apagar"
-                  >
-                    {{ monitor.is_active ? '🔌' : '⚫' }}
-                  </button>
-                  <button class="remove-btn" @click="requestDeleteMonitor(monitor, $event)">
-                    ×
-                  </button>
-                </div>
-              </div>
-
-              <div v-if="!collapsedCards.has(monitor.monitor_id)" class="card-body">
-                <div class="sensors-container">
-                  <div v-if="!monitor.sensors || monitor.sensors.length === 0" class="no-sensors">
-                    Sin sensores.
-                  </div>
-                  <div
-                    v-else
-                    v-for="sensor in monitor.sensors"
-                    :key="sensor.id"
-                    class="sensor-row"
-                    :class="{
-                      'row-inactive': !sensor.is_active,
-                      'row-paused': sensor.alerts_paused,
-                    }"
-                    @click="goToSensorDetail(sensor.id)"
-                  >
-                    <span class="sensor-name">
-                      {{ sensor.name }}
-                      <small v-if="sensor.alerts_paused">⏸️</small>
-                    </span>
-
-                    <div class="sensor-status-group">
-                      <div
-                        class="sensor-value"
-                        :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
-                      >
-                        <template v-if="!sensor.is_active">
-                          <span class="text-gray-500 font-bold text-xs">OFF</span>
-                        </template>
-
-                        <template v-else-if="sensor.sensor_type === 'ping'">
-                          <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'"
-                            >Timeout</span
-                          >
-                          <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'error'"
-                            >Error</span
-                          >
-                          <span
-                            v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'"
-                            >...</span
-                          >
-                          <span v-else
-                            >{{
-                              formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms)
-                            }}
-                            ms</span
-                          >
-                        </template>
-
-                        <template v-else-if="sensor.sensor_type === 'ethernet'">
-                          <div class="ethernet-data">
-                            <span class="ethernet-status">
-                              {{
-                                (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace(
-                                  '_',
-                                  ' ',
-                                )
-                              }}
-                              <span
-                                class="ethernet-speed"
-                                v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'"
-                              >
-                                ({{ liveSensorStatus[String(sensor.id)]?.speed || '—' }})
-                              </span>
-                            </span>
-                            <span
-                              class="ethernet-traffic"
-                              v-if="liveSensorStatus[String(sensor.id)]?.status !== 'pending'"
-                            >
-                              ↓
-                              {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate) }} /
-                              ↑ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}
-                            </span>
-                          </div>
-                        </template>
-
-                        <template v-else>{{
-                          liveSensorStatus[String(sensor.id)]?.status || 'pending'
-                        }}</template>
-                      </div>
-                      <button
-                        class="details-btn"
-                        @click="showSensorDetails(sensor, monitor, $event)"
-                      >
-                        ✎
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div v-else class="card-body collapsed-summary">
-                <span
-                  v-if="getOverallCardStatus(monitor)"
-                  class="status-timeout"
-                  style="font-weight: bold"
-                  >⚠️ Problemas</span
-                >
-                <span v-else class="status-ok">Todo OK ({{ monitor.sensors.length }})</span>
-              </div>
-            </div>
-          </template>
-        </draggable>
-      </div>
-    </div>
   </div>
 </template>
 
 <style scoped>
-/* REGLAS GLOBALES DEL DASHBOARD */
-.toolbar-section {
+/* LAYOUT GLOBAL */
+.layout-container {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: #121212;
+  color: #eee;
+}
+
+/* SIDEBAR */
+.sidebar {
+  width: 250px;
+  background: #1a1a1a;
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.sidebar-header {
+  padding: 1.5rem 1rem;
+  border-bottom: 1px solid #333;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 2rem;
-  padding: 0 0.5rem;
 }
-.btn-group-create {
-  background-color: var(--blue);
+.sidebar-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #fff;
+  letter-spacing: 1px;
+}
+.btn-add-group {
+  background: var(--blue);
+  border: none;
+  color: white;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+}
+
+.group-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  flex-grow: 1;
+}
+.group-list li {
+  padding: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  transition: background 0.2s;
+  border-left: 3px solid transparent;
+}
+.group-list li:hover {
+  background: #252525;
+}
+.group-list li.active {
+  background: #2a2a2a;
+  border-left-color: var(--blue);
+}
+.group-name {
+  flex-grow: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.95rem;
+}
+.badge {
+  background: #333;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 10px;
+  color: #aaa;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: block;
+}
+.dot-green {
+  background-color: var(--green);
+  box-shadow: 0 0 5px var(--green);
+}
+.dot-red {
+  background-color: var(--secondary-color);
+  box-shadow: 0 0 5px var(--secondary-color);
+}
+
+/* MAIN CONTENT */
+.main-content {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.content-header {
+  padding: 1.5rem 2rem;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.content-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: white;
+}
+.btn-primary {
+  background: var(--blue);
   color: white;
   border: none;
   padding: 0.6rem 1.2rem;
   border-radius: 6px;
   font-weight: bold;
   cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
 }
-.full-width-input {
-  width: 100%;
-  padding: 0.8rem;
-  background-color: var(--bg-color);
-  border: 1px solid var(--primary-color);
-  border-radius: 6px;
-  color: white;
-  margin-bottom: 1rem;
-}
-
-/* SWIMLANES */
-.swimlane {
-  margin-bottom: 2rem;
-}
-.swimlane-header {
-  border-bottom: 1px solid var(--primary-color);
-  margin-bottom: 1rem;
-  padding-bottom: 0.5rem;
+.empty-selection {
   display: flex;
+  justify-content: center;
   align-items: center;
-}
-.swimlane-header h3 {
-  margin: 0;
-  color: var(--gray);
-  font-size: 1rem;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-.count-badge {
-  background-color: var(--primary-color);
-  color: white;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.8rem;
-  margin-left: 0.5rem;
+  height: 100%;
+  color: #666;
+  font-size: 1.2rem;
 }
 
-/* GRID ORIGINAL (Reutilizado dentro del draggable) */
+.scroll-area {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 2rem;
+}
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 1.5rem;
-  min-height: 50px; /* Zona drop visible si vacío */
 }
 
-/* CARDS ORIGINALES + NUEVOS ESTADOS */
+/* MONITOR CARD */
 .monitor-card {
-  background-color: var(--surface-color);
-  border-radius: 12px;
+  background: var(--surface-color);
   border: 1px solid var(--primary-color);
-  display: flex;
-  flex-direction: column;
+  border-radius: 12px;
   overflow: hidden;
   transition: opacity 0.3s;
+  display: flex;
+  flex-direction: column;
 }
 .monitor-card.status-alert {
   border-color: var(--secondary-color);
@@ -1030,84 +1137,93 @@ function closeSensorDetails() {
 .monitor-card.is-inactive {
   opacity: 0.6;
   border-style: dashed;
+  border-color: #444;
 }
 .monitor-card.is-collapsed {
   height: auto;
 }
 
 .card-header {
+  background: var(--primary-color);
+  padding: 0.5rem 1rem;
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
+  cursor: grab;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  background-color: var(--primary-color);
-  cursor: grab; /* Cursor de arrastre */
 }
 .card-header:active {
   cursor: grabbing;
 }
-
-.card-actions-right {
+.header-left {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.5rem;
+  overflow: hidden;
 }
-
-/* Botones de acción nuevos en header */
-.action-icon-btn {
-  background: none;
-  border: none;
-  font-size: 1.1rem;
-  cursor: pointer;
-  opacity: 0.5;
-  transition: opacity 0.2s;
-  padding: 0 2px;
-}
-.action-icon-btn:hover {
-  opacity: 1;
-}
-.active-orange {
-  opacity: 1;
-  text-shadow: 0 0 8px orange;
-}
-.active-red {
-  opacity: 1;
-  text-shadow: 0 0 8px red;
-}
-
 .drag-handle {
-  color: var(--gray);
-  font-size: 1.2rem;
+  color: #fff;
   cursor: grab;
-  margin-right: 0.4rem;
-  opacity: 0.5;
+  font-size: 1.2rem;
+  margin-right: 0.2rem;
+  opacity: 0.7;
+}
+.title-wrapper h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 .off-badge {
   background: #444;
   font-size: 0.7rem;
   padding: 2px 5px;
   border-radius: 4px;
-  margin-left: 5px;
 }
 .pause-badge {
   font-size: 0.9rem;
-  margin-left: 5px;
 }
 
-.device-info-header {
+.card-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.device-ip {
   font-size: 0.85rem;
   color: var(--gray);
-  flex-shrink: 0;
+  margin-right: 0.5rem;
 }
-.alert-icon {
-  font-size: 1.25rem;
-}
-.remove-btn {
+.action-icon-btn {
   background: none;
   border: none;
+  font-size: 1.2rem;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  padding: 0 5px;
+  transition: opacity 0.2s;
+}
+.action-icon-btn:hover {
+  opacity: 1;
+}
+.active-orange {
+  opacity: 1;
+  text-shadow: 0 0 5px orange;
+}
+.active-red {
+  opacity: 1;
+  text-shadow: 0 0 5px red;
+}
+.remove-btn {
   color: var(--gray);
   font-size: 1.5rem;
+  background: none;
+  border: none;
   cursor: pointer;
   margin-left: 0.5rem;
 }
@@ -1118,15 +1234,24 @@ function closeSensorDetails() {
 }
 .collapsed-summary {
   padding: 0.5rem 1rem;
-  background-color: var(--bg-color);
+  background-color: var(--surface-color);
   font-size: 0.9rem;
   text-align: center;
+  font-style: italic;
+  color: var(--gray);
 }
 
+/* SENSORES */
 .sensors-container {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+.no-sensors {
+  font-style: italic;
+  color: var(--gray);
+  text-align: center;
+  padding: 1rem;
 }
 .sensor-row {
   display: grid;
@@ -1138,13 +1263,12 @@ function closeSensorDetails() {
   border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.2s;
-  border-left: 3px solid transparent;
 }
 .sensor-row:hover {
   background-color: var(--primary-color);
 }
 .sensor-row.row-paused {
-  border-left-color: orange;
+  border-left: 3px solid orange;
 }
 .sensor-row.row-inactive {
   opacity: 0.5;
@@ -1159,8 +1283,14 @@ function closeSensorDetails() {
 .sensor-value {
   text-align: right;
 }
+.val-off {
+  color: #666;
+  font-weight: bold;
+  font-size: 0.8rem;
+  letter-spacing: 1px;
+}
 
-/* ETHERNET DATA (Restaurado Exacto) */
+/* ETHERNET DATA ORIGINAL */
 .ethernet-data {
   display: flex;
   flex-direction: column;
@@ -1196,47 +1326,45 @@ function closeSensorDetails() {
   color: var(--gray);
 }
 
-.empty-state {
-  grid-column: 1 / -1;
-  text-align: center;
-  background-color: var(--surface-color);
-  padding: 4rem;
-  border-radius: 12px;
-}
-.empty-state .link {
-  color: var(--blue);
-  text-decoration: underline;
-  cursor: pointer;
-}
-.no-sensors {
+.details-btn {
+  background: none;
+  border: none;
   color: var(--gray);
-  font-style: italic;
+  cursor: pointer;
+  font-size: 1.2rem;
+  width: 30px;
+  height: 30px;
+  line-height: 30px;
   text-align: center;
-  padding: 1rem;
+  border-radius: 50%;
+}
+.details-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--blue);
 }
 
-/* MODALS */
+/* MODALS Y FORMULARIOS */
 .modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 2000;
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 2000;
 }
 .modal-content {
-  background-color: var(--surface-color);
+  background: var(--surface-color);
   padding: 2rem;
   border-radius: 12px;
-  max-width: 800px;
   width: 92%;
-  text-align: left;
+  max-width: 800px;
   max-height: 90vh;
   overflow-y: auto;
+  text-align: left;
 }
 .modal-content.small {
   max-width: 400px;
@@ -1247,27 +1375,7 @@ function closeSensorDetails() {
   gap: 1rem;
   margin-top: 1.5rem;
 }
-.modal-actions button {
-  padding: 0.6rem 1.2rem;
-  border: none;
-  border-radius: 6px;
-  font-weight: bold;
-  cursor: pointer;
-}
-.btn-secondary {
-  background-color: var(--primary-color);
-  color: white;
-}
-.btn-danger {
-  background-color: var(--secondary-color);
-  color: white;
-}
-.btn-primary {
-  background-color: var(--blue);
-  color: white;
-}
 
-/* ESTILOS DE FORMULARIO (Originales) */
 .config-form {
   padding: 1rem;
   background-color: var(--bg-color);
@@ -1302,20 +1410,15 @@ function closeSensorDetails() {
   color: white;
   width: 100%;
 }
-.form-group select:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-  background-color: #2a2a2a;
+.general-config-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  align-items: end;
 }
-.warning-text {
-  color: #fbbf24;
-  font-size: 0.8rem;
-  margin-top: 0.25rem;
-}
-
 .sub-section {
   grid-column: span 3;
-  background-color: var(--surface-color);
+  background: var(--surface-color);
   padding: 1rem;
   border-radius: 8px;
   margin-top: 0.5rem;
@@ -1342,44 +1445,41 @@ function closeSensorDetails() {
   align-items: center;
   gap: 0.5rem;
 }
-.mt-1 {
-  margin-top: 1rem;
-}
-.text-green {
+.c-green {
   color: var(--green);
   font-weight: bold;
 }
-.text-gray {
-  color: var(--gray);
+.c-gray {
+  color: #666;
   font-weight: bold;
 }
-.text-orange {
+.c-orange {
   color: #fbbf24;
   font-weight: bold;
 }
-
-.sensor-status-group {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.mt-1 {
+  margin-top: 1rem;
 }
-.details-btn {
-  background: none;
+
+/* UTILS */
+.btn-secondary {
+  background: var(--primary-color);
+  color: white;
   border: none;
-  color: var(--gray);
-  font-size: 1.2rem;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  font-weight: bold;
   cursor: pointer;
-  width: 30px;
-  height: 30px;
-  line-height: 30px;
-  text-align: center;
-  border-radius: 50%;
 }
-.details-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: var(--blue);
+.btn-danger {
+  background: var(--secondary-color);
+  color: white;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
 }
-
 .notification {
   position: fixed;
   top: 90px;
@@ -1391,9 +1491,9 @@ function closeSensorDetails() {
   z-index: 3000;
 }
 .notification.success {
-  background-color: var(--green);
+  background: var(--green);
 }
 .notification.error {
-  background-color: var(--secondary-color);
+  background: var(--secondary-color);
 }
 </style>
