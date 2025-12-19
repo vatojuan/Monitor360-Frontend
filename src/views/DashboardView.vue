@@ -20,7 +20,7 @@ const collapsedCards = ref(new Set())
 // --- Modales y UI ---
 const sensorDetailsToShow = ref(null)
 const currentMonitorContext = ref(null)
-const editMonitorGroup = ref('') // Para mover de grupo en el modal
+const editMonitorGroup = ref('')
 const showGroupModal = ref(false)
 const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
@@ -101,7 +101,6 @@ function refreshGroupedMonitors() {
   }
 }
 
-// Calcula si un grupo tiene alertas para mostrar el punto rojo en el sidebar
 function getGroupStatusClass(groupName) {
   const monitors = groupedMonitors.value[groupName] || []
   let hasAlert = false
@@ -125,7 +124,6 @@ function addNewGroup() {
   newGroupName.value = ''
 }
 
-// Drag & Drop: Guardar nuevo orden
 async function onDragChange() {
   if (!activeGroup.value) return
 
@@ -164,7 +162,7 @@ async function fetchAllMonitors() {
     refreshGroupedMonitors()
     trySubscribeSensors()
   } catch (err) {
-    console.error(err)
+    if (import.meta.env.DEV) console.error(err)
   }
 }
 
@@ -396,7 +394,7 @@ async function showSensorDetails(s, m, e) {
 async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
 
-  // 1. Cambio de Grupo (Mover tarjeta)
+  // 1. Cambio de Grupo
   const newGroup = editMonitorGroup.value
   if (newGroup !== currentMonitorContext.value.group_name) {
     try {
@@ -406,10 +404,10 @@ async function handleUpdateSensor() {
       )
       if (mLocal) mLocal.group_name = newGroup
       refreshGroupedMonitors()
-      // Saltamos al grupo nuevo para ver el cambio
+      // Saltamos al grupo nuevo para que el usuario vea su cambio
       activeGroup.value = newGroup
     } catch (e) {
-      console.error(e)
+      if (import.meta.env.DEV) console.error(e)
     }
   }
 
@@ -516,7 +514,7 @@ function closeSensorDetails() {
         </div>
       </header>
       <div v-else class="empty-selection">
-        <p>Selecciona o crea un grupo</p>
+        <p>Selecciona o crea un grupo para comenzar</p>
       </div>
 
       <div v-if="notification.show" :class="['notification', notification.type]">
@@ -560,6 +558,7 @@ function closeSensorDetails() {
                   <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">{{
                     monitor.ip_address
                   }}</span>
+
                   <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
 
                   <button
@@ -683,12 +682,12 @@ function closeSensorDetails() {
               </div>
 
               <div v-else class="card-body collapsed-summary">
-                <div v-if="getOverallCardStatus(monitor)" class="summary-alert">
-                  ⚠️ <strong>Atención Requerida</strong>
-                </div>
-                <div v-else class="summary-ok">
-                  Todo Operativo ({{ monitor.sensors.length }} sensores)
-                </div>
+                <span v-if="getOverallCardStatus(monitor)" class="summary-alert"
+                  >⚠️ Problemas detectados</span
+                >
+                <span v-else class="summary-ok"
+                  >Todo Operativo ({{ monitor.sensors.length }} sensores)</span
+                >
               </div>
             </div>
           </template>
@@ -736,13 +735,13 @@ function closeSensorDetails() {
             <div class="general-config-grid">
               <div class="form-group checkbox-group">
                 <input type="checkbox" v-model="newPingSensor.is_active" id="pActive" />
-                <label for="pActive" :class="newPingSensor.is_active ? 'c-green' : 'c-gray'">
+                <label for="pActive" :class="newPingSensor.is_active ? 'text-green' : 'text-gray'">
                   {{ newPingSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO' }}
                 </label>
               </div>
               <div class="form-group checkbox-group">
                 <input type="checkbox" v-model="newPingSensor.alerts_paused" id="pPause" />
-                <label for="pPause" :class="newPingSensor.alerts_paused ? 'c-orange' : ''">
+                <label for="pPause" :class="newPingSensor.alerts_paused ? 'text-orange' : ''">
                   {{ newPingSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS' }}
                 </label>
               </div>
@@ -876,13 +875,15 @@ function closeSensorDetails() {
             <div class="general-config-grid">
               <div class="form-group checkbox-group">
                 <input type="checkbox" v-model="newEthernetSensor.is_active" id="eActive" />
-                <label for="eActive" :class="newEthernetSensor.is_active ? 'c-green' : 'c-gray'">{{
-                  newEthernetSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO'
-                }}</label>
+                <label
+                  for="eActive"
+                  :class="newEthernetSensor.is_active ? 'text-green' : 'text-gray'"
+                  >{{ newEthernetSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO' }}</label
+                >
               </div>
               <div class="form-group checkbox-group">
                 <input type="checkbox" v-model="newEthernetSensor.alerts_paused" id="ePause" />
-                <label for="ePause" :class="newEthernetSensor.alerts_paused ? 'c-orange' : ''">{{
+                <label for="ePause" :class="newEthernetSensor.alerts_paused ? 'text-orange' : ''">{{
                   newEthernetSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS'
                 }}</label>
               </div>
