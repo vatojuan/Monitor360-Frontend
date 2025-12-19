@@ -8,24 +8,22 @@ import draggable from 'vuedraggable'
 
 const router = useRouter()
 
-// --- ESTADO PRINCIPAL ---
+// --- ESTADO ---
 const allMonitors = ref([])
 const groupedMonitors = ref({})
-const activeGroup = ref(null) // El grupo seleccionado actualmente
+const activeGroup = ref(null)
 
 const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const collapsedCards = ref(new Set())
 
-// --- Modal Edición ---
+// --- Modales y UI ---
 const sensorDetailsToShow = ref(null)
 const currentMonitorContext = ref(null)
-const editMonitorGroup = ref('') // Para mover de grupo
-const notification = ref({ show: false, message: '', type: 'success' })
-
-// --- Gestión de Grupos ---
+const editMonitorGroup = ref('') // Para mover de grupo en el modal
 const showGroupModal = ref(false)
 const newGroupName = ref('')
+const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- COMPUTADOS ---
 const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
@@ -33,7 +31,7 @@ const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
 const availableGroups = computed(() => Object.keys(groupedMonitors.value).sort())
 
-// --- FORMULARIOS (Tu código original exacto) ---
+// --- FORMULARIOS ---
 const createNewPingSensor = () => ({
   name: '',
   is_active: true,
@@ -82,6 +80,7 @@ const newEthernetSensor = ref(createNewEthernetSensor())
 
 function refreshGroupedMonitors() {
   const groups = {}
+  // Ordenar por posición
   const sorted = [...allMonitors.value].sort((a, b) => (a.position || 0) - (b.position || 0))
 
   sorted.forEach((m) => {
@@ -89,20 +88,20 @@ function refreshGroupedMonitors() {
     if (!groups[gName]) groups[gName] = []
     groups[gName].push(m)
   })
-
   groupedMonitors.value = groups
 
-  // Selección automática de grupo si no hay uno activo
-  const groupNames = Object.keys(groups).sort()
-  if (groupNames.length > 0) {
+  // Seleccionar grupo por defecto si no hay uno activo
+  const names = Object.keys(groups).sort()
+  if (names.length > 0) {
     if (!activeGroup.value || !groups[activeGroup.value]) {
-      activeGroup.value = groupNames[0]
+      activeGroup.value = names[0]
     }
   } else {
     activeGroup.value = null
   }
 }
 
+// Calcula si un grupo tiene alertas para mostrar el punto rojo en el sidebar
 function getGroupStatusClass(groupName) {
   const monitors = groupedMonitors.value[groupName] || []
   let hasAlert = false
@@ -126,7 +125,7 @@ function addNewGroup() {
   newGroupName.value = ''
 }
 
-// Linter Fix: Eliminado argumento 'evt' no usado
+// Drag & Drop: Guardar nuevo orden
 async function onDragChange() {
   if (!activeGroup.value) return
 
@@ -397,7 +396,7 @@ async function showSensorDetails(s, m, e) {
 async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
 
-  // 1. Cambio de Grupo
+  // 1. Cambio de Grupo (Mover tarjeta)
   const newGroup = editMonitorGroup.value
   if (newGroup !== currentMonitorContext.value.group_name) {
     try {
@@ -407,7 +406,7 @@ async function handleUpdateSensor() {
       )
       if (mLocal) mLocal.group_name = newGroup
       refreshGroupedMonitors()
-      // Saltamos al grupo nuevo para que el usuario vea su cambio
+      // Saltamos al grupo nuevo para ver el cambio
       activeGroup.value = newGroup
     } catch (e) {
       console.error(e)
@@ -563,13 +562,18 @@ function closeSensorDetails() {
                   }}</span>
                   <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
 
-                  <button class="action-icon-btn" @click="toggleCardCollapse(monitor.monitor_id)">
+                  <button
+                    class="action-icon-btn"
+                    @click="toggleCardCollapse(monitor.monitor_id)"
+                    :title="collapsedCards.has(monitor.monitor_id) ? 'Expandir' : 'Colapsar'"
+                  >
                     {{ collapsedCards.has(monitor.monitor_id) ? '🔽' : '🔼' }}
                   </button>
                   <button
                     class="action-icon-btn"
                     :class="{ 'active-orange': monitor.alerts_paused }"
                     @click="toggleMonitorPause(monitor)"
+                    title="Pausar Alertas"
                   >
                     {{ monitor.alerts_paused ? '🔕' : '🔔' }}
                   </button>
@@ -577,6 +581,7 @@ function closeSensorDetails() {
                     class="action-icon-btn"
                     :class="{ 'active-red': !monitor.is_active }"
                     @click="toggleMonitorActive(monitor)"
+                    title="Encender/Apagar"
                   >
                     {{ monitor.is_active ? '🔌' : '⚫' }}
                   </button>
@@ -678,15 +683,12 @@ function closeSensorDetails() {
               </div>
 
               <div v-else class="card-body collapsed-summary">
-                <span
-                  v-if="getOverallCardStatus(monitor)"
-                  class="status-timeout"
-                  style="font-weight: bold"
-                  >⚠️ Problemas detectados</span
-                >
-                <span v-else class="status-ok"
-                  >Sistema Operativo ({{ monitor.sensors.length }} sensores)</span
-                >
+                <div v-if="getOverallCardStatus(monitor)" class="summary-alert">
+                  ⚠️ <strong>Atención Requerida</strong>
+                </div>
+                <div v-else class="summary-ok">
+                  Todo Operativo ({{ monitor.sensors.length }} sensores)
+                </div>
               </div>
             </div>
           </template>
@@ -972,7 +974,7 @@ function closeSensorDetails() {
 </template>
 
 <style scoped>
-/* LAYOUT GLOBAL */
+/* LAYOUT GLOBAL (MASTER-DETAIL) */
 .layout-container {
   display: flex;
   height: 100vh;
@@ -981,7 +983,7 @@ function closeSensorDetails() {
   color: #eee;
 }
 
-/* SIDEBAR */
+/* SIDEBAR IZQUIERDO */
 .sidebar {
   width: 250px;
   background: #1a1a1a;
@@ -1002,6 +1004,7 @@ function closeSensorDetails() {
   font-size: 1rem;
   color: #fff;
   letter-spacing: 1px;
+  font-weight: bold;
 }
 .btn-add-group {
   background: var(--blue);
@@ -1059,6 +1062,7 @@ function closeSensorDetails() {
   height: 8px;
   border-radius: 50%;
   display: block;
+  flex-shrink: 0;
 }
 .dot-green {
   background-color: var(--green);
@@ -1069,20 +1073,22 @@ function closeSensorDetails() {
   box-shadow: 0 0 5px var(--secondary-color);
 }
 
-/* MAIN CONTENT */
+/* MAIN CONTENT (DERECHA) */
 .main-content {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 .content-header {
-  padding: 1.5rem 2rem;
+  padding: 1rem 2rem;
   background: #1a1a1a;
   border-bottom: 1px solid #333;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
 .content-header h2 {
   margin: 0;
@@ -1109,6 +1115,7 @@ function closeSensorDetails() {
   font-size: 1.2rem;
 }
 
+/* AREA SCROLLABLE Y GRID */
 .scroll-area {
   flex-grow: 1;
   overflow-y: auto;
@@ -1116,19 +1123,19 @@ function closeSensorDetails() {
 }
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 1.5rem;
 }
 
-/* MONITOR CARD */
+/* TARJETAS (Estilos Originales Restaurados) */
 .monitor-card {
-  background: var(--surface-color);
-  border: 1px solid var(--primary-color);
+  background-color: var(--surface-color);
   border-radius: 12px;
-  overflow: hidden;
-  transition: opacity 0.3s;
+  border: 1px solid var(--primary-color);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  transition: opacity 0.3s;
 }
 .monitor-card.status-alert {
   border-color: var(--secondary-color);
@@ -1144,13 +1151,13 @@ function closeSensorDetails() {
 }
 
 .card-header {
-  background: var(--primary-color);
-  padding: 0.5rem 1rem;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  cursor: grab;
+  justify-content: space-between;
   gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background-color: var(--primary-color);
+  cursor: grab;
 }
 .card-header:active {
   cursor: grabbing;
@@ -1162,11 +1169,10 @@ function closeSensorDetails() {
   overflow: hidden;
 }
 .drag-handle {
-  color: #fff;
-  cursor: grab;
+  color: rgba(255, 255, 255, 0.6);
   font-size: 1.2rem;
-  margin-right: 0.2rem;
-  opacity: 0.7;
+  cursor: grab;
+  margin-right: 0.3rem;
 }
 .title-wrapper h3 {
   margin: 0;
@@ -1196,36 +1202,45 @@ function closeSensorDetails() {
 }
 .device-ip {
   font-size: 0.85rem;
-  color: var(--gray);
+  color: #ccc;
   margin-right: 0.5rem;
+}
+.alert-icon {
+  font-size: 1.25rem;
 }
 .action-icon-btn {
   background: none;
   border: none;
   font-size: 1.2rem;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
-  padding: 0 5px;
+  padding: 0 3px;
   transition: opacity 0.2s;
 }
 .action-icon-btn:hover {
   opacity: 1;
+  color: white;
 }
 .active-orange {
-  opacity: 1;
+  color: #fbbf24;
   text-shadow: 0 0 5px orange;
+  opacity: 1;
 }
 .active-red {
-  opacity: 1;
+  color: #ff6b6b;
   text-shadow: 0 0 5px red;
+  opacity: 1;
 }
 .remove-btn {
-  color: var(--gray);
-  font-size: 1.5rem;
   background: none;
   border: none;
+  color: #ccc;
+  font-size: 1.5rem;
   cursor: pointer;
   margin-left: 0.5rem;
+}
+.remove-btn:hover {
+  color: #d9534f;
 }
 
 .card-body {
@@ -1234,14 +1249,22 @@ function closeSensorDetails() {
 }
 .collapsed-summary {
   padding: 0.5rem 1rem;
-  background-color: var(--surface-color);
-  font-size: 0.9rem;
+  background-color: #222;
+  font-size: 0.85rem;
   text-align: center;
   font-style: italic;
-  color: var(--gray);
+  color: #aaa;
+  border-top: 1px solid #333;
+}
+.summary-alert {
+  color: var(--secondary-color);
+  font-weight: bold;
+}
+.summary-ok {
+  color: var(--green);
 }
 
-/* SENSORES */
+/* SENSORES (Estilos Originales Restaurados) */
 .sensors-container {
   display: flex;
   flex-direction: column;
@@ -1263,12 +1286,13 @@ function closeSensorDetails() {
   border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.2s;
+  border-left: 3px solid transparent;
 }
 .sensor-row:hover {
   background-color: var(--primary-color);
 }
 .sensor-row.row-paused {
-  border-left: 3px solid orange;
+  border-left-color: orange;
 }
 .sensor-row.row-inactive {
   opacity: 0.5;
@@ -1330,8 +1354,8 @@ function closeSensorDetails() {
   background: none;
   border: none;
   color: var(--gray);
-  cursor: pointer;
   font-size: 1.2rem;
+  cursor: pointer;
   width: 30px;
   height: 30px;
   line-height: 30px;
