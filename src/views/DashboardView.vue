@@ -1522,3 +1522,4 @@ function closeSensorDetails() {
   background: var(--secondary-color);
 }
 </style>
+// fix
