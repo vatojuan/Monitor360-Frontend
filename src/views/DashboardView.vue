@@ -12,12 +12,13 @@ const router = useRouter()
 const allMonitors = ref([])
 const groupedMonitors = ref({})
 const activeGroup = ref(null)
+const isSidebarCollapsed = ref(false)
 
 const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const collapsedCards = ref(new Set())
 
-// --- MODALES Y UI ---
+// --- Modales ---
 const sensorDetailsToShow = ref(null)
 const currentMonitorContext = ref(null)
 const editMonitorGroup = ref('')
@@ -31,7 +32,7 @@ const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
 const availableGroups = computed(() => Object.keys(groupedMonitors.value).sort())
 
-// --- FORMULARIOS (Data original) ---
+// --- FORMULARIOS ---
 const createNewPingSensor = () => ({
   name: '',
   is_active: true,
@@ -76,7 +77,7 @@ const createNewEthernetSensor = () => ({
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
 
-// --- LÓGICA DE GRUPOS ---
+// --- LOGICA GRUPOS ---
 function refreshGroupedMonitors() {
   const groups = {}
   const sorted = [...allMonitors.value].sort((a, b) => (a.position || 0) - (b.position || 0))
@@ -98,7 +99,6 @@ function refreshGroupedMonitors() {
   }
 }
 
-// Indicador del sidebar (puntito de color)
 function getGroupStatusClass(groupName) {
   const monitors = groupedMonitors.value[groupName] || []
   let hasAlert = false
@@ -122,37 +122,32 @@ function addNewGroup() {
   newGroupName.value = ''
 }
 
-// Guardar orden (Drag & Drop)
+// --- D&D ---
 async function onDragChange() {
   if (!activeGroup.value) return
-
   const monitorsInGroup = groupedMonitors.value[activeGroup.value]
   const payloadItems = []
 
   monitorsInGroup.forEach((m, index) => {
     m.position = index
-    payloadItems.push({
-      monitor_id: m.monitor_id,
-      group_name: activeGroup.value,
-      position: index,
-    })
+    payloadItems.push({ monitor_id: m.monitor_id, group_name: activeGroup.value, position: index })
   })
 
   try {
     await api.post('/monitors/reorder', { items: payloadItems })
-  } catch {
-    showNotification('Error guardando orden', 'error')
+  } catch (e) {
+    console.error(e)
   }
 }
 
-// --- API & LIFECYCLE ---
+// --- API & UTILIDADES ---
 async function fetchAllMonitors() {
   try {
     const { data } = await api.get('/monitors')
     allMonitors.value = Array.isArray(data) ? data : []
     allMonitors.value.forEach((m) => {
-      if (m.is_active === undefined || m.is_active === null) m.is_active = true
-      if (m.alerts_paused === undefined || m.alerts_paused === null) m.alerts_paused = false
+      if (m.is_active === null || m.is_active === undefined) m.is_active = true
+      if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
       ;(m.sensors || []).forEach((s) => {
         const sid = String(s.id)
         if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
@@ -161,11 +156,10 @@ async function fetchAllMonitors() {
     refreshGroupedMonitors()
     trySubscribeSensors()
   } catch (err) {
-    if (import.meta.env.DEV) console.error(err)
+    console.error(err)
   }
 }
 
-// --- UTILIDADES (Formatos originales) ---
 function formatBitrate(bits) {
   const n = Number(bits)
   if (!Number.isFinite(n) || n <= 0) return '0 Kbps'
@@ -237,8 +231,8 @@ async function ensureChannelsLoaded() {
     try {
       const { data } = await api.get('/channels')
       data.forEach((c) => (channelsById.value[c.id] = c))
-    } catch {
-      /* ignore */
+    } catch (e) {
+      console.error(e)
     }
   }
 }
@@ -355,14 +349,13 @@ function goToSensorDetail(id) {
   router.push(`/sensor/${id}`)
 }
 
-// --- MODAL EDICION + CAMBIO DE GRUPO ---
+// --- EDICION SENSOR ---
 async function showSensorDetails(s, m, e) {
   e?.stopPropagation()
   await ensureChannelsLoaded()
   sensorDetailsToShow.value = s
   currentMonitorContext.value = m
-  editMonitorGroup.value = m.group_name || 'Sin Grupo'
-
+  editMonitorGroup.value = m.group_name || 'General'
   const cfg = safeJsonParse(s.config)
   if (s.sensor_type === 'ping') {
     const d = createNewPingSensor()
@@ -392,8 +385,7 @@ async function showSensorDetails(s, m, e) {
 
 async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
-
-  // 1. Cambio de Grupo
+  // 1. Cambio Grupo
   const newGroup = editMonitorGroup.value
   if (newGroup !== currentMonitorContext.value.group_name) {
     try {
@@ -405,17 +397,15 @@ async function handleUpdateSensor() {
       refreshGroupedMonitors()
       activeGroup.value = newGroup
     } catch (e) {
-      if (import.meta.env.DEV) console.error(e)
+      console.error(e)
     }
   }
-
-  // 2. Actualizar Sensor
+  // 2. Sensor Update
   const type = sensorDetailsToShow.value.sensor_type
   const uiData = type === 'ping' ? newPingSensor.value : newEthernetSensor.value
   const config = { ...uiData.config }
   config.alerts = []
   const num = (v, d) => (typeof v === 'number' && !isNaN(v) ? v : d)
-
   if (type === 'ping') {
     const t = uiData.ui_alert_timeout
     if (t.enabled && t.channel_id)
@@ -454,7 +444,6 @@ async function handleUpdateSensor() {
         tolerance_count: num(tr.tolerance_count, 1),
       })
   }
-
   try {
     const payload = {
       name: uiData.name,
@@ -463,17 +452,16 @@ async function handleUpdateSensor() {
       alerts_paused: uiData.alerts_paused,
     }
     const { data } = await api.put(`/sensors/${sensorDetailsToShow.value.id}`, payload)
-
     const m = allMonitors.value.find((m) => m.monitor_id === currentMonitorContext.value.monitor_id)
     if (m) {
       const idx = m.sensors.findIndex((s) => s.id === sensorDetailsToShow.value.id)
       if (idx !== -1) m.sensors[idx] = { ...m.sensors[idx], ...data }
     }
-
-    showNotification('Guardado correctamente')
+    showNotification('Guardado')
     if (payload.is_active !== sensorDetailsToShow.value.is_active) trySubscribeSensors()
     closeSensorDetails()
-  } catch {
+  } catch (e) {
+    console.error(e)
     showNotification('Error al guardar', 'error')
   }
 }
@@ -484,25 +472,34 @@ function closeSensorDetails() {
 </script>
 
 <template>
-  <div class="radical-test-header">
-    ⚠️ MODO DISEÑO PROFESIONAL V3 - SI NO VES ESTO ROJO, BORRA CACHÉ ⚠️
-  </div>
   <div class="layout-container">
-    <aside class="sidebar">
+    <aside class="sidebar" :class="{ 'sidebar-collapsed': isSidebarCollapsed }">
       <div class="sidebar-header">
-        <h3>GRUPOS</h3>
-        <button class="btn-add-group" @click="showGroupModal = true" title="Crear Grupo">+</button>
+        <h3 v-if="!isSidebarCollapsed">GRUPOS</h3>
+        <button
+          class="btn-toggle-sidebar"
+          @click="isSidebarCollapsed = !isSidebarCollapsed"
+          title="Menú"
+        >
+          {{ isSidebarCollapsed ? '☰' : '«' }}
+        </button>
       </div>
+
+      <div class="sidebar-actions" v-if="!isSidebarCollapsed">
+        <button class="btn-add-group" @click="showGroupModal = true">+ Nuevo Grupo</button>
+      </div>
+
       <ul class="group-list">
         <li
           v-for="gName in Object.keys(groupedMonitors).sort()"
           :key="gName"
           :class="{ active: activeGroup === gName }"
           @click="activeGroup = gName"
+          :title="gName"
         >
           <span :class="['status-dot', getGroupStatusClass(gName)]"></span>
-          <span class="group-name">{{ gName }}</span>
-          <span class="badge">{{ groupedMonitors[gName].length }}</span>
+          <span v-if="!isSidebarCollapsed" class="group-name">{{ gName }}</span>
+          <span v-if="!isSidebarCollapsed" class="badge">{{ groupedMonitors[gName].length }}</span>
         </li>
       </ul>
     </aside>
@@ -510,12 +507,10 @@ function closeSensorDetails() {
     <main class="main-content">
       <header class="content-header" v-if="activeGroup">
         <h2>{{ activeGroup }}</h2>
-        <div class="header-actions">
-          <router-link to="/monitor-builder" class="btn-primary">Añadir Dispositivo</router-link>
-        </div>
+        <router-link to="/monitor-builder" class="btn-primary">Añadir Dispositivo</router-link>
       </header>
       <div v-else class="empty-selection">
-        <p>Selecciona o crea un grupo para comenzar</p>
+        <p>Selecciona un grupo</p>
       </div>
 
       <div v-if="notification.show" :class="['notification', notification.type]">
@@ -546,26 +541,22 @@ function closeSensorDetails() {
               <div class="card-header" @dblclick="toggleCardCollapse(monitor.monitor_id)">
                 <div class="header-left">
                   <span class="drag-handle">::</span>
-                  <div class="title-wrapper">
-                    <h3 class="card-title">
-                      {{ monitor.client_name }}
+                  <div class="title-container">
+                    <h3>{{ monitor.client_name }}</h3>
+                    <div class="badges-row">
                       <span v-if="!monitor.is_active" class="off-badge">OFF</span>
                       <span v-if="monitor.alerts_paused" class="pause-badge">⏸️</span>
-                    </h3>
+                    </div>
                   </div>
                 </div>
 
                 <div class="card-actions-right">
-                  <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">{{
-                    monitor.ip_address
-                  }}</span>
+                  <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">
+                    {{ monitor.ip_address }}
+                  </span>
                   <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
 
-                  <button
-                    class="action-icon-btn"
-                    @click="toggleCardCollapse(monitor.monitor_id)"
-                    :title="collapsedCards.has(monitor.monitor_id) ? 'Expandir' : 'Colapsar'"
-                  >
+                  <button class="action-icon-btn" @click="toggleCardCollapse(monitor.monitor_id)">
                     {{ collapsedCards.has(monitor.monitor_id) ? '🔽' : '🔼' }}
                   </button>
                   <button
@@ -595,6 +586,7 @@ function closeSensorDetails() {
                   <div v-if="!monitor.sensors || monitor.sensors.length === 0" class="no-sensors">
                     Sin sensores.
                   </div>
+
                   <div
                     v-else
                     v-for="sensor in monitor.sensors"
@@ -617,7 +609,7 @@ function closeSensorDetails() {
                         :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
                       >
                         <template v-if="!sensor.is_active">
-                          <span class="val-off">OFF</span>
+                          <span class="text-off">OFF</span>
                         </template>
 
                         <template v-else-if="sensor.sensor_type === 'ping'">
@@ -640,28 +632,31 @@ function closeSensorDetails() {
                         </template>
 
                         <template v-else-if="sensor.sensor_type === 'ethernet'">
-                          <div class="ethernet-data">
-                            <span class="ethernet-status">
+                          <div class="ethernet-data-flex">
+                            <span class="ethernet-main-status">
                               {{
                                 (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace(
                                   '_',
                                   ' ',
                                 )
                               }}
-                              <span
-                                class="ethernet-speed"
-                                v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'"
-                              >
-                                ({{ liveSensorStatus[String(sensor.id)]?.speed || '—' }})
-                              </span>
                             </span>
                             <span
-                              class="ethernet-traffic"
+                              class="ethernet-traffic-row"
                               v-if="liveSensorStatus[String(sensor.id)]?.status !== 'pending'"
                             >
-                              ↓
-                              {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate) }} /
-                              ↑ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}
+                              <span class="traf-item"
+                                >↓
+                                {{
+                                  formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate)
+                                }}</span
+                              >
+                              <span class="traf-item"
+                                >↑
+                                {{
+                                  formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate)
+                                }}</span
+                              >
                             </span>
                           </div>
                         </template>
@@ -670,6 +665,7 @@ function closeSensorDetails() {
                           liveSensorStatus[String(sensor.id)]?.status || 'pending'
                         }}</template>
                       </div>
+
                       <button
                         class="details-btn"
                         @click="showSensorDetails(sensor, monitor, $event)"
@@ -686,10 +682,10 @@ function closeSensorDetails() {
                 class="card-body collapsed-summary"
                 :class="{ 'has-alert': getOverallCardStatus(monitor) }"
               >
-                <span v-if="getOverallCardStatus(monitor)"
-                  >⚠️ <strong>Atención Requerida</strong></span
+                <span v-if="getOverallCardStatus(monitor)" class="summary-alert"
+                  >⚠️ Atención Requerida</span
                 >
-                <span v-else class="summary-ok">✓ Operativo</span>
+                <span v-else class="summary-ok">✓ Sistema Operativo</span>
               </div>
             </div>
           </template>
@@ -700,11 +696,7 @@ function closeSensorDetails() {
     <div v-if="showGroupModal" class="modal-overlay" @click.self="showGroupModal = false">
       <div class="modal-content small">
         <h3>Crear Nuevo Grupo</h3>
-        <input
-          v-model="newGroupName"
-          placeholder="Nombre (Ej: Clientes VIP)"
-          class="full-width-input"
-        />
+        <input v-model="newGroupName" placeholder="Nombre del Grupo" class="full-width-input" />
         <div class="modal-actions">
           <button class="btn-secondary" @click="showGroupModal = false">Cancelar</button>
           <button class="btn-primary" @click="addNewGroup">Crear</button>
@@ -727,28 +719,34 @@ function closeSensorDetails() {
       <div class="modal-content">
         <h3>Editar: {{ sensorDetailsToShow.name }}</h3>
 
-        <form
-          v-if="sensorDetailsToShow.sensor_type === 'ping'"
-          @submit.prevent="handleUpdateSensor"
-          class="config-form"
-        >
+        <form @submit.prevent="handleUpdateSensor" class="config-form">
           <div class="sub-section span-3">
             <h4>Configuración General</h4>
             <div class="general-config-grid">
               <div class="form-group checkbox-group">
-                <input type="checkbox" v-model="newPingSensor.is_active" id="pActive" />
-                <label for="pActive" :class="newPingSensor.is_active ? 'c-green' : 'c-gray'">
-                  {{ newPingSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO' }}
-                </label>
+                <input
+                  type="checkbox"
+                  v-model="
+                    (sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : newEthernetSensor)
+                      .is_active
+                  "
+                  id="gAct"
+                />
+                <label for="gAct">Encendido</label>
               </div>
               <div class="form-group checkbox-group">
-                <input type="checkbox" v-model="newPingSensor.alerts_paused" id="pPause" />
-                <label for="pPause" :class="newPingSensor.alerts_paused ? 'c-orange' : ''">
-                  {{ newPingSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS' }}
-                </label>
+                <input
+                  type="checkbox"
+                  v-model="
+                    (sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : newEthernetSensor)
+                      .alerts_paused
+                  "
+                  id="gPau"
+                />
+                <label for="gPau">Pausar Alertas</label>
               </div>
-              <div class="form-group" style="grid-column: span 2">
-                <label>Mover a Grupo</label>
+              <div class="form-group span-2">
+                <label>Grupo</label>
                 <select v-model="editMonitorGroup">
                   <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
                   <option value="Sin Grupo">Sin Grupo</option>
@@ -757,213 +755,84 @@ function closeSensorDetails() {
             </div>
           </div>
 
-          <div class="form-group span-3">
-            <label>Nombre</label><input type="text" v-model="newPingSensor.name" required />
-          </div>
-          <div class="form-group span-2">
-            <label>Tipo</label>
-            <select v-model="newPingSensor.config.ping_type" :disabled="!hasParentMaestro">
-              <option value="device_to_external">Salida (Desde Disp.)</option>
-              <option value="maestro_to_device" v-if="hasParentMaestro">
-                Entrada (Desde Maestro)
-              </option>
-            </select>
-          </div>
-          <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
-            <label>IP Destino</label><input type="text" v-model="newPingSensor.config.target_ip" />
-          </div>
-          <div class="form-group">
-            <label>Intervalo (s)</label
-            ><input type="number" v-model.number="newPingSensor.config.interval_sec" />
-          </div>
-          <div class="form-group">
-            <label>Umbral (ms)</label
-            ><input type="number" v-model.number="newPingSensor.config.latency_threshold_ms" />
-          </div>
-          <div class="form-group">
-            <label>Modo</label
-            ><select v-model="newPingSensor.config.display_mode">
-              <option value="realtime">Tiempo Real</option>
-              <option value="average">Promedio</option>
-            </select>
-          </div>
-          <div class="form-group" v-if="newPingSensor.config.display_mode === 'average'">
-            <label>Muestras</label
-            ><input type="number" v-model.number="newPingSensor.config.average_count" />
-          </div>
+          <template v-if="sensorDetailsToShow.sensor_type === 'ping'">
+            <div class="form-group span-3">
+              <label>Nombre</label><input type="text" v-model="newPingSensor.name" required />
+            </div>
 
-          <div class="sub-section span-3">
-            <h4>Alertas</h4>
-            <div class="alert-config-item">
-              <div class="form-group checkbox-group span-3">
-                <input
-                  type="checkbox"
-                  v-model="newPingSensor.ui_alert_timeout.enabled"
-                  id="eTo"
-                /><label for="eTo">Timeout</label>
-              </div>
-              <template v-if="newPingSensor.ui_alert_timeout.enabled">
-                <div class="form-group">
-                  <label>Canal</label
-                  ><select v-model="newPingSensor.ui_alert_timeout.channel_id">
+            <div class="form-group span-2">
+              <label>Tipo</label>
+              <select v-model="newPingSensor.config.ping_type" :disabled="!hasParentMaestro">
+                <option value="device_to_external">Salida (Desde Disp.)</option>
+                <option value="maestro_to_device" v-if="hasParentMaestro">
+                  Entrada (Desde Maestro)
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
+              <label>IP Destino</label
+              ><input type="text" v-model="newPingSensor.config.target_ip" />
+            </div>
+            <div class="form-group">
+              <label>Intervalo</label
+              ><input type="number" v-model.number="newPingSensor.config.interval_sec" />
+            </div>
+            <div class="form-group">
+              <label>Umbral (ms)</label
+              ><input type="number" v-model.number="newPingSensor.config.latency_threshold_ms" />
+            </div>
+
+            <div class="sub-section span-3">
+              <h4>Alertas</h4>
+              <div class="alert-config-item">
+                <div class="form-group checkbox-group">
+                  <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.enabled" /><label
+                    >Timeout</label
+                  >
+                </div>
+                <div v-if="newPingSensor.ui_alert_timeout.enabled" class="form-group">
+                  <label>Canal</label>
+                  <select v-model="newPingSensor.ui_alert_timeout.channel_id">
                     <option v-for="c in channelsList" :key="c.id" :value="c.id">
                       {{ c.name }}
                     </option>
                   </select>
                 </div>
-                <div class="form-group">
-                  <label>CD (min)</label
-                  ><input
-                    type="number"
-                    v-model.number="newPingSensor.ui_alert_timeout.cooldown_minutes"
-                  />
-                </div>
-                <div class="form-group">
-                  <label>Tol</label
-                  ><input
-                    type="number"
-                    v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
-                  />
-                </div>
-              </template>
-            </div>
-            <div class="alert-config-item mt-1">
-              <div class="form-group checkbox-group span-3">
-                <input
-                  type="checkbox"
-                  v-model="newPingSensor.ui_alert_latency.enabled"
-                  id="eLat"
-                /><label for="eLat">Latencia Alta</label>
               </div>
-              <template v-if="newPingSensor.ui_alert_latency.enabled">
-                <div class="form-group">
-                  <label>Umbral</label
-                  ><input
-                    type="number"
-                    v-model.number="newPingSensor.ui_alert_latency.threshold_ms"
-                  />
+            </div>
+          </template>
+
+          <template v-if="sensorDetailsToShow.sensor_type === 'ethernet'">
+            <div class="form-group span-2">
+              <label>Nombre</label><input type="text" v-model="newEthernetSensor.name" required />
+            </div>
+            <div class="form-group">
+              <label>Interfaz</label
+              ><input type="text" v-model="newEthernetSensor.config.interface_name" />
+            </div>
+
+            <div class="sub-section span-3">
+              <h4>Alertas</h4>
+              <div class="alert-config-item">
+                <div class="form-group checkbox-group">
+                  <input
+                    type="checkbox"
+                    v-model="newEthernetSensor.ui_alert_speed_change.enabled"
+                  /><label>Velocidad</label>
                 </div>
-                <div class="form-group">
-                  <label>Canal</label
-                  ><select v-model="newPingSensor.ui_alert_latency.channel_id">
+                <div v-if="newEthernetSensor.ui_alert_speed_change.enabled" class="form-group">
+                  <label>Canal</label>
+                  <select v-model="newEthernetSensor.ui_alert_speed_change.channel_id">
                     <option v-for="c in channelsList" :key="c.id" :value="c.id">
                       {{ c.name }}
                     </option>
                   </select>
                 </div>
-                <div class="form-group">
-                  <label>CD (min)</label
-                  ><input
-                    type="number"
-                    v-model.number="newPingSensor.ui_alert_latency.cooldown_minutes"
-                  />
-                </div>
-              </template>
+              </div>
             </div>
-          </div>
-          <div class="modal-actions span-3">
-            <button type="button" class="btn-secondary" @click="closeSensorDetails">Cancelar</button
-            ><button type="submit" class="btn-primary">Guardar</button>
-          </div>
-        </form>
+          </template>
 
-        <form
-          v-if="sensorDetailsToShow.sensor_type === 'ethernet'"
-          @submit.prevent="handleUpdateSensor"
-          class="config-form"
-        >
-          <div class="sub-section span-3">
-            <h4>Configuración General</h4>
-            <div class="general-config-grid">
-              <div class="form-group checkbox-group">
-                <input type="checkbox" v-model="newEthernetSensor.is_active" id="eActive" />
-                <label for="eActive" :class="newEthernetSensor.is_active ? 'c-green' : 'c-gray'">{{
-                  newEthernetSensor.is_active ? '🟢 ENCENDIDO' : '⚫ APAGADO'
-                }}</label>
-              </div>
-              <div class="form-group checkbox-group">
-                <input type="checkbox" v-model="newEthernetSensor.alerts_paused" id="ePause" />
-                <label for="ePause" :class="newEthernetSensor.alerts_paused ? 'c-orange' : ''">{{
-                  newEthernetSensor.alerts_paused ? '⏸️ ALERTAS PAUSADAS' : '🔔 ALERTAS ACTIVAS'
-                }}</label>
-              </div>
-              <div class="form-group" style="grid-column: span 2">
-                <label>Mover a Grupo</label>
-                <select v-model="editMonitorGroup">
-                  <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
-                  <option value="Sin Grupo">Sin Grupo</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div class="form-group span-2">
-            <label>Nombre</label><input type="text" v-model="newEthernetSensor.name" required />
-          </div>
-          <div class="form-group">
-            <label>Interfaz</label
-            ><input type="text" v-model="newEthernetSensor.config.interface_name" required />
-          </div>
-          <div class="form-group span-3">
-            <label>Intervalo (s)</label
-            ><input type="number" v-model.number="newEthernetSensor.config.interval_sec" required />
-          </div>
-
-          <div class="sub-section span-3">
-            <h4>Alertas</h4>
-            <div class="alert-config-item">
-              <div class="form-group checkbox-group span-3">
-                <input
-                  type="checkbox"
-                  v-model="newEthernetSensor.ui_alert_speed_change.enabled"
-                  id="eSp"
-                /><label for="eSp">Cambio de Velocidad</label>
-              </div>
-              <template v-if="newEthernetSensor.ui_alert_speed_change.enabled">
-                <div class="form-group">
-                  <label>Canal</label
-                  ><select v-model="newEthernetSensor.ui_alert_speed_change.channel_id">
-                    <option v-for="c in channelsList" :key="c.id" :value="c.id">
-                      {{ c.name }}
-                    </option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label>CD (min)</label
-                  ><input
-                    type="number"
-                    v-model.number="newEthernetSensor.ui_alert_speed_change.cooldown_minutes"
-                  />
-                </div>
-              </template>
-            </div>
-            <div class="alert-config-item mt-1">
-              <div class="form-group checkbox-group span-3">
-                <input
-                  type="checkbox"
-                  v-model="newEthernetSensor.ui_alert_traffic.enabled"
-                  id="eTr"
-                /><label for="eTr">Umbral Tráfico</label>
-              </div>
-              <template v-if="newEthernetSensor.ui_alert_traffic.enabled">
-                <div class="form-group">
-                  <label>Mbps</label
-                  ><input
-                    type="number"
-                    v-model.number="newEthernetSensor.ui_alert_traffic.threshold_mbps"
-                  />
-                </div>
-                <div class="form-group">
-                  <label>Canal</label
-                  ><select v-model="newEthernetSensor.ui_alert_traffic.channel_id">
-                    <option v-for="c in channelsList" :key="c.id" :value="c.id">
-                      {{ c.name }}
-                    </option>
-                  </select>
-                </div>
-              </template>
-            </div>
-          </div>
           <div class="modal-actions span-3">
             <button type="button" class="btn-secondary" @click="closeSensorDetails">Cancelar</button
             ><button type="submit" class="btn-primary">Guardar</button>
@@ -975,59 +844,68 @@ function closeSensorDetails() {
 </template>
 
 <style scoped>
-/* BARRA DE PRUEBA RADICAL (BORRAR LUEGO) */
-.radical-test-header {
-  background: red;
-  color: white;
-  text-align: center;
-  padding: 10px;
-  font-weight: bold;
-  font-size: 1.2rem;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  z-index: 9999;
-}
-
-/* LAYOUT GLOBAL */
+/* =========================================
+   LAYOUT & SIDEBAR (NUEVO DISEÑO)
+   ========================================= */
 .layout-container {
   display: flex;
   height: 100vh;
-  width: 100%;
-  padding-top: 40px; /* Espacio para la barra roja */
+  background: #121212;
+  color: #eee;
+  overflow: hidden;
 }
 
-/* SIDEBAR IZQUIERDO */
+/* Sidebar con transición suave de ancho */
 .sidebar {
-  width: 250px;
-  background: rgba(0, 0, 0, 0.3);
-  border-right: 1px solid var(--primary-color);
+  width: 260px;
+  background: #1a1a1a;
+  border-right: 1px solid #333;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  transition: width 0.3s ease;
 }
+.sidebar.sidebar-collapsed {
+  width: 60px;
+}
+
 .sidebar-header {
-  padding: 1rem;
-  border-bottom: 1px solid var(--primary-color);
+  height: 60px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  border-bottom: 1px solid #333;
 }
 .sidebar-header h3 {
   margin: 0;
   font-size: 1rem;
-  color: var(--gray);
-  letter-spacing: 1px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.btn-toggle-sidebar {
+  background: none;
+  border: 1px solid #444;
+  color: #aaa;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.sidebar-actions {
+  padding: 1rem;
+  border-bottom: 1px solid #333;
 }
 .btn-add-group {
+  width: 100%;
   background: var(--blue);
-  border: none;
   color: white;
-  width: 24px;
-  height: 24px;
+  border: none;
+  padding: 0.5rem;
   border-radius: 4px;
   cursor: pointer;
+  font-weight: bold;
 }
 
 .group-list {
@@ -1035,23 +913,27 @@ function closeSensorDetails() {
   padding: 0;
   margin: 0;
   overflow-y: auto;
+  flex-grow: 1;
 }
 .group-list li {
-  padding: 1rem;
+  padding: 0.8rem 1rem;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 0.8rem;
+  gap: 10px;
   border-left: 3px solid transparent;
   transition: background 0.2s;
+  height: 50px;
 }
 .group-list li:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: #252525;
 }
 .group-list li.active {
-  background: rgba(255, 255, 255, 0.1);
+  background: #2a2a2a;
   border-left-color: var(--blue);
 }
+
+/* Elementos del sidebar que se ocultan al colapsar */
 .group-name {
   flex-grow: 1;
   white-space: nowrap;
@@ -1061,25 +943,28 @@ function closeSensorDetails() {
 }
 .badge {
   background: #333;
-  font-size: 0.75rem;
   padding: 2px 6px;
   border-radius: 10px;
+  font-size: 0.75rem;
   color: #aaa;
 }
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
+  display: block;
   flex-shrink: 0;
 }
 .dot-green {
   background-color: var(--green);
+  box-shadow: 0 0 5px var(--green);
 }
 .dot-red {
   background-color: var(--secondary-color);
+  box-shadow: 0 0 5px var(--secondary-color);
 }
 
-/* MAIN CONTENT (DERECHA) */
+/* MAIN CONTENT */
 .main-content {
   flex-grow: 1;
   display: flex;
@@ -1088,37 +973,41 @@ function closeSensorDetails() {
   position: relative;
 }
 .content-header {
-  padding: 1rem 2rem;
-  border-bottom: 1px solid var(--primary-color);
+  height: 60px;
+  padding: 0 2rem;
+  border-bottom: 1px solid #333;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
+  background: #151515;
 }
 .content-header h2 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.4rem;
+  color: white;
 }
 .btn-primary {
   background: var(--blue);
   color: white;
   border: none;
-  padding: 0.6rem 1.2rem;
-  border-radius: 6px;
-  font-weight: bold;
-  cursor: pointer;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
   text-decoration: none;
+  font-weight: bold;
 }
 .empty-selection {
+  flex-grow: 1;
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100%;
-  color: var(--gray);
+  color: #666;
   font-size: 1.2rem;
 }
 
-/* GRID DE TARJETAS */
+/* =========================================
+   GRID & TARJETAS (DISEÑO RESTAURADO)
+   ========================================= */
 .scroll-area {
   flex-grow: 1;
   overflow-y: auto;
@@ -1126,43 +1015,35 @@ function closeSensorDetails() {
 }
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 1.5rem;
 }
 
-/* --- ESTILOS ORIGINALES RESTAURADOS (TARJETAS) --- */
 .monitor-card {
   background-color: var(--surface-color);
-  border-radius: 12px;
   border: 1px solid var(--primary-color);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: opacity 0.3s;
+  transition: all 0.2s;
 }
 .monitor-card.status-alert {
   border-color: var(--secondary-color);
-  box-shadow: 0 0 8px var(--secondary-color);
+  box-shadow: 0 0 8px rgba(255, 100, 100, 0.2);
 }
 .monitor-card.is-inactive {
-  opacity: 0.6;
+  opacity: 0.7;
   border-style: dashed;
-}
-.monitor-card.is-collapsed {
-  height: auto;
 }
 
 .card-header {
+  background: #252525;
+  padding: 0.6rem 1rem;
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  background-color: var(--primary-color);
+  align-items: center;
   cursor: grab;
-}
-.card-header:active {
-  cursor: grabbing;
 }
 .header-left {
   display: flex;
@@ -1171,25 +1052,26 @@ function closeSensorDetails() {
   overflow: hidden;
 }
 .drag-handle {
-  color: var(--gray);
-  font-size: 1.2rem;
+  color: #666;
   cursor: grab;
-  margin-right: 0.4rem;
-  opacity: 0.5;
+  font-size: 1.2rem;
+  margin-right: 5px;
 }
-.card-title {
+.title-container h3 {
   margin: 0;
-  font-size: 1.1rem;
-  color: white;
+  font-size: 1rem;
+  color: #fff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
 }
 .off-badge {
   background: #444;
   font-size: 0.7rem;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
   margin-left: 5px;
 }
 .pause-badge {
@@ -1200,96 +1082,68 @@ function closeSensorDetails() {
 .card-actions-right {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 4px;
 }
 .device-ip {
-  font-size: 0.85rem;
-  color: var(--gray);
-}
-.alert-icon {
-  font-size: 1.25rem;
+  font-size: 0.8rem;
+  color: #888;
+  margin-right: 8px;
 }
 .action-icon-btn {
   background: none;
   border: none;
   font-size: 1.1rem;
+  color: #888;
   cursor: pointer;
-  opacity: 0.5;
-  transition: opacity 0.2s;
-  padding: 0 2px;
-  color: white;
+  padding: 2px;
 }
 .action-icon-btn:hover {
-  opacity: 1;
+  color: #fff;
 }
 .active-orange {
+  color: #fbbf24;
   opacity: 1;
-  text-shadow: 0 0 8px orange;
 }
 .active-red {
+  color: #ff6b6b;
   opacity: 1;
-  text-shadow: 0 0 8px red;
 }
 .remove-btn {
+  color: #888;
+  font-size: 1.4rem;
   background: none;
   border: none;
-  color: var(--gray);
-  font-size: 1.5rem;
   cursor: pointer;
-  margin-left: 0.5rem;
+  margin-left: 5px;
 }
 
 .card-body {
-  padding: 1rem;
-}
-/* Nuevo: Resumen colapsado */
-.collapsed-summary {
-  padding: 0.5rem 1rem;
-  background-color: var(--bg-color);
-  font-size: 0.9rem;
-  text-align: center;
-}
-.collapsed-summary.has-alert {
-  background-color: rgba(255, 107, 107, 0.1);
-  border-top: 1px solid var(--secondary-color);
-}
-.summary-alert {
-  color: var(--secondary-color);
-  font-weight: bold;
-}
-.summary-ok {
-  color: var(--green);
+  padding: 0.8rem;
+  flex-grow: 1;
 }
 
-/* SENSORES (ORIGINALES) */
+/* SENSORES: ALINEACIÓN PERFECTA (Flexbox) */
 .sensors-container {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-}
-.no-sensors {
-  color: var(--gray);
-  font-style: italic;
-  text-align: center;
-  padding: 1rem;
+  gap: 0.5rem;
 }
 .sensor-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 1rem;
+  display: flex; /* Flex para alinear nombre a izq y datos a der */
+  justify-content: space-between;
   align-items: center;
-  background-color: var(--bg-color);
-  padding: 0.6rem 0.8rem;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 0.2s;
+  background: #222;
+  padding: 0.5rem 0.8rem;
+  border-radius: 4px;
   border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 .sensor-row:hover {
-  background-color: var(--primary-color);
+  background: #2a2a2a;
 }
 .sensor-row.row-paused {
-  border-left-color: orange;
+  border-left-color: #fbbf24;
 }
 .sensor-row.row-inactive {
   opacity: 0.5;
@@ -1297,38 +1151,47 @@ function closeSensorDetails() {
 
 .sensor-name {
   font-size: 0.9rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: #ddd;
+  font-weight: 500;
 }
-.sensor-value {
+
+/* CONTENEDOR DERECHO DEL SENSOR: DATOS + LAPIZ */
+.sensor-status-group {
+  display: flex;
+  align-items: center;
+  gap: 10px; /* Espacio entre el valor y el lapiz */
   text-align: right;
 }
-.val-off {
-  color: var(--gray);
+.sensor-value {
+  font-size: 0.9rem;
+  font-family: monospace;
+  color: #fff;
+}
+.text-off {
+  color: #666;
   font-weight: bold;
   font-size: 0.8rem;
 }
 
-.ethernet-data {
+/* ETHERNET DATA */
+.ethernet-data-flex {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  line-height: 1.2;
 }
-.ethernet-status {
+.ethernet-main-status {
   font-weight: bold;
-  font-size: 0.95rem;
   text-transform: capitalize;
-}
-.ethernet-speed {
-  font-weight: normal;
-  color: var(--gray);
   font-size: 0.85rem;
-  margin-left: 0.25rem;
 }
-.ethernet-traffic {
-  font-size: 0.8rem;
-  color: var(--gray);
+.ethernet-traffic-row {
+  font-size: 0.75rem;
+  color: #aaa;
+  display: flex;
+  gap: 8px;
+}
+.traf-item {
   white-space: nowrap;
 }
 
@@ -1344,24 +1207,40 @@ function closeSensorDetails() {
 .status-pending {
   color: var(--gray);
 }
+
 .details-btn {
   background: none;
   border: none;
-  color: var(--gray);
-  font-size: 1.2rem;
+  color: #666;
+  font-size: 1.1rem;
   cursor: pointer;
-  width: 30px;
-  height: 30px;
-  line-height: 30px;
-  text-align: center;
-  border-radius: 50%;
+  padding: 2px;
 }
 .details-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
   color: var(--blue);
 }
 
-/* MODALS Y FORMULARIOS */
+/* COLLAPSED SUMMARY */
+.collapsed-summary {
+  padding: 0.5rem 1rem;
+  background: #222;
+  font-size: 0.85rem;
+  text-align: center;
+  color: #888;
+}
+.collapsed-summary.has-alert {
+  background: rgba(255, 107, 107, 0.1);
+  color: var(--secondary-color);
+  font-weight: bold;
+}
+.summary-ok {
+  color: var(--green);
+}
+.summary-alert {
+  color: var(--secondary-color);
+}
+
+/* MODALES */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -1375,14 +1254,11 @@ function closeSensorDetails() {
   align-items: center;
 }
 .modal-content {
-  background: var(--surface-color);
+  background: #1a1a1a;
   padding: 2rem;
-  border-radius: 12px;
-  width: 92%;
-  max-width: 800px;
-  max-height: 90vh;
-  overflow-y: auto;
-  text-align: left;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 650px;
 }
 .modal-content.small {
   max-width: 400px;
@@ -1394,10 +1270,6 @@ function closeSensorDetails() {
   margin-top: 1.5rem;
 }
 .config-form {
-  padding: 1rem;
-  background-color: var(--bg-color);
-  border-radius: 8px;
-  border: 1px solid var(--primary-color);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
@@ -1415,106 +1287,83 @@ function closeSensorDetails() {
 }
 .form-group label {
   font-weight: bold;
-  color: var(--gray);
-  font-size: 0.85rem;
+  color: #888;
+  font-size: 0.8rem;
 }
 .form-group input,
 .form-group select {
   padding: 0.6rem;
-  background-color: var(--surface-color);
-  border: 1px solid var(--primary-color);
-  border-radius: 6px;
+  background: #252525;
+  border: 1px solid #444;
   color: white;
+  border-radius: 4px;
   width: 100%;
 }
 .general-config-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1fr 1fr 2fr;
   gap: 1rem;
   align-items: end;
 }
 .sub-section {
   grid-column: span 3;
-  background: var(--surface-color);
+  background: #222;
   padding: 1rem;
-  border-radius: 8px;
+  border-radius: 6px;
+  border: 1px solid #333;
   margin-top: 0.5rem;
-  border: 1px solid var(--primary-color);
 }
 .sub-section h4 {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 0.8rem 0;
   border-bottom: 1px solid #444;
   padding-bottom: 0.5rem;
+  color: #ccc;
 }
 .alert-config-item {
   display: contents;
-}
-.alert-config-item > .form-group {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
-  grid-column: span 3;
-  align-items: center;
-  margin-bottom: 0.5rem;
 }
 .checkbox-group {
   flex-direction: row;
   align-items: center;
   gap: 0.5rem;
 }
-.c-green {
+.text-green {
   color: var(--green);
   font-weight: bold;
 }
-.c-gray {
+.text-gray {
   color: #666;
   font-weight: bold;
 }
-.c-orange {
+.text-orange {
   color: #fbbf24;
   font-weight: bold;
 }
-.mt-1 {
-  margin-top: 1rem;
-}
-
-/* UTILS */
 .btn-secondary {
-  background: var(--primary-color);
-  color: white;
-  border: none;
-  padding: 0.6rem 1.2rem;
-  border-radius: 6px;
-  font-weight: bold;
+  background: #333;
+  color: #ccc;
+  border: 1px solid #444;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
   cursor: pointer;
 }
 .btn-danger {
-  background: var(--secondary-color);
+  background: #d9534f;
   color: white;
   border: none;
-  padding: 0.6rem 1.2rem;
-  border-radius: 6px;
-  font-weight: bold;
-  cursor: pointer;
-}
-.btn-primary {
-  background: var(--blue);
-  color: white;
-  border: none;
-  padding: 0.6rem 1.2rem;
-  border-radius: 6px;
-  font-weight: bold;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
   cursor: pointer;
 }
 .notification {
   position: fixed;
-  top: 90px;
+  top: 20px;
   right: 20px;
   padding: 1rem 1.5rem;
-  border-radius: 8px;
+  border-radius: 4px;
+  z-index: 3000;
   color: white;
   font-weight: bold;
-  z-index: 3000;
 }
 .notification.success {
   background: var(--green);
