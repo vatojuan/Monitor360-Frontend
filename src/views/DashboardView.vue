@@ -135,8 +135,8 @@ async function onDragChange() {
 
   try {
     await api.post('/monitors/reorder', { items: payloadItems })
-  } catch (e) {
-    console.error(e)
+  } catch {
+    /* ignore */
   }
 }
 
@@ -231,8 +231,8 @@ async function ensureChannelsLoaded() {
     try {
       const { data } = await api.get('/channels')
       data.forEach((c) => (channelsById.value[c.id] = c))
-    } catch (e) {
-      console.error(e)
+    } catch {
+      /* ignore */
     }
   }
 }
@@ -385,6 +385,7 @@ async function showSensorDetails(s, m, e) {
 
 async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
+
   // 1. Cambio Grupo
   const newGroup = editMonitorGroup.value
   if (newGroup !== currentMonitorContext.value.group_name) {
@@ -396,16 +397,18 @@ async function handleUpdateSensor() {
       if (mLocal) mLocal.group_name = newGroup
       refreshGroupedMonitors()
       activeGroup.value = newGroup
-    } catch (e) {
-      console.error(e)
+    } catch {
+      /* ignore */
     }
   }
+
   // 2. Sensor Update
   const type = sensorDetailsToShow.value.sensor_type
   const uiData = type === 'ping' ? newPingSensor.value : newEthernetSensor.value
   const config = { ...uiData.config }
   config.alerts = []
   const num = (v, d) => (typeof v === 'number' && !isNaN(v) ? v : d)
+
   if (type === 'ping') {
     const t = uiData.ui_alert_timeout
     if (t.enabled && t.channel_id)
@@ -444,6 +447,7 @@ async function handleUpdateSensor() {
         tolerance_count: num(tr.tolerance_count, 1),
       })
   }
+
   try {
     const payload = {
       name: uiData.name,
@@ -452,16 +456,17 @@ async function handleUpdateSensor() {
       alerts_paused: uiData.alerts_paused,
     }
     const { data } = await api.put(`/sensors/${sensorDetailsToShow.value.id}`, payload)
+
     const m = allMonitors.value.find((m) => m.monitor_id === currentMonitorContext.value.monitor_id)
     if (m) {
       const idx = m.sensors.findIndex((s) => s.id === sensorDetailsToShow.value.id)
       if (idx !== -1) m.sensors[idx] = { ...m.sensors[idx], ...data }
     }
+
     showNotification('Guardado')
     if (payload.is_active !== sensorDetailsToShow.value.is_active) trySubscribeSensors()
     closeSensorDetails()
-  } catch (e) {
-    console.error(e)
+  } catch {
     showNotification('Error al guardar', 'error')
   }
 }
@@ -479,7 +484,7 @@ function closeSensorDetails() {
         <button
           class="btn-toggle-sidebar"
           @click="isSidebarCollapsed = !isSidebarCollapsed"
-          title="Menú"
+          title="Alternar Barra"
         >
           {{ isSidebarCollapsed ? '☰' : '«' }}
         </button>
@@ -510,7 +515,7 @@ function closeSensorDetails() {
         <router-link to="/monitor-builder" class="btn-primary">Añadir Dispositivo</router-link>
       </header>
       <div v-else class="empty-selection">
-        <p>Selecciona un grupo</p>
+        <p>Selecciona un grupo para ver sus monitores</p>
       </div>
 
       <div v-if="notification.show" :class="['notification', notification.type]">
@@ -556,7 +561,11 @@ function closeSensorDetails() {
                   </span>
                   <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
 
-                  <button class="action-icon-btn" @click="toggleCardCollapse(monitor.monitor_id)">
+                  <button
+                    class="action-icon-btn"
+                    @click="toggleCardCollapse(monitor.monitor_id)"
+                    :title="collapsedCards.has(monitor.monitor_id) ? 'Expandir' : 'Colapsar'"
+                  >
                     {{ collapsedCards.has(monitor.monitor_id) ? '🔽' : '🔼' }}
                   </button>
                   <button
@@ -640,6 +649,12 @@ function closeSensorDetails() {
                                   ' ',
                                 )
                               }}
+                              <span
+                                class="ethernet-speed"
+                                v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'"
+                              >
+                                ({{ liveSensorStatus[String(sensor.id)]?.speed || '—' }})
+                              </span>
                             </span>
                             <span
                               class="ethernet-traffic-row"
@@ -763,10 +778,8 @@ function closeSensorDetails() {
             <div class="form-group span-2">
               <label>Tipo</label>
               <select v-model="newPingSensor.config.ping_type" :disabled="!hasParentMaestro">
-                <option value="device_to_external">Salida (Desde Disp.)</option>
-                <option value="maestro_to_device" v-if="hasParentMaestro">
-                  Entrada (Desde Maestro)
-                </option>
+                <option value="device_to_external">Salida</option>
+                <option value="maestro_to_device" v-if="hasParentMaestro">Entrada</option>
               </select>
             </div>
 
@@ -845,21 +858,21 @@ function closeSensorDetails() {
 
 <style scoped>
 /* =========================================
-   LAYOUT & SIDEBAR (NUEVO DISEÑO)
+   LAYOUT & SIDEBAR (USANDO VARIABLES DE TEMA)
    ========================================= */
 .layout-container {
   display: flex;
   height: 100vh;
-  background: #121212;
+  background: var(--bg-color);
   color: #eee;
   overflow: hidden;
 }
 
-/* Sidebar con transición suave de ancho */
+/* Sidebar */
 .sidebar {
-  width: 260px;
-  background: #1a1a1a;
-  border-right: 1px solid #333;
+  width: 250px;
+  background: var(--surface-color);
+  border-right: 1px solid var(--primary-color);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -875,7 +888,7 @@ function closeSensorDetails() {
   align-items: center;
   justify-content: space-between;
   padding: 0 1rem;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--primary-color);
 }
 .sidebar-header h3 {
   margin: 0;
@@ -886,7 +899,7 @@ function closeSensorDetails() {
 }
 .btn-toggle-sidebar {
   background: none;
-  border: 1px solid #444;
+  border: 1px solid var(--primary-color);
   color: #aaa;
   cursor: pointer;
   padding: 2px 6px;
@@ -895,7 +908,7 @@ function closeSensorDetails() {
 
 .sidebar-actions {
   padding: 1rem;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--primary-color);
 }
 .btn-add-group {
   width: 100%;
@@ -926,14 +939,13 @@ function closeSensorDetails() {
   height: 50px;
 }
 .group-list li:hover {
-  background: #252525;
+  background: rgba(255, 255, 255, 0.05);
 }
 .group-list li.active {
-  background: #2a2a2a;
+  background: rgba(255, 255, 255, 0.1);
   border-left-color: var(--blue);
 }
 
-/* Elementos del sidebar que se ocultan al colapsar */
 .group-name {
   flex-grow: 1;
   white-space: nowrap;
@@ -942,11 +954,12 @@ function closeSensorDetails() {
   font-size: 0.9rem;
 }
 .badge {
-  background: #333;
+  background: var(--bg-color);
   padding: 2px 6px;
   border-radius: 10px;
   font-size: 0.75rem;
   color: #aaa;
+  border: 1px solid var(--primary-color);
 }
 .status-dot {
   width: 10px;
@@ -975,12 +988,12 @@ function closeSensorDetails() {
 .content-header {
   height: 60px;
   padding: 0 2rem;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--primary-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  background: #151515;
+  background: var(--surface-color);
 }
 .content-header h2 {
   margin: 0;
@@ -1006,7 +1019,7 @@ function closeSensorDetails() {
 }
 
 /* =========================================
-   GRID & TARJETAS (DISEÑO RESTAURADO)
+   GRID & TARJETAS
    ========================================= */
 .scroll-area {
   flex-grow: 1;
@@ -1038,7 +1051,7 @@ function closeSensorDetails() {
 }
 
 .card-header {
-  background: #252525;
+  background: var(--primary-color);
   padding: 0.6rem 1rem;
   display: flex;
   justify-content: space-between;
@@ -1052,7 +1065,7 @@ function closeSensorDetails() {
   overflow: hidden;
 }
 .drag-handle {
-  color: #666;
+  color: rgba(255, 255, 255, 0.5);
   cursor: grab;
   font-size: 1.2rem;
   margin-right: 5px;
@@ -1086,14 +1099,14 @@ function closeSensorDetails() {
 }
 .device-ip {
   font-size: 0.8rem;
-  color: #888;
+  color: #ccc;
   margin-right: 8px;
 }
 .action-icon-btn {
   background: none;
   border: none;
   font-size: 1.1rem;
-  color: #888;
+  color: #ccc;
   cursor: pointer;
   padding: 2px;
 }
@@ -1109,7 +1122,7 @@ function closeSensorDetails() {
   opacity: 1;
 }
 .remove-btn {
-  color: #888;
+  color: #ccc;
   font-size: 1.4rem;
   background: none;
   border: none;
@@ -1122,17 +1135,17 @@ function closeSensorDetails() {
   flex-grow: 1;
 }
 
-/* SENSORES: ALINEACIÓN PERFECTA (Flexbox) */
+/* SENSORES: FLEXBOX PARA ALINEACION */
 .sensors-container {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 .sensor-row {
-  display: flex; /* Flex para alinear nombre a izq y datos a der */
+  display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #222;
+  background: var(--bg-color);
   padding: 0.5rem 0.8rem;
   border-radius: 4px;
   border-left: 3px solid transparent;
@@ -1140,7 +1153,7 @@ function closeSensorDetails() {
   transition: background 0.2s;
 }
 .sensor-row:hover {
-  background: #2a2a2a;
+  background: var(--primary-color);
 }
 .sensor-row.row-paused {
   border-left-color: #fbbf24;
@@ -1159,7 +1172,7 @@ function closeSensorDetails() {
 .sensor-status-group {
   display: flex;
   align-items: center;
-  gap: 10px; /* Espacio entre el valor y el lapiz */
+  gap: 12px;
   text-align: right;
 }
 .sensor-value {
@@ -1173,7 +1186,7 @@ function closeSensorDetails() {
   font-size: 0.8rem;
 }
 
-/* ETHERNET DATA */
+/* ETHERNET DATA RESTAURADO */
 .ethernet-data-flex {
   display: flex;
   flex-direction: column;
@@ -1220,10 +1233,9 @@ function closeSensorDetails() {
   color: var(--blue);
 }
 
-/* COLLAPSED SUMMARY */
 .collapsed-summary {
   padding: 0.5rem 1rem;
-  background: #222;
+  background: var(--bg-color);
   font-size: 0.85rem;
   text-align: center;
   color: #888;
@@ -1254,7 +1266,7 @@ function closeSensorDetails() {
   align-items: center;
 }
 .modal-content {
-  background: #1a1a1a;
+  background: var(--surface-color);
   padding: 2rem;
   border-radius: 8px;
   width: 90%;
@@ -1293,10 +1305,10 @@ function closeSensorDetails() {
 .form-group input,
 .form-group select {
   padding: 0.6rem;
-  background: #252525;
-  border: 1px solid #444;
-  color: white;
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
   border-radius: 4px;
+  color: white;
   width: 100%;
 }
 .general-config-grid {
@@ -1307,15 +1319,15 @@ function closeSensorDetails() {
 }
 .sub-section {
   grid-column: span 3;
-  background: #222;
+  background: var(--bg-color);
   padding: 1rem;
   border-radius: 6px;
-  border: 1px solid #333;
+  border: 1px solid var(--primary-color);
   margin-top: 0.5rem;
 }
 .sub-section h4 {
   margin: 0 0 0.8rem 0;
-  border-bottom: 1px solid #444;
+  border-bottom: 1px solid var(--primary-color);
   padding-bottom: 0.5rem;
   color: #ccc;
 }
@@ -1340,19 +1352,19 @@ function closeSensorDetails() {
   font-weight: bold;
 }
 .btn-secondary {
-  background: #333;
-  color: #ccc;
-  border: 1px solid #444;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
   cursor: pointer;
 }
 .btn-danger {
-  background: #d9534f;
+  background: var(--secondary-color);
   color: white;
   border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
   cursor: pointer;
 }
 .notification {
