@@ -16,7 +16,7 @@ const formToShow = ref(null)
 const channels = ref([])
 
 // --- Nuevo Estado para Grupo (Lógica Mejorada) ---
-const selectedGroupOption = ref('') // Guarda la selección del combo
+const selectedGroupOption = ref('') // Guarda la selección del combo (Dropdown)
 const customGroupName = ref('') // Guarda el nombre si decide crear uno nuevo
 
 // --- Estado para Edición ---
@@ -32,12 +32,13 @@ const hasParentMaestro = computed(() => {
 // --- COMPUTADO: Obtener grupos únicos existentes ---
 const availableGroups = computed(() => {
   const groups = new Set()
-  // Recorremos los monitores existentes para sacar los nombres de grupo
-  allMonitors.value.forEach((m) => {
-    if (m.group_name) {
-      groups.add(m.group_name)
-    }
-  })
+  if (Array.isArray(allMonitors.value)) {
+    allMonitors.value.forEach((m) => {
+      if (m.group_name) {
+        groups.add(m.group_name)
+      }
+    })
+  }
   return Array.from(groups).sort()
 })
 
@@ -333,7 +334,8 @@ function closeForm() {
 async function fetchAllMonitors() {
   try {
     const { data } = await api.get('/monitors')
-    allMonitors.value = data
+    // Aseguramos que sea array para evitar errores en computed
+    allMonitors.value = Array.isArray(data) ? data : []
   } catch (err) {
     console.error('Error fetching monitors:', err)
   }
