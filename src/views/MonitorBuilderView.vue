@@ -16,7 +16,9 @@ const formToShow = ref(null)
 const channels = ref([])
 
 // --- Nuevo Estado para Grupo ---
-const newMonitorGroup = ref('')
+const groupSelectionMode = ref('existing') // 'existing' | 'new'
+const selectedExistingGroup = ref('')
+const customNewGroupName = ref('')
 
 // --- Estado para Edición ---
 const sensorToEdit = ref(null)
@@ -26,6 +28,15 @@ const isEditMode = ref(false)
 const hasParentMaestro = computed(() => {
   // Verificamos si el dispositivo tiene un padre asignado.
   return !!selectedDevice.value?.maestro_id
+})
+
+// --- COMPUTADO: Grupos Existentes ---
+const existingGroups = computed(() => {
+  const groups = new Set()
+  allMonitors.value.forEach((m) => {
+    if (m.group_name) groups.add(m.group_name)
+  })
+  return Array.from(groups).sort()
 })
 
 //
@@ -88,6 +99,16 @@ watch(selectedDevice, () => {
   // Si NO tiene padre (es maestro o vpn directa), forzamos 'device_to_external'
   if (!hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
+  }
+})
+
+// WATCH para ajustar el modo de grupo si no hay grupos
+watch(existingGroups, (groups) => {
+  if (groups.length === 0) {
+    groupSelectionMode.value = 'new'
+  } else if (!selectedExistingGroup.value) {
+    // Seleccionar el primero por defecto si no hay nada seleccionado
+    selectedExistingGroup.value = groups[0]
   }
 })
 
@@ -330,8 +351,20 @@ async function selectDevice(device) {
   selectedDevice.value = device
   searchQuery.value = ''
   searchResults.value = []
-  newMonitorGroup.value = '' // Reiniciar grupo al cambiar de device
+
+  // Reiniciar estado de grupo
+  customNewGroupName.value = ''
+
   await fetchAllMonitors()
+
+  // Determinar grupo por defecto
+  if (existingGroups.value.length > 0) {
+    groupSelectionMode.value = 'existing'
+    if (!selectedExistingGroup.value) selectedExistingGroup.value = existingGroups.value[0]
+  } else {
+    groupSelectionMode.value = 'new'
+  }
+
   const monitor = allMonitors.value.find((m) => m.device_id === device.id)
   if (monitor) {
     currentMonitor.value = monitor
@@ -351,17 +384,25 @@ function clearSelectedDevice() {
   selectedDevice.value = null
   currentMonitor.value = null
   activeSensors.value = []
-  newMonitorGroup.value = ''
+  customNewGroupName.value = ''
   closeForm()
 }
 
 async function createMonitorCard() {
   if (!selectedDevice.value) return
+
+  let finalGroup = ''
+  if (groupSelectionMode.value === 'existing') {
+    finalGroup = selectedExistingGroup.value
+  } else {
+    finalGroup = customNewGroupName.value
+  }
+
   try {
     // Enviamos el device_id y también el group_name
     await api.post('/monitors', {
       device_id: selectedDevice.value.id,
-      group_name: newMonitorGroup.value,
+      group_name: finalGroup,
     })
     showNotification('Tarjeta de monitoreo creada con éxito.', 'success')
     await selectDevice(selectedDevice.value)
@@ -444,16 +485,40 @@ watch(searchQuery, (newQuery) => {
         <div v-if="!currentMonitor">
           <h2><span class="step-number">2</span> Crear Tarjeta de Monitoreo</h2>
 
-          <div class="form-group" style="margin-bottom: 1rem">
-            <label style="color: #ccc; display: block; margin-bottom: 0.5rem"
-              >Nombre del Grupo (Opcional)</label
-            >
-            <input
-              type="text"
-              v-model="newMonitorGroup"
-              placeholder="Ej: Sucursal Centro, Servidores..."
-              class="search-input"
-            />
+          <div class="group-selection-container">
+            <label>Asignar a Grupo</label>
+
+            <div class="group-mode-toggles" v-if="existingGroups.length > 0">
+              <button
+                class="toggle-btn"
+                :class="{ active: groupSelectionMode === 'existing' }"
+                @click="groupSelectionMode = 'existing'"
+              >
+                Existente
+              </button>
+              <button
+                class="toggle-btn"
+                :class="{ active: groupSelectionMode === 'new' }"
+                @click="groupSelectionMode = 'new'"
+              >
+                Nuevo
+              </button>
+            </div>
+
+            <div v-if="groupSelectionMode === 'existing' && existingGroups.length > 0">
+              <select v-model="selectedExistingGroup" class="search-input">
+                <option v-for="g in existingGroups" :key="g" :value="g">{{ g }}</option>
+              </select>
+            </div>
+
+            <div v-else>
+              <input
+                type="text"
+                v-model="customNewGroupName"
+                placeholder="Nombre del nuevo grupo..."
+                class="search-input"
+              />
+            </div>
           </div>
 
           <button @click="createMonitorCard" class="btn-create">Crear Tarjeta</button>
@@ -1116,5 +1181,42 @@ h4 {
 .btn-add {
   background-color: var(--blue);
   color: white;
+}
+
+/* --- Estilos Grupo Selector --- */
+.group-selection-container {
+  background-color: var(--bg-color);
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--primary-color);
+  margin-bottom: 1.5rem;
+}
+.group-selection-container label {
+  display: block;
+  margin-bottom: 0.8rem;
+  font-weight: bold;
+  color: #ccc;
+}
+.group-mode-toggles {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.toggle-btn {
+  flex: 1;
+  padding: 0.5rem;
+  background: transparent;
+  border: 1px solid var(--primary-color);
+  color: #888;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+  text-align: center;
+  font-weight: bold;
+}
+.toggle-btn.active {
+  background: var(--blue);
+  color: white;
+  border-color: var(--blue);
 }
 </style>
