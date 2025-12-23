@@ -15,14 +15,16 @@ const notification = ref({ show: false, message: '', type: 'success' })
 const formToShow = ref(null)
 const channels = ref([])
 
+// --- Nuevo Estado para Grupo ---
+const newMonitorGroup = ref('')
+
 // --- Estado para Edición ---
 const sensorToEdit = ref(null)
 const isEditMode = ref(false)
 
-// --- COMPUTADO: LA LÓGICA CORRECTA ---
+// --- COMPUTADO: Validación de Maestro ---
 const hasParentMaestro = computed(() => {
   // Verificamos si el dispositivo tiene un padre asignado.
-  // Si maestro_id es null/undefined, es un nodo raíz (Maestro o VPN directa) y nadie le puede hacer ping desde arriba.
   return !!selectedDevice.value?.maestro_id
 })
 
@@ -83,7 +85,6 @@ onMounted(() => {
 // RESETEO Y VALIDACIÓN AL CAMBIAR DISPOSITIVO
 watch(selectedDevice, () => {
   newPingSensor.value = createNewPingSensor()
-
   // Si NO tiene padre (es maestro o vpn directa), forzamos 'device_to_external'
   if (!hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
@@ -329,6 +330,7 @@ async function selectDevice(device) {
   selectedDevice.value = device
   searchQuery.value = ''
   searchResults.value = []
+  newMonitorGroup.value = '' // Reiniciar grupo al cambiar de device
   await fetchAllMonitors()
   const monitor = allMonitors.value.find((m) => m.device_id === device.id)
   if (monitor) {
@@ -349,13 +351,18 @@ function clearSelectedDevice() {
   selectedDevice.value = null
   currentMonitor.value = null
   activeSensors.value = []
+  newMonitorGroup.value = ''
   closeForm()
 }
 
 async function createMonitorCard() {
   if (!selectedDevice.value) return
   try {
-    await api.post('/monitors', { device_id: selectedDevice.value.id })
+    // Enviamos el device_id y también el group_name
+    await api.post('/monitors', {
+      device_id: selectedDevice.value.id,
+      group_name: newMonitorGroup.value,
+    })
     showNotification('Tarjeta de monitoreo creada con éxito.', 'success')
     await selectDevice(selectedDevice.value)
   } catch (err) {
@@ -436,6 +443,19 @@ watch(searchQuery, (newQuery) => {
       <section v-if="selectedDevice" class="builder-step">
         <div v-if="!currentMonitor">
           <h2><span class="step-number">2</span> Crear Tarjeta de Monitoreo</h2>
+
+          <div class="form-group" style="margin-bottom: 1rem">
+            <label style="color: #ccc; display: block; margin-bottom: 0.5rem"
+              >Nombre del Grupo (Opcional)</label
+            >
+            <input
+              type="text"
+              v-model="newMonitorGroup"
+              placeholder="Ej: Sucursal Centro, Servidores..."
+              class="search-input"
+            />
+          </div>
+
           <button @click="createMonitorCard" class="btn-create">Crear Tarjeta</button>
         </div>
         <div v-else>

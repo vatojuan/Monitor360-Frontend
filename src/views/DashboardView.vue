@@ -18,10 +18,14 @@ const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const collapsedCards = ref(new Set())
 
-// --- Modales ---
-const sensorDetailsToShow = ref(null)
-const currentMonitorContext = ref(null)
-const editMonitorGroup = ref('')
+// --- Modales y Edición ---
+const sensorDetailsToShow = ref(null) // Para editar sensores
+const currentMonitorContext = ref(null) // Contexto del monitor al editar sensor
+
+// Estado para editar MONITOR (Cambio de grupo)
+const monitorToEdit = ref(null)
+const editMonitorGroup = ref('') // V-model para el select de grupo
+
 const showGroupModal = ref(false)
 const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
@@ -91,6 +95,7 @@ function refreshGroupedMonitors() {
 
   const names = Object.keys(groups).sort()
   if (names.length > 0) {
+    // Si el grupo activo desaparece (ej: movimos el último monitor), ir al primero
     if (!activeGroup.value || !groups[activeGroup.value]) {
       activeGroup.value = names[0]
     }
@@ -349,13 +354,44 @@ function goToSensorDetail(id) {
   router.push(`/sensor/${id}`)
 }
 
-// --- EDICION SENSOR ---
+// --- GESTIÓN DE MONITOR (CAMBIO DE GRUPO) ---
+function openMonitorSettings(monitor) {
+  monitorToEdit.value = monitor
+  editMonitorGroup.value = monitor.group_name || 'General'
+}
+
+async function saveMonitorSettings() {
+  if (!monitorToEdit.value) return
+  const newGroup = editMonitorGroup.value
+
+  if (newGroup !== monitorToEdit.value.group_name) {
+    try {
+      await api.put(`/monitors/${monitorToEdit.value.monitor_id}`, { group_name: newGroup })
+
+      // Actualizar localmente
+      const mLocal = allMonitors.value.find((m) => m.monitor_id === monitorToEdit.value.monitor_id)
+      if (mLocal) mLocal.group_name = newGroup
+
+      refreshGroupedMonitors()
+
+      // Si el grupo activo sigue existiendo, nos quedamos, sino nos mueve refreshGroupedMonitors
+      // Si movimos el monitor a otro grupo, desaparecerá de la vista actual, lo cual es correcto.
+      showNotification('Grupo actualizado')
+    } catch (err) {
+      console.error(err)
+      showNotification('Error al actualizar grupo', 'error')
+    }
+  }
+  monitorToEdit.value = null
+}
+
+// --- EDICION SENSOR (Lápiz) ---
 async function showSensorDetails(s, m, e) {
   e?.stopPropagation()
   await ensureChannelsLoaded()
   sensorDetailsToShow.value = s
   currentMonitorContext.value = m
-  editMonitorGroup.value = m.group_name || 'General'
+  // Ya no seteamos editMonitorGroup aquí, porque eso es del monitor
   const cfg = safeJsonParse(s.config)
   if (s.sensor_type === 'ping') {
     const d = createNewPingSensor()
@@ -386,23 +422,10 @@ async function showSensorDetails(s, m, e) {
 async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
 
-  // 1. Cambio Grupo
-  const newGroup = editMonitorGroup.value
-  if (newGroup !== currentMonitorContext.value.group_name) {
-    try {
-      await api.put(`/monitors/${currentMonitorContext.value.monitor_id}`, { group_name: newGroup })
-      const mLocal = allMonitors.value.find(
-        (m) => m.monitor_id === currentMonitorContext.value.monitor_id,
-      )
-      if (mLocal) mLocal.group_name = newGroup
-      refreshGroupedMonitors()
-      activeGroup.value = newGroup
-    } catch {
-      /* ignore */
-    }
-  }
+  // NOTA: Eliminamos la lógica de cambio de grupo aquí.
+  // Ahora es responsabilidad exclusiva de saveMonitorSettings.
 
-  // 2. Sensor Update
+  // Sensor Update Logic
   const type = sensorDetailsToShow.value.sensor_type
   const uiData = type === 'ping' ? newPingSensor.value : newEthernetSensor.value
   const config = { ...uiData.config }
@@ -463,11 +486,11 @@ async function handleUpdateSensor() {
       if (idx !== -1) m.sensors[idx] = { ...m.sensors[idx], ...data }
     }
 
-    showNotification('Guardado')
+    showNotification('Sensor guardado')
     if (payload.is_active !== sensorDetailsToShow.value.is_active) trySubscribeSensors()
     closeSensorDetails()
   } catch {
-    showNotification('Error al guardar', 'error')
+    showNotification('Error al guardar sensor', 'error')
   }
 }
 function closeSensorDetails() {
@@ -560,6 +583,14 @@ function closeSensorDetails() {
                     {{ monitor.ip_address }}
                   </span>
                   <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
+
+                  <button
+                    class="action-icon-btn"
+                    @click="openMonitorSettings(monitor)"
+                    title="Configuración de Monitor"
+                  >
+                    ⚙️
+                  </button>
 
                   <button
                     class="action-icon-btn"
@@ -719,6 +750,25 @@ function closeSensorDetails() {
       </div>
     </div>
 
+    <div v-if="monitorToEdit" class="modal-overlay" @click.self="monitorToEdit = null">
+      <div class="modal-content small">
+        <h3>Configurar Monitor: {{ monitorToEdit.client_name }}</h3>
+
+        <div class="form-group" style="margin-top: 1rem">
+          <label>Mover a Grupo:</label>
+          <select v-model="editMonitorGroup" class="full-width-input">
+            <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
+            <option value="Sin Grupo">Sin Grupo</option>
+          </select>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-secondary" @click="monitorToEdit = null">Cancelar</button>
+          <button class="btn-primary" @click="saveMonitorSettings">Guardar</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="monitorToDelete" class="modal-overlay">
       <div class="modal-content small">
         <h3>Borrar Monitor</h3>
@@ -759,13 +809,6 @@ function closeSensorDetails() {
                   id="gPau"
                 />
                 <label for="gPau">Pausar Alertas</label>
-              </div>
-              <div class="form-group span-2">
-                <label>Grupo</label>
-                <select v-model="editMonitorGroup">
-                  <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
-                  <option value="Sin Grupo">Sin Grupo</option>
-                </select>
               </div>
             </div>
           </div>
@@ -1311,9 +1354,17 @@ function closeSensorDetails() {
   color: white;
   width: 100%;
 }
+.full-width-input {
+  width: 100%;
+  padding: 0.8rem;
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  border-radius: 4px;
+  color: white;
+}
 .general-config-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 2fr;
+  grid-template-columns: 1fr 1fr;
   gap: 1rem;
   align-items: end;
 }
