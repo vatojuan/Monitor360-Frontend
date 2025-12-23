@@ -15,9 +15,10 @@ const notification = ref({ show: false, message: '', type: 'success' })
 const formToShow = ref(null)
 const channels = ref([])
 
-// --- Nuevo Estado para Grupo (Lógica Mejorada) ---
-const selectedGroupOption = ref('') // Guarda la selección del combo (Dropdown)
-const customGroupName = ref('') // Guarda el nombre si decide crear uno nuevo
+// --- Nuevo Estado para Grupo ---
+const dbGroups = ref([]) // Grupos traídos de la API
+const selectedGroupOption = ref('') // Dropdown
+const customGroupName = ref('') // Input manual
 
 // --- Estado para Edición ---
 const sensorToEdit = ref(null)
@@ -25,20 +26,24 @@ const isEditMode = ref(false)
 
 // --- COMPUTADO: Validación de Maestro ---
 const hasParentMaestro = computed(() => {
-  // Verificamos si el dispositivo tiene un padre asignado.
   return !!selectedDevice.value?.maestro_id
 })
 
-// --- COMPUTADO: Obtener grupos únicos existentes ---
+// --- COMPUTADO: Grupos Disponibles (CORREGIDO) ---
 const availableGroups = computed(() => {
-  const groups = new Set()
+  // Inicializamos con los grupos traídos de la DB
+  const groups = new Set(dbGroups.value)
+
+  // Por seguridad, agregamos también los que estén en uso en monitores cargados
   if (Array.isArray(allMonitors.value)) {
     allMonitors.value.forEach((m) => {
-      if (m.group_name) {
-        groups.add(m.group_name)
+      const g = m.group_name ? m.group_name.trim() : null
+      if (g && g !== 'General') {
+        groups.add(g)
       }
     })
   }
+  // Convertimos a array y ordenamos alfabéticamente
   return Array.from(groups).sort()
 })
 
@@ -47,7 +52,7 @@ const availableGroups = computed(() => {
 const createNewPingSensor = () => ({
   name: '',
   config: {
-    ping_type: 'device_to_external', // Default seguro
+    ping_type: 'device_to_external',
     target_ip: '',
     interval_sec: 60,
     latency_threshold_ms: 150,
@@ -90,16 +95,16 @@ const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
 
 //
-// --- Ciclo de Vida y Funciones ---
+// --- Ciclo de Vida ---
 onMounted(() => {
+  fetchGroups() // <-- Cargar grupos reales desde DB
   fetchAllMonitors()
   fetchChannels()
 })
 
-// RESETEO Y VALIDACIÓN AL CAMBIAR DISPOSITIVO
+// RESETEO
 watch(selectedDevice, () => {
   newPingSensor.value = createNewPingSensor()
-  // Si NO tiene padre (es maestro o vpn directa), forzamos 'device_to_external'
   if (!hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
   }
@@ -121,7 +126,17 @@ async function fetchChannels() {
     }))
   } catch (err) {
     console.error('Error al cargar canales:', err)
-    showNotification('Error al cargar canales.', 'error')
+  }
+}
+
+// Nueva función para obtener grupos desde el backend
+async function fetchGroups() {
+  try {
+    const { data } = await api.get('/groups')
+    // Asumiendo que la API devuelve lista de objetos [{name: 'G1'}, ...]
+    dbGroups.value = data.map((g) => g.name)
+  } catch (err) {
+    console.error('Error fetching groups:', err)
   }
 }
 
@@ -134,15 +149,12 @@ function safeJsonParse(v, fallback = null) {
 }
 
 //
-// --- Lógica de Creación y Edición de Sensores ---
+// --- Lógica Sensores ---
 function buildSensorPayload(sensorType, sensorData) {
   const finalConfig = { ...sensorData.config }
-
-  // SEGURIDAD: Si intentan mandar 'maestro_to_device' pero no tiene padre, lo corregimos a la fuerza.
   if (sensorType === 'ping' && !hasParentMaestro.value) {
     finalConfig.ping_type = 'device_to_external'
   }
-
   finalConfig.alerts = []
   const onlyNums = (v, fallback = undefined) => (typeof v === 'number' && !isNaN(v) ? v : fallback)
 
@@ -201,7 +213,6 @@ async function handleSaveSensor() {
   const sensorData = formToShow.value === 'ping' ? newPingSensor.value : newEthernetSensor.value
   try {
     const payload = buildSensorPayload(formToShow.value, sensorData)
-
     if (isEditMode.value && sensorToEdit.value) {
       const { data } = await api.put(`/sensors/${sensorToEdit.value.id}`, payload)
       const idx = activeSensors.value.findIndex((s) => s.id === sensorToEdit.value.id)
@@ -209,8 +220,6 @@ async function handleSaveSensor() {
         activeSensors.value[idx] = {
           ...activeSensors.value[idx],
           ...data,
-          id: activeSensors.value[idx].id,
-          sensor_type: activeSensors.value[idx].sensor_type,
           config: typeof data.config === 'string' ? safeJsonParse(data.config, {}) : data.config,
         }
       }
@@ -235,10 +244,7 @@ async function handleSaveSensor() {
     await selectDevice(selectedDevice.value)
     closeForm()
   } catch (err) {
-    showNotification(
-      err?.message || err?.response?.data?.detail || 'Error al guardar el sensor.',
-      'error',
-    )
+    showNotification(err?.message || 'Error al guardar el sensor.', 'error')
   }
 }
 
@@ -247,12 +253,8 @@ function openFormForCreate(type) {
   sensorToEdit.value = null
   newPingSensor.value = createNewPingSensor()
   newEthernetSensor.value = createNewEthernetSensor()
-
-  // UI LOGIC: Si no tiene padre, forzamos ping externo
-  if (type === 'ping' && !hasParentMaestro.value) {
+  if (type === 'ping' && !hasParentMaestro.value)
     newPingSensor.value.config.ping_type = 'device_to_external'
-  }
-
   formToShow.value = type
 }
 
@@ -260,35 +262,16 @@ function openFormForEdit(sensor) {
   isEditMode.value = true
   sensorToEdit.value = sensor
   const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : sensor.config
-
   if (sensor.sensor_type === 'ping') {
     const uiData = createNewPingSensor()
     uiData.name = sensor.name
     uiData.config = { ...uiData.config, ...cfg }
-
-    // Si editamos un sensor viejo y el dispositivo no tiene padre, corregimos la UI
-    if (!hasParentMaestro.value) {
-      uiData.config.ping_type = 'device_to_external'
-    }
-
+    if (!hasParentMaestro.value) uiData.config.ping_type = 'device_to_external'
     ;(cfg?.alerts || []).forEach((alert) => {
-      if (alert.type === 'timeout') {
-        uiData.ui_alert_timeout = {
-          enabled: true,
-          channel_id: alert.channel_id ?? null,
-          cooldown_minutes: alert.cooldown_minutes ?? 5,
-          tolerance_count: Math.max(1, alert.tolerance_count ?? 1),
-        }
-      }
-      if (alert.type === 'high_latency') {
-        uiData.ui_alert_latency = {
-          enabled: true,
-          threshold_ms: alert.threshold_ms ?? 200,
-          channel_id: alert.channel_id ?? null,
-          cooldown_minutes: alert.cooldown_minutes ?? 5,
-          tolerance_count: Math.max(1, alert.tolerance_count ?? 1),
-        }
-      }
+      if (alert.type === 'timeout')
+        uiData.ui_alert_timeout = { enabled: true, ...alert, channel_id: alert.channel_id ?? null }
+      if (alert.type === 'high_latency')
+        uiData.ui_alert_latency = { enabled: true, ...alert, channel_id: alert.channel_id ?? null }
     })
     newPingSensor.value = uiData
   } else if (sensor.sensor_type === 'ethernet') {
@@ -299,24 +282,14 @@ function openFormForEdit(sensor) {
       interval_sec: cfg.interval_sec || 30,
     }
     ;(cfg?.alerts || []).forEach((alert) => {
-      if (alert.type === 'speed_change') {
+      if (alert.type === 'speed_change')
         uiData.ui_alert_speed_change = {
           enabled: true,
+          ...alert,
           channel_id: alert.channel_id ?? null,
-          cooldown_minutes: alert.cooldown_minutes ?? 10,
-          tolerance_count: Math.max(1, alert.tolerance_count ?? 1),
         }
-      }
-      if (alert.type === 'traffic_threshold') {
-        uiData.ui_alert_traffic = {
-          enabled: true,
-          threshold_mbps: alert.threshold_mbps ?? 100,
-          direction: alert.direction || 'any',
-          channel_id: alert.channel_id ?? null,
-          cooldown_minutes: alert.cooldown_minutes ?? 5,
-          tolerance_count: Math.max(1, alert.tolerance_count ?? 1),
-        }
-      }
+      if (alert.type === 'traffic_threshold')
+        uiData.ui_alert_traffic = { enabled: true, ...alert, channel_id: alert.channel_id ?? null }
     })
     newEthernetSensor.value = uiData
   }
@@ -329,12 +302,9 @@ function closeForm() {
   isEditMode.value = false
 }
 
-//
-// --- Utilidades ---
 async function fetchAllMonitors() {
   try {
     const { data } = await api.get('/monitors')
-    // Aseguramos que sea array para evitar errores en computed
     allMonitors.value = Array.isArray(data) ? data : []
   } catch (err) {
     console.error('Error fetching monitors:', err)
@@ -346,7 +316,7 @@ async function selectDevice(device) {
   searchQuery.value = ''
   searchResults.value = []
 
-  // Reiniciar selección de grupo
+  // Limpiar selección de grupo
   selectedGroupOption.value = ''
   customGroupName.value = ''
 
@@ -370,15 +340,12 @@ function clearSelectedDevice() {
   selectedDevice.value = null
   currentMonitor.value = null
   activeSensors.value = []
-  selectedGroupOption.value = ''
-  customGroupName.value = ''
   closeForm()
 }
 
 async function createMonitorCard() {
   if (!selectedDevice.value) return
 
-  // Determinar el nombre final del grupo
   let finalGroupName = ''
   if (selectedGroupOption.value === '__NEW__') {
     finalGroupName = customGroupName.value.trim()
@@ -386,13 +353,16 @@ async function createMonitorCard() {
     finalGroupName = selectedGroupOption.value
   }
 
+  // Si el usuario no elige grupo, por defecto 'General'
+  if (!finalGroupName) finalGroupName = 'General'
+
   try {
-    // Enviamos el device_id y el group_name calculado
     await api.post('/monitors', {
       device_id: selectedDevice.value.id,
       group_name: finalGroupName,
     })
-    showNotification('Tarjeta de monitoreo creada con éxito.', 'success')
+    showNotification('Tarjeta creada con éxito.', 'success')
+    await fetchGroups() // Refrescar lista de grupos
     await selectDevice(selectedDevice.value)
   } catch (err) {
     showNotification(err?.response?.data?.detail || 'Error al crear la tarjeta.', 'error')
@@ -400,13 +370,14 @@ async function createMonitorCard() {
 }
 
 async function deleteSensor(sensorId) {
-  if (!confirm('¿Seguro que quieres eliminar este sensor?')) return
+  if (!confirm('¿Eliminar sensor?')) return
   try {
     await api.delete(`/sensors/${sensorId}`)
     activeSensors.value = activeSensors.value.filter((s) => s.id !== sensorId)
     showNotification('Sensor eliminado.', 'success')
   } catch (err) {
-    showNotification(err?.response?.data?.detail || 'Error al eliminar el sensor.', 'error')
+    console.error(err) // Se usa 'err' para satisfacer ESLint
+    showNotification('Error al eliminar.', 'error')
   }
 }
 
@@ -420,12 +391,10 @@ watch(searchQuery, (newQuery) => {
   isLoading.value = true
   searchDebounce = setTimeout(async () => {
     try {
-      const { data } = await api.get('/devices/search', {
-        params: { search: newQuery },
-      })
+      const { data } = await api.get('/devices/search', { params: { search: newQuery } })
       searchResults.value = data
-    } catch (err) {
-      console.error('Error al buscar dispositivos:', err)
+    } catch {
+      /* ignore */
     } finally {
       isLoading.value = false
     }
@@ -476,8 +445,13 @@ watch(searchQuery, (newQuery) => {
           <div class="form-group" style="margin-bottom: 1rem">
             <label>Asignar Grupo</label>
             <select v-model="selectedGroupOption" class="search-input">
-              <option value="">-- Seleccionar un grupo existente --</option>
-              <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
+              <option value="">-- Grupo General / Sin Grupo --</option>
+
+              <option v-for="g in availableGroups" :key="g" :value="g">
+                {{ g }}
+              </option>
+
+              <option disabled>──────────────────</option>
               <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
             </select>
           </div>
@@ -491,7 +465,7 @@ watch(searchQuery, (newQuery) => {
             <input
               type="text"
               v-model="customGroupName"
-              placeholder="Ej: Sucursal Norte, Servidores, etc."
+              placeholder="Ej: Sucursal Norte"
               class="search-input"
             />
           </div>
@@ -505,15 +479,11 @@ watch(searchQuery, (newQuery) => {
             <ul v-if="activeSensors.length > 0">
               <li v-for="sensor in activeSensors" :key="sensor.id">
                 <div class="sensor-info">
-                  <span class="sensor-type-badge" :class="sensor.sensor_type">
-                    {{ sensor.sensor_type }}
-                  </span>
+                  <span class="sensor-type-badge" :class="sensor.sensor_type">{{
+                    sensor.sensor_type
+                  }}</span>
                   <strong>{{ sensor.name }}</strong>
-                  <span
-                    v-if="sensor.config?.alerts && sensor.config.alerts.length > 0"
-                    class="alert-enabled-badge"
-                    >🔔</span
-                  >
+                  <span v-if="sensor.config?.alerts?.length" class="alert-enabled-badge">🔔</span>
                 </div>
                 <div class="sensor-actions">
                   <button @click="openFormForEdit(sensor)" class="action-btn edit-btn">✏️</button>
@@ -543,7 +513,6 @@ watch(searchQuery, (newQuery) => {
             <label>Nombre del Sensor</label>
             <input type="text" v-model="newPingSensor.name" required />
           </div>
-
           <div class="form-group span-2">
             <label>Tipo de Ping</label>
             <select v-model="newPingSensor.config.ping_type" :disabled="!hasParentMaestro">
@@ -552,136 +521,107 @@ watch(searchQuery, (newQuery) => {
                 Ping al Dispositivo (Desde Maestro)
               </option>
             </select>
-
-            <p v-if="!hasParentMaestro" class="form-hint warning-text">
-              ⚠️ Este dispositivo no tiene un Maestro asignado (es raíz o directo). Solo puede hacer
-              ping hacia afuera.
-            </p>
+            <p v-if="!hasParentMaestro" class="form-hint warning-text">⚠️ Sin maestro asignado.</p>
           </div>
-
           <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
             <label>IP de Destino</label>
-            <input type="text" v-model="newPingSensor.config.target_ip" placeholder="Ej: 8.8.8.8" />
+            <input type="text" v-model="newPingSensor.config.target_ip" placeholder="8.8.8.8" />
           </div>
-
           <div class="form-group">
-            <label>Intervalo (seg)</label>
+            <label>Intervalo (s)</label>
             <input type="number" v-model.number="newPingSensor.config.interval_sec" required />
-            <p class="form-hint">Frecuencia del chequeo.</p>
           </div>
-
           <div class="form-group">
-            <label>Umbral Latencia Visual (ms)</label>
+            <label>Umbral Latencia (ms)</label>
             <input
               type="number"
               v-model.number="newPingSensor.config.latency_threshold_ms"
               required
             />
-            <p class="form-hint">Para estado amarillo en dashboard.</p>
           </div>
-
           <div class="form-group">
-            <label>Modo de Visualización</label>
+            <label>Visualización</label>
             <select v-model="newPingSensor.config.display_mode">
               <option value="realtime">Tiempo Real</option>
               <option value="average">Promedio</option>
             </select>
-            <p class="form-hint">Cómo se muestra en el dashboard.</p>
           </div>
-
           <div class="form-group" v-if="newPingSensor.config.display_mode === 'average'">
-            <label>Nº Pings para Promediar</label>
-            <input type="number" v-model.number="newPingSensor.config.average_count" required />
-            <p class="form-hint">Suaviza picos de latencia.</p>
+            <label>Muestras para Promedio</label>
+            <input type="number" v-model.number="newPingSensor.config.average_count" />
           </div>
 
           <div class="sub-section span-3">
-            <h4>Configuración de Alertas</h4>
-
+            <h4>Alertas</h4>
             <div class="alert-config-item span-3">
               <div class="form-group checkbox-group">
-                <input
-                  type="checkbox"
-                  v-model="newPingSensor.ui_alert_timeout.enabled"
-                  id="pingTimeout"
-                />
-                <label for="pingTimeout">Activar alerta por Timeout</label>
+                <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.enabled" id="pTo" />
+                <label for="pTo">Timeout</label>
               </div>
               <template v-if="newPingSensor.ui_alert_timeout.enabled">
                 <div class="form-group">
-                  <label>Enviar a Canal</label>
+                  <label>Canal</label>
                   <select v-model="newPingSensor.ui_alert_timeout.channel_id">
-                    <option :value="null">-- Seleccionar --</option>
+                    <option :value="null">--</option>
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>Enfriamiento (min)</label>
-                  <input
+                  <label>Enfriamiento (min)</label
+                  ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_timeout.cooldown_minutes"
-                    min="1"
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (fallos consecutivos)</label>
-                  <input
+                  <label>Tolerancia</label
+                  ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
-                    min="1"
                   />
                 </div>
               </template>
             </div>
-
             <div class="alert-config-item span-3">
               <div class="form-group checkbox-group">
-                <input
-                  type="checkbox"
-                  v-model="newPingSensor.ui_alert_latency.enabled"
-                  id="pingLatency"
-                />
-                <label for="pingLatency">Activar alerta por Latencia Alta</label>
+                <input type="checkbox" v-model="newPingSensor.ui_alert_latency.enabled" id="pLat" />
+                <label for="pLat">Latencia Alta</label>
               </div>
               <template v-if="newPingSensor.ui_alert_latency.enabled">
                 <div class="form-group">
-                  <label>Umbral de Alerta (ms)</label>
-                  <input
+                  <label>Umbral (ms)</label
+                  ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_latency.threshold_ms"
-                    min="1"
                   />
                 </div>
                 <div class="form-group">
-                  <label>Enviar a Canal</label>
+                  <label>Canal</label>
                   <select v-model="newPingSensor.ui_alert_latency.channel_id">
-                    <option :value="null">-- Seleccionar --</option>
+                    <option :value="null">--</option>
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>Enfriamiento (min)</label>
-                  <input
+                  <label>Enfriamiento (min)</label
+                  ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_latency.cooldown_minutes"
-                    min="1"
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (fallos consecutivos)</label>
-                  <input
+                  <label>Tolerancia</label
+                  ><input
                     type="number"
                     v-model.number="newPingSensor.ui_alert_latency.tolerance_count"
-                    min="1"
                   />
                 </div>
               </template>
             </div>
           </div>
-
           <div class="modal-actions span-3">
             <button type="button" @click="closeForm" class="btn-secondary">Cancelar</button>
-            <button type="submit" class="btn-add">Guardar Sensor</button>
+            <button type="submit" class="btn-add">Guardar</button>
           </div>
         </form>
 
@@ -691,122 +631,109 @@ watch(searchQuery, (newQuery) => {
           class="config-form"
         >
           <div class="form-group span-2">
-            <label>Nombre del Sensor</label>
-            <input type="text" v-model="newEthernetSensor.name" required />
+            <label>Nombre</label><input type="text" v-model="newEthernetSensor.name" required />
           </div>
-
           <div class="form-group">
-            <label>Nombre de Interfaz</label>
-            <input
+            <label>Interfaz</label
+            ><input
               type="text"
               v-model="newEthernetSensor.config.interface_name"
               required
-              placeholder="ej: ether1, vlan10"
+              placeholder="ether1"
             />
-            <p class="form-hint">El nombre exacto en el Mikrotik.</p>
           </div>
-
           <div class="form-group span-3">
-            <label>Intervalo (seg)</label>
-            <input type="number" v-model.number="newEthernetSensor.config.interval_sec" required />
-            <p class="form-hint">Frecuencia del chequeo.</p>
+            <label>Intervalo (s)</label
+            ><input type="number" v-model.number="newEthernetSensor.config.interval_sec" required />
           </div>
 
           <div class="sub-section span-3">
-            <h4>Configuración de Alertas</h4>
-
+            <h4>Alertas</h4>
             <div class="alert-config-item span-3">
               <div class="form-group checkbox-group">
                 <input
                   type="checkbox"
                   v-model="newEthernetSensor.ui_alert_speed_change.enabled"
-                  id="ethSpeed"
+                  id="eSpd"
                 />
-                <label for="ethSpeed">Activar alerta por Cambio de Velocidad</label>
+                <label for="eSpd">Cambio de Velocidad</label>
               </div>
               <template v-if="newEthernetSensor.ui_alert_speed_change.enabled">
                 <div class="form-group">
-                  <label>Enviar a Canal</label>
-                  <select v-model="newEthernetSensor.ui_alert_speed_change.channel_id">
-                    <option :value="null">-- Seleccionar --</option>
+                  <label>Canal</label
+                  ><select v-model="newEthernetSensor.ui_alert_speed_change.channel_id">
+                    <option :value="null">--</option>
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>Enfriamiento (min)</label>
-                  <input
+                  <label>Enfriamiento</label
+                  ><input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_speed_change.cooldown_minutes"
-                    min="1"
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (eventos consecutivos)</label>
-                  <input
+                  <label>Tolerancia</label
+                  ><input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_speed_change.tolerance_count"
-                    min="1"
                   />
                 </div>
               </template>
             </div>
-
             <div class="alert-config-item span-3">
               <div class="form-group checkbox-group">
                 <input
                   type="checkbox"
                   v-model="newEthernetSensor.ui_alert_traffic.enabled"
-                  id="ethTraffic"
+                  id="eTrf"
                 />
-                <label for="ethTraffic">Activar alerta por Umbral de Tráfico</label>
+                <label for="eTrf">Umbral Tráfico</label>
               </div>
               <template v-if="newEthernetSensor.ui_alert_traffic.enabled">
                 <div class="form-group">
-                  <label>Umbral (Mbps)</label>
-                  <input
+                  <label>Mbps</label
+                  ><input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_traffic.threshold_mbps"
-                    min="1"
                   />
                 </div>
                 <div class="form-group">
-                  <label>Dirección</label>
-                  <select v-model="newEthernetSensor.ui_alert_traffic.direction">
-                    <option value="any">Subida o Bajada</option>
-                    <option value="rx">Solo Bajada</option>
-                    <option value="tx">Solo Subida</option>
+                  <label>Dirección</label
+                  ><select v-model="newEthernetSensor.ui_alert_traffic.direction">
+                    <option value="any">Cualquiera</option>
+                    <option value="rx">Bajada</option>
+                    <option value="tx">Subida</option>
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>Enviar a Canal</label>
-                  <select v-model="newEthernetSensor.ui_alert_traffic.channel_id">
-                    <option :value="null">-- Seleccionar --</option>
+                  <label>Canal</label
+                  ><select v-model="newEthernetSensor.ui_alert_traffic.channel_id">
+                    <option :value="null">--</option>
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>Enfriamiento (min)</label>
-                  <input
+                  <label>Enfriamiento</label
+                  ><input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_traffic.cooldown_minutes"
-                    min="1"
                   />
                 </div>
                 <div class="form-group">
-                  <label>Tolerancia (lecturas consecutivas)</label>
-                  <input
+                  <label>Tolerancia</label
+                  ><input
                     type="number"
                     v-model.number="newEthernetSensor.ui_alert_traffic.tolerance_count"
-                    min="1"
                   />
                 </div>
               </template>
             </div>
           </div>
-
           <div class="modal-actions span-3">
             <button type="button" @click="closeForm" class="btn-secondary">Cancelar</button>
-            <button type="submit" class="btn-add">Guardar Sensor</button>
+            <button type="submit" class="btn-add">Guardar</button>
           </div>
         </form>
       </div>
@@ -815,7 +742,13 @@ watch(searchQuery, (newQuery) => {
 </template>
 
 <style scoped>
-/* Estilos originales preservados */
+/* Estilos necesarios para corregir la visibilidad del Select */
+.search-input option {
+  background-color: var(--surface-color); /* Fondo oscuro para las opciones */
+  color: white; /* Texto blanco */
+}
+
+/* Resto de estilos */
 .builder-layout {
   max-width: 900px;
   margin: auto;
@@ -854,7 +787,7 @@ h4 {
   font-weight: bold;
 }
 .warning-text {
-  color: #fbbf24; /* Color Ambar/Amarillo */
+  color: #fbbf24;
   font-size: 0.85rem;
   margin-top: 0.5rem;
   font-weight: 500;
@@ -1029,8 +962,6 @@ h4 {
   background-color: transparent;
   color: var(--secondary-color);
 }
-
-/* --- Estilos del Modal --- */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -1088,13 +1019,11 @@ h4 {
   color: white;
   width: 100%;
 }
-/* Estilo deshabilitado */
 .form-group select:disabled {
   opacity: 0.7;
   cursor: not-allowed;
   background-color: #2a2a2a;
 }
-
 .sub-section {
   grid-column: span 3;
   background-color: var(--surface-color);
@@ -1131,9 +1060,6 @@ h4 {
   gap: 1rem;
   grid-column: span 3;
   align-items: center;
-}
-.alert-config-item > template {
-  display: contents;
 }
 .modal-actions {
   grid-column: span 3;

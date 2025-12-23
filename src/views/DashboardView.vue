@@ -14,20 +14,19 @@ const groupedMonitors = ref({})
 const activeGroup = ref(null)
 const isSidebarCollapsed = ref(false)
 
-// NUEVO: Registro de grupos conocidos para mantenerlos aunque estén vacíos durante la sesión
-const knownGroups = ref(new Set(['General']))
+// Estado de grupos sincronizado con DB
+const dbGroups = ref([])
 
 const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const collapsedCards = ref(new Set())
 
 // --- Modales y Edición ---
-const sensorDetailsToShow = ref(null) // Para editar sensores
-const currentMonitorContext = ref(null) // Contexto del monitor al editar sensor
+const sensorDetailsToShow = ref(null)
+const currentMonitorContext = ref(null)
 
-// Estado para editar MONITOR (Cambio de grupo)
 const monitorToEdit = ref(null)
-const editMonitorGroup = ref('') // V-model para el select de grupo
+const editMonitorGroup = ref('')
 
 const showGroupModal = ref(false)
 const newGroupName = ref('')
@@ -38,8 +37,9 @@ const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_i
 const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
 
-// CORREGIDO: Usamos knownGroups para el select, así aparecen todos las opciones disponibles
-const availableGroups = computed(() => Array.from(knownGroups.value).sort())
+// Ordenamos los grupos disponibles para los selectores
+// CORRECCIÓN: Usamos spread syntax [...] para crear una copia antes de ordenar y evitar efectos secundarios
+const availableGroups = computed(() => [...dbGroups.value].sort())
 
 // --- FORMULARIOS ---
 const createNewPingSensor = () => ({
@@ -86,36 +86,88 @@ const createNewEthernetSensor = () => ({
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
 
-// --- LOGICA GRUPOS CORREGIDA ---
+// --- API FETCHERS ---
+async function fetchGroups() {
+  try {
+    const { data } = await api.get('/groups')
+    // data es lista de objetos [{id, name}, ...], extraemos solo nombres
+    dbGroups.value = data.map((g) => g.name)
+  } catch (err) {
+    console.error('Error fetching groups:', err)
+  }
+}
+
+async function fetchAllMonitors() {
+  try {
+    const { data } = await api.get('/monitors')
+    allMonitors.value = Array.isArray(data) ? data : []
+
+    allMonitors.value.forEach((m) => {
+      if (m.is_active === null || m.is_active === undefined) m.is_active = true
+      if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
+      ;(m.sensors || []).forEach((s) => {
+        const sid = String(s.id)
+        if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
+      })
+    })
+
+    refreshGroupedMonitors()
+    trySubscribeSensors()
+  } catch (err) {
+    console.error(err)
+  }
+}
+
+// --- LOGICA DE GRUPOS ---
+async function addNewGroup() {
+  const name = newGroupName.value.trim()
+  if (!name) return
+
+  try {
+    // 1. Guardar en Base de Datos
+    await api.post('/groups', { name: name })
+
+    // 2. Refrescar lista local
+    await fetchGroups()
+
+    // 3. Actualizar vista
+    refreshGroupedMonitors()
+
+    activeGroup.value = name
+    showGroupModal.value = false
+    newGroupName.value = ''
+    showNotification('Grupo creado exitosamente.')
+  } catch (err) {
+    console.error(err)
+    showNotification('Error al crear grupo.', 'error')
+  }
+}
+
 function refreshGroupedMonitors() {
   const groups = {}
 
-  // 1. Inicializar todos los grupos conocidos como vacíos primero
-  // Esto asegura que el grupo exista en el objeto final aunque no tenga monitores
-  knownGroups.value.forEach((g) => {
-    groups[g] = []
+  // 1. Crear "bandejas" para TODOS los grupos que existen en la DB (aunque estén vacíos)
+  dbGroups.value.forEach((gName) => {
+    groups[gName] = []
   })
 
-  const sorted = [...allMonitors.value].sort((a, b) => (a.position || 0) - (b.position || 0))
+  // 2. Asegurar que 'General' exista siempre como fallback
+  if (!groups['General']) groups['General'] = []
 
+  // 3. Repartir monitores en sus grupos
+  const sorted = [...allMonitors.value].sort((a, b) => (a.position || 0) - (b.position || 0))
   sorted.forEach((m) => {
     const gName = m.group_name || 'General'
-
-    // Si aparece un grupo que no conocíamos (ej: vino de la DB), lo registramos
-    if (!groups[gName]) {
-      groups[gName] = []
-      knownGroups.value.add(gName)
-    }
-
+    // Si el monitor tiene un grupo que no estaba en dbGroups (raro, pero posible), lo creamos en memoria
+    if (!groups[gName]) groups[gName] = []
     groups[gName].push(m)
   })
 
   groupedMonitors.value = groups
 
+  // 4. Gestionar grupo activo por defecto
   const names = Object.keys(groups).sort()
   if (names.length > 0) {
-    // Si el grupo activo desaparece (ej: movimos el último monitor), ir al primero
-    // Con la nueva lógica esto es menos probable, pero sirve de seguridad.
     if (!activeGroup.value || !groups[activeGroup.value]) {
       activeGroup.value = names[0]
     }
@@ -137,19 +189,6 @@ function getGroupStatusClass(groupName) {
   return hasAlert ? 'dot-red' : 'dot-green'
 }
 
-function addNewGroup() {
-  if (!newGroupName.value) return
-
-  // CORREGIDO: Agregamos a conocidos explícitamente
-  knownGroups.value.add(newGroupName.value)
-
-  refreshGroupedMonitors()
-
-  activeGroup.value = newGroupName.value
-  showGroupModal.value = false
-  newGroupName.value = ''
-}
-
 // --- D&D ---
 async function onDragChange() {
   if (!activeGroup.value) return
@@ -168,32 +207,7 @@ async function onDragChange() {
   }
 }
 
-// --- API & UTILIDADES ---
-async function fetchAllMonitors() {
-  try {
-    const { data } = await api.get('/monitors')
-    allMonitors.value = Array.isArray(data) ? data : []
-
-    // CORREGIDO: Sincronizar grupos que vienen de la DB con knownGroups
-    allMonitors.value.forEach((m) => {
-      if (m.group_name) knownGroups.value.add(m.group_name)
-    })
-
-    allMonitors.value.forEach((m) => {
-      if (m.is_active === null || m.is_active === undefined) m.is_active = true
-      if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
-      ;(m.sensors || []).forEach((s) => {
-        const sid = String(s.id)
-        if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
-      })
-    })
-    refreshGroupedMonitors()
-    trySubscribeSensors()
-  } catch (err) {
-    console.error(err)
-  }
-}
-
+// --- UTILIDADES ---
 function formatBitrate(bits) {
   const n = Number(bits)
   if (!Number.isFinite(n) || n <= 0) return '0 Kbps'
@@ -315,13 +329,17 @@ function wireWsSyncAndSubs() {
   }
 }
 
+// --- LIFECYCLE ---
 onMounted(async () => {
   try {
     await waitForSession({ requireAuth: true })
   } catch {
     return
   }
+  // ORDEN IMPORTANTE: Primero grupos, luego monitores
+  await fetchGroups()
   await fetchAllMonitors()
+
   await connectWebSocketWhenAuthenticated()
   wireWsSyncAndSubs()
 })
@@ -395,14 +413,17 @@ async function saveMonitorSettings() {
 
   if (newGroup !== monitorToEdit.value.group_name) {
     try {
+      // 1. Guardar cambio de monitor
       await api.put(`/monitors/${monitorToEdit.value.monitor_id}`, { group_name: newGroup })
 
-      // Actualizar localmente
+      // 2. Si el grupo no existe en local, asumimos que es nuevo y recargamos grupos
+      if (!dbGroups.value.includes(newGroup)) {
+        await fetchGroups()
+      }
+
+      // 3. Actualizar localmente
       const mLocal = allMonitors.value.find((m) => m.monitor_id === monitorToEdit.value.monitor_id)
       if (mLocal) mLocal.group_name = newGroup
-
-      // CORREGIDO: Agregar el nuevo grupo a conocidos si no estaba
-      knownGroups.value.add(newGroup)
 
       refreshGroupedMonitors()
 
@@ -421,7 +442,6 @@ async function showSensorDetails(s, m, e) {
   await ensureChannelsLoaded()
   sensorDetailsToShow.value = s
   currentMonitorContext.value = m
-  // Ya no seteamos editMonitorGroup aquí, porque eso es del monitor
   const cfg = safeJsonParse(s.config)
   if (s.sensor_type === 'ping') {
     const d = createNewPingSensor()
