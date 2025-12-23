@@ -14,6 +14,9 @@ const groupedMonitors = ref({})
 const activeGroup = ref(null)
 const isSidebarCollapsed = ref(false)
 
+// NUEVO: Registro de grupos conocidos para mantenerlos aunque estén vacíos durante la sesión
+const knownGroups = ref(new Set(['General']))
+
 const liveSensorStatus = ref({})
 const monitorToDelete = ref(null)
 const collapsedCards = ref(new Set())
@@ -34,7 +37,9 @@ const notification = ref({ show: false, message: '', type: 'success' })
 const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
 const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
-const availableGroups = computed(() => Object.keys(groupedMonitors.value).sort())
+
+// CORREGIDO: Usamos knownGroups para el select, así aparecen todos las opciones disponibles
+const availableGroups = computed(() => Array.from(knownGroups.value).sort())
 
 // --- FORMULARIOS ---
 const createNewPingSensor = () => ({
@@ -81,21 +86,36 @@ const createNewEthernetSensor = () => ({
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
 
-// --- LOGICA GRUPOS ---
+// --- LOGICA GRUPOS CORREGIDA ---
 function refreshGroupedMonitors() {
   const groups = {}
+
+  // 1. Inicializar todos los grupos conocidos como vacíos primero
+  // Esto asegura que el grupo exista en el objeto final aunque no tenga monitores
+  knownGroups.value.forEach((g) => {
+    groups[g] = []
+  })
+
   const sorted = [...allMonitors.value].sort((a, b) => (a.position || 0) - (b.position || 0))
 
   sorted.forEach((m) => {
     const gName = m.group_name || 'General'
-    if (!groups[gName]) groups[gName] = []
+
+    // Si aparece un grupo que no conocíamos (ej: vino de la DB), lo registramos
+    if (!groups[gName]) {
+      groups[gName] = []
+      knownGroups.value.add(gName)
+    }
+
     groups[gName].push(m)
   })
+
   groupedMonitors.value = groups
 
   const names = Object.keys(groups).sort()
   if (names.length > 0) {
     // Si el grupo activo desaparece (ej: movimos el último monitor), ir al primero
+    // Con la nueva lógica esto es menos probable, pero sirve de seguridad.
     if (!activeGroup.value || !groups[activeGroup.value]) {
       activeGroup.value = names[0]
     }
@@ -119,9 +139,12 @@ function getGroupStatusClass(groupName) {
 
 function addNewGroup() {
   if (!newGroupName.value) return
-  if (!groupedMonitors.value[newGroupName.value]) {
-    groupedMonitors.value[newGroupName.value] = []
-  }
+
+  // CORREGIDO: Agregamos a conocidos explícitamente
+  knownGroups.value.add(newGroupName.value)
+
+  refreshGroupedMonitors()
+
   activeGroup.value = newGroupName.value
   showGroupModal.value = false
   newGroupName.value = ''
@@ -150,6 +173,12 @@ async function fetchAllMonitors() {
   try {
     const { data } = await api.get('/monitors')
     allMonitors.value = Array.isArray(data) ? data : []
+
+    // CORREGIDO: Sincronizar grupos que vienen de la DB con knownGroups
+    allMonitors.value.forEach((m) => {
+      if (m.group_name) knownGroups.value.add(m.group_name)
+    })
+
     allMonitors.value.forEach((m) => {
       if (m.is_active === null || m.is_active === undefined) m.is_active = true
       if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
@@ -372,10 +401,11 @@ async function saveMonitorSettings() {
       const mLocal = allMonitors.value.find((m) => m.monitor_id === monitorToEdit.value.monitor_id)
       if (mLocal) mLocal.group_name = newGroup
 
+      // CORREGIDO: Agregar el nuevo grupo a conocidos si no estaba
+      knownGroups.value.add(newGroup)
+
       refreshGroupedMonitors()
 
-      // Si el grupo activo sigue existiendo, nos quedamos, sino nos mueve refreshGroupedMonitors
-      // Si movimos el monitor a otro grupo, desaparecerá de la vista actual, lo cual es correcto.
       showNotification('Grupo actualizado')
     } catch (err) {
       console.error(err)
@@ -421,9 +451,6 @@ async function showSensorDetails(s, m, e) {
 
 async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
-
-  // NOTA: Eliminamos la lógica de cambio de grupo aquí.
-  // Ahora es responsabilidad exclusiva de saveMonitorSettings.
 
   // Sensor Update Logic
   const type = sensorDetailsToShow.value.sensor_type
