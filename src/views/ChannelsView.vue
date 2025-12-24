@@ -9,11 +9,30 @@ const notification = ref({ show: false, message: '', type: 'success' })
 const channels = ref([])
 const history = ref([])
 const newChannelType = ref('webhook')
+
+// Lista de zonas horarias comunes
+const commonTimezones = [
+  'UTC',
+  'America/Argentina/Buenos_Aires',
+  'America/Santiago',
+  'America/Montevideo',
+  'America/Sao_Paulo',
+  'America/Bogota',
+  'America/Lima',
+  'America/Mexico_City',
+  'America/New_York',
+  'America/Los_Angeles',
+  'Europe/Madrid',
+  'Europe/London',
+]
+
 const newChannel = ref({
   name: '',
+  timezone: 'America/Argentina/Buenos_Aires', // Valor por defecto
   webhook: { url: '' },
   telegram: { bot_token: '', chat_id: '' },
 })
+
 const availableChats = ref([])
 const isFetchingChats = ref(false)
 
@@ -32,6 +51,23 @@ function safeParse(jsonLike) {
     return typeof jsonLike === 'string' ? JSON.parse(jsonLike) : jsonLike || {}
   } catch {
     return {}
+  }
+}
+
+function formatDate(isoString) {
+  if (!isoString) return '-'
+  try {
+    return new Date(isoString).toLocaleString(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+  } catch {
+    return isoString
   }
 }
 
@@ -83,6 +119,7 @@ async function handleFetchChats() {
 
 async function handleAddChannel() {
   let payload
+  // Construcción del payload incluyendo la TIMEZONE en config
   if (newChannelType.value === 'webhook') {
     if (!newChannel.value.name.trim() || !newChannel.value.webhook.url.trim()) {
       return showNotification('Nombre y URL son obligatorios.', 'error')
@@ -90,7 +127,10 @@ async function handleAddChannel() {
     payload = {
       name: newChannel.value.name.trim(),
       type: 'webhook',
-      config: { url: newChannel.value.webhook.url.trim() },
+      config: {
+        url: newChannel.value.webhook.url.trim(),
+        timezone: newChannel.value.timezone, // <--- Guardamos la zona horaria
+      },
     }
   } else {
     // telegram
@@ -107,6 +147,7 @@ async function handleAddChannel() {
       config: {
         bot_token: newChannel.value.telegram.bot_token.trim(),
         chat_id: newChannel.value.telegram.chat_id,
+        timezone: newChannel.value.timezone, // <--- Guardamos la zona horaria
       },
     }
   }
@@ -114,8 +155,13 @@ async function handleAddChannel() {
   try {
     await api.post('/channels', payload)
     showNotification('Canal añadido.', 'success')
-    // reset
-    newChannel.value = { name: '', webhook: { url: '' }, telegram: { bot_token: '', chat_id: '' } }
+    // reset manteniendo la zona horaria por defecto si se quiere
+    newChannel.value = {
+      name: '',
+      timezone: 'America/Argentina/Buenos_Aires',
+      webhook: { url: '' },
+      telegram: { bot_token: '', chat_id: '' },
+    }
     newChannelType.value = 'webhook'
     availableChats.value = []
     fetchChannels()
@@ -163,7 +209,6 @@ function formatHistoryDetails(details) {
     </div>
 
     <div class="tab-content">
-      <!-- Pestaña de Canales -->
       <section v-if="currentTab === 'channels'" class="grid-layout">
         <div class="control-section">
           <h2><i class="icon">➕</i> Añadir Canal</h2>
@@ -203,6 +248,12 @@ function formatHistoryDetails(details) {
               placeholder="https://hooks.slack.com/..."
               required
             />
+
+            <label>Zona Horaria (para las alertas)</label>
+            <select v-model="newChannel.timezone" required>
+              <option v-for="tz in commonTimezones" :key="tz" :value="tz">{{ tz }}</option>
+            </select>
+
             <button type="submit">Añadir Canal Webhook</button>
           </form>
 
@@ -219,6 +270,12 @@ function formatHistoryDetails(details) {
               placeholder="Ej: Alertas Telegram"
               required
             />
+
+            <label>Zona Horaria (para las alertas)</label>
+            <select v-model="newChannel.timezone" required>
+              <option v-for="tz in commonTimezones" :key="tz" :value="tz">{{ tz }}</option>
+            </select>
+
             <label>Bot Token</label>
             <input
               type="text"
@@ -274,6 +331,9 @@ function formatHistoryDetails(details) {
               <div class="item-info">
                 <strong>{{ channel.name }}</strong>
                 <span class="channel-type-badge" :class="channel.type">{{ channel.type }}</span>
+                <span style="font-size: 0.8rem; color: #888; margin-left: 0.5rem">
+                  ({{ channel.config?.timezone || 'UTC' }})
+                </span>
               </div>
               <button @click="handleDeleteChannel(channel.id)" class="delete-btn">×</button>
             </li>
@@ -282,7 +342,6 @@ function formatHistoryDetails(details) {
         </div>
       </section>
 
-      <!-- Pestaña de Historial -->
       <section v-if="currentTab === 'history'" class="control-section full-width">
         <h2><i class="icon">📚</i> Historial de Alertas Enviadas</h2>
         <table v-if="history.length > 0" class="history-table">
@@ -296,7 +355,7 @@ function formatHistoryDetails(details) {
           </thead>
           <tbody>
             <tr v-for="item in history" :key="item.id">
-              <td class="nowrap">{{ new Date(item.timestamp).toLocaleString() }}</td>
+              <td class="nowrap">{{ formatDate(item.timestamp) }}</td>
               <td>{{ item.sensor_name }}</td>
               <td>{{ formatHistoryDetails(item.details) }}</td>
               <td>{{ item.channel_name }}</td>
