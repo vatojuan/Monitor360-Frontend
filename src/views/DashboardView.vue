@@ -31,6 +31,7 @@ const editMonitorGroup = ref('')
 const showGroupModal = ref(false)
 const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
+const isRebooting = ref(false) // Estado de carga para el reboot
 
 // --- COMPUTADOS ---
 const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
@@ -38,7 +39,6 @@ const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
 
 // Ordenamos los grupos disponibles para los selectores
-// CORRECCIÓN: Usamos spread syntax [...] para crear una copia antes de ordenar y evitar efectos secundarios
 const availableGroups = computed(() => [...dbGroups.value].sort())
 
 // --- FORMULARIOS ---
@@ -90,7 +90,6 @@ const newEthernetSensor = ref(createNewEthernetSensor())
 async function fetchGroups() {
   try {
     const { data } = await api.get('/groups')
-    // data es lista de objetos [{id, name}, ...], extraemos solo nombres
     dbGroups.value = data.map((g) => g.name)
   } catch (err) {
     console.error('Error fetching groups:', err)
@@ -124,15 +123,9 @@ async function addNewGroup() {
   if (!name) return
 
   try {
-    // 1. Guardar en Base de Datos
     await api.post('/groups', { name: name })
-
-    // 2. Refrescar lista local
     await fetchGroups()
-
-    // 3. Actualizar vista
     refreshGroupedMonitors()
-
     activeGroup.value = name
     showGroupModal.value = false
     newGroupName.value = ''
@@ -145,27 +138,20 @@ async function addNewGroup() {
 
 function refreshGroupedMonitors() {
   const groups = {}
-
-  // 1. Crear "bandejas" para TODOS los grupos que existen en la DB (aunque estén vacíos)
   dbGroups.value.forEach((gName) => {
     groups[gName] = []
   })
-
-  // 2. Asegurar que 'General' exista siempre como fallback
   if (!groups['General']) groups['General'] = []
 
-  // 3. Repartir monitores en sus grupos
   const sorted = [...allMonitors.value].sort((a, b) => (a.position || 0) - (b.position || 0))
   sorted.forEach((m) => {
     const gName = m.group_name || 'General'
-    // Si el monitor tiene un grupo que no estaba en dbGroups (raro, pero posible), lo creamos en memoria
     if (!groups[gName]) groups[gName] = []
     groups[gName].push(m)
   })
 
   groupedMonitors.value = groups
 
-  // 4. Gestionar grupo activo por defecto
   const names = Object.keys(groups).sort()
   if (names.length > 0) {
     if (!activeGroup.value || !groups[activeGroup.value]) {
@@ -336,7 +322,6 @@ onMounted(async () => {
   } catch {
     return
   }
-  // ORDEN IMPORTANTE: Primero grupos, luego monitores
   await fetchGroups()
   await fetchAllMonitors()
 
@@ -401,7 +386,7 @@ function goToSensorDetail(id) {
   router.push(`/sensor/${id}`)
 }
 
-// --- GESTIÓN DE MONITOR (CAMBIO DE GRUPO) ---
+// --- GESTIÓN DE MONITOR (CAMBIO GRUPO + REBOOT) ---
 function openMonitorSettings(monitor) {
   monitorToEdit.value = monitor
   editMonitorGroup.value = monitor.group_name || 'General'
@@ -413,20 +398,13 @@ async function saveMonitorSettings() {
 
   if (newGroup !== monitorToEdit.value.group_name) {
     try {
-      // 1. Guardar cambio de monitor
       await api.put(`/monitors/${monitorToEdit.value.monitor_id}`, { group_name: newGroup })
-
-      // 2. Si el grupo no existe en local, asumimos que es nuevo y recargamos grupos
       if (!dbGroups.value.includes(newGroup)) {
         await fetchGroups()
       }
-
-      // 3. Actualizar localmente
       const mLocal = allMonitors.value.find((m) => m.monitor_id === monitorToEdit.value.monitor_id)
       if (mLocal) mLocal.group_name = newGroup
-
       refreshGroupedMonitors()
-
       showNotification('Grupo actualizado')
     } catch (err) {
       console.error(err)
@@ -434,6 +412,31 @@ async function saveMonitorSettings() {
     }
   }
   monitorToEdit.value = null
+}
+
+async function requestReboot() {
+  const m = monitorToEdit.value
+  if (!m || !m.device_id) return
+
+  if (
+    !confirm(
+      `¿Estás seguro de REINICIAR el dispositivo ${m.client_name}?\nSe perderá la conexión temporalmente.`,
+    )
+  ) {
+    return
+  }
+
+  isRebooting.value = true
+  try {
+    await api.post(`/devices/${m.device_id}/reboot`)
+    showNotification(`Reiniciando ${m.client_name}...`, 'success')
+    monitorToEdit.value = null // Cerrar modal
+  } catch (err) {
+    console.error(err)
+    showNotification(err.response?.data?.detail || 'Error al enviar comando de reinicio.', 'error')
+  } finally {
+    isRebooting.value = false
+  }
 }
 
 // --- EDICION SENSOR (Lápiz) ---
@@ -472,7 +475,6 @@ async function showSensorDetails(s, m, e) {
 async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
 
-  // Sensor Update Logic
   const type = sensorDetailsToShow.value.sensor_type
   const uiData = type === 'ping' ? newPingSensor.value : newEthernetSensor.value
   const config = { ...uiData.config }
@@ -799,9 +801,12 @@ function closeSensorDetails() {
 
     <div v-if="monitorToEdit" class="modal-overlay" @click.self="monitorToEdit = null">
       <div class="modal-content small">
-        <h3>Configurar Monitor: {{ monitorToEdit.client_name }}</h3>
+        <h3>Configurar Monitor</h3>
+        <p class="modal-subtitle">
+          {{ monitorToEdit.client_name }} ({{ monitorToEdit.ip_address }})
+        </p>
 
-        <div class="form-group" style="margin-top: 1rem">
+        <div class="form-group" style="margin-top: 1.5rem">
           <label>Mover a Grupo:</label>
           <select v-model="editMonitorGroup" class="full-width-input">
             <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
@@ -809,9 +814,21 @@ function closeSensorDetails() {
           </select>
         </div>
 
-        <div class="modal-actions">
-          <button class="btn-secondary" @click="monitorToEdit = null">Cancelar</button>
-          <button class="btn-primary" @click="saveMonitorSettings">Guardar</button>
+        <div
+          class="danger-zone"
+          style="margin-top: 2rem; border-top: 1px dashed #555; padding-top: 1rem"
+        >
+          <h4 style="color: #ff6b6b; margin-bottom: 0.5rem; font-size: 0.9rem">
+            Acciones de Dispositivo
+          </h4>
+          <button class="btn-danger-outline" @click="requestReboot" :disabled="isRebooting">
+            {{ isRebooting ? 'Reiniciando...' : '🔄 Reiniciar Dispositivo' }}
+          </button>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 2rem">
+          <button class="btn-secondary" @click="monitorToEdit = null">Cerrar</button>
+          <button class="btn-primary" @click="saveMonitorSettings">Guardar Cambios</button>
         </div>
       </div>
     </div>
@@ -1365,6 +1382,12 @@ function closeSensorDetails() {
 .modal-content.small {
   max-width: 400px;
 }
+.modal-subtitle {
+  color: #aaa;
+  font-size: 0.9rem;
+  margin-top: -0.5rem;
+  margin-bottom: 1.5rem;
+}
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -1464,6 +1487,25 @@ function closeSensorDetails() {
   padding: 0.6rem 1.2rem;
   border-radius: 6px;
   cursor: pointer;
+}
+.btn-danger-outline {
+  width: 100%;
+  background: transparent;
+  color: #ff6b6b;
+  border: 1px solid #ff6b6b;
+  padding: 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.2s;
+}
+.btn-danger-outline:hover:not(:disabled) {
+  background: #ff6b6b;
+  color: white;
+}
+.btn-danger-outline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .notification {
   position: fixed;
