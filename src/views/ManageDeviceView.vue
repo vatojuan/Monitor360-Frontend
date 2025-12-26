@@ -30,6 +30,7 @@ async function logout() {
 const addForm = ref({
   client_name: '',
   ip_address: '',
+  api_port: 8728, // <--- NUEVO CAMPO (default 8728)
   mac_address: '',
   node: '',
   connection_method: 'vpn', // 'vpn' | 'maestro'
@@ -96,6 +97,7 @@ async function handleAddDeviceOneStep() {
   const payload = {
     client_name: addForm.value.client_name,
     ip_address: addForm.value.ip_address,
+    api_port: Number(addForm.value.api_port) || 8728, // <--- ENVIAMOS PUERTO
     mac_address: addForm.value.mac_address || '',
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
@@ -123,7 +125,10 @@ async function handleTestReachability() {
     showNotification('Ingresá la IP a probar.', 'error')
     return
   }
-  const payload = { ip_address: addForm.value.ip_address }
+  const payload = {
+    ip_address: addForm.value.ip_address,
+    api_port: Number(addForm.value.api_port) || 8728, // <--- ENVIAMOS PUERTO
+  }
   if (addForm.value.connection_method === 'vpn') {
     payload.vpn_profile_id = addForm.value.vpn_profile_id
   } else if (addForm.value.connection_method === 'maestro') {
@@ -153,6 +158,7 @@ function resetAddForm() {
   addForm.value = {
     client_name: '',
     ip_address: '',
+    api_port: 8728, // <--- RESET CON DEFAULT
     mac_address: '',
     node: '',
     connection_method: 'vpn',
@@ -254,14 +260,21 @@ onMounted(async () => {
               required
             />
           </div>
-          <div>
-            <label>IP del dispositivo *</label>
-            <input
-              type="text"
-              v-model="addForm.ip_address"
-              placeholder="Ej: 192.168.81.4"
-              required
-            />
+
+          <div class="ip-port-grid">
+            <div style="flex-grow: 3">
+              <label>IP del dispositivo *</label>
+              <input
+                type="text"
+                v-model="addForm.ip_address"
+                placeholder="Ej: 192.168.81.4"
+                required
+              />
+            </div>
+            <div style="flex-grow: 1">
+              <label>Puerto API</label>
+              <input type="number" v-model="addForm.api_port" placeholder="8728" required />
+            </div>
           </div>
         </div>
 
@@ -337,7 +350,15 @@ onMounted(async () => {
         <li v-for="device in allDevices" :key="device.id">
           <div class="device-info">
             <strong>{{ device.client_name }}</strong>
-            <span>{{ device.ip_address }}</span>
+            <span>
+              {{ device.ip_address }}
+              <span
+                v-if="device.api_port && device.api_port !== 8728"
+                style="color: #888; font-size: 0.85em"
+              >
+                :{{ device.api_port }}
+              </span>
+            </span>
           </div>
           <div class="actions">
             <div v-if="device.is_maestro" class="maestro-actions">
@@ -451,9 +472,17 @@ h2 {
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
+/* Estilo para juntar IP y Puerto en una misma fila visual */
+.ip-port-grid {
+  display: flex;
+  gap: 1rem;
+}
+
 @media (max-width: 900px) {
-  .grid-2 {
+  .grid-2,
+  .ip-port-grid {
     grid-template-columns: 1fr;
+    display: grid;
   }
 }
 
