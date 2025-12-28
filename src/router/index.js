@@ -7,7 +7,7 @@ import CredentialsView from '../views/CredentialsView.vue'
 import MonitorDetailView from '../views/MonitorDetailView.vue'
 import ChannelsView from '../views/ChannelsView.vue'
 import VpnsView from '../views/VpnsView.vue'
-import ScanView from '../views/ScanView.vue' // 👈 agregado
+import ScanView from '../views/ScanView.vue'
 import LoginView from '../views/LoginView.vue'
 import { getSession } from '@/lib/supabase'
 
@@ -43,8 +43,13 @@ const routes = [
   { path: '/channels', name: 'channels', component: ChannelsView, meta: { requiresAuth: true } },
   { path: '/vpns', name: 'vpns', component: VpnsView, meta: { requiresAuth: true } },
 
-  // 🚀 Nueva ruta pública para escaneo QR desde el celular
-  { path: '/scan/:session_id', name: 'scan', component: ScanView, meta: { hideChrome: true } },
+  // ✅ CORREGIDO: Ruta de escáner interna (protegida y con menú)
+  {
+    path: '/scan',
+    name: 'scan',
+    component: ScanView,
+    meta: { requiresAuth: true },
+  },
 
   // Fallback: lo mandamos al dashboard (el guard decidirá si hay que ir a login)
   { path: '/:pathMatch(.*)*', redirect: '/' },
@@ -74,11 +79,6 @@ router.beforeEach(async (to) => {
       typeof to.query.redirect === 'string' && to.query.redirect ? to.query.redirect : '/'
     if (to.fullPath === dest) return true
     return { path: dest }
-  }
-
-  // 👇 Importante: la ruta /scan/:session_id NO requiere login
-  if (to.name === 'scan') {
-    return true
   }
 
   // Si la ruta requiere auth y no hay sesión → mandar a login
