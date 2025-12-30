@@ -12,11 +12,11 @@ const isScanning = ref(false)
 // --- ESTADO DE CONFIGURACIÓN ---
 const selectedMaestroId = ref(null)
 const scanConfig = ref({
-  id: null, // ID del perfil de escaneo en DB
-  network_cidr: '192.168.1.0/24',
-  interface: '',
+  id: null,
+  network_cidr: '192.168.88.0/24',
+  interface: '', // Importante para v7
   scan_ports: '8728, 80',
-  scan_mode: 'manual', // manual, notify, auto
+  scan_mode: 'manual',
   credential_profile_id: null,
   target_group_name: '',
   is_active: false,
@@ -24,7 +24,7 @@ const scanConfig = ref({
 
 // --- ESTADO DE RESULTADOS ---
 const discoveredDevices = ref([])
-const selectedDevices = ref([]) // Set de MACs seleccionadas
+const selectedDevices = ref([])
 
 // --- LIFECYCLE ---
 onMounted(async () => {
@@ -33,11 +33,10 @@ onMounted(async () => {
   isLoading.value = false
 })
 
-// Cargar configuración cuando cambia el maestro seleccionado
 watch(selectedMaestroId, async (newId) => {
   if (newId) {
     await loadScanConfig(newId)
-    discoveredDevices.value = [] // Limpiar resultados anteriores
+    discoveredDevices.value = []
     selectedDevices.value = []
   }
 })
@@ -46,20 +45,16 @@ watch(selectedMaestroId, async (newId) => {
 
 async function fetchMaestros() {
   try {
-    // Necesitamos un endpoint que devuelva solo dispositivos que sean maestros (o todos y filtramos)
     const { data } = await api.get('/devices?is_maestro=true')
-    // Si la API de devices no filtra, filtramos aquí:
-    maestros.value = Array.isArray(data)
-      ? data.filter((d) => d.is_maestro || d.maestro_id === null)
-      : [] // Ajustar según tu lógica de qué es un maestro
+    maestros.value = Array.isArray(data) ? data : []
 
-    // Auto-seleccionar el primero si hay
+    // Auto-seleccionar el primero
     if (maestros.value.length > 0 && !selectedMaestroId.value) {
       selectedMaestroId.value = maestros.value[0].id
     }
   } catch (e) {
-    console.error('Error fetching maestros:', e) // Corregido: Usamos 'e'
-    showNotification('Error cargando maestros', 'error')
+    console.error('Error fetching maestros:', e)
+    showNotification('Error cargando lista de maestros', 'error')
   }
 }
 
@@ -68,22 +63,22 @@ async function fetchCredentialProfiles() {
     const { data } = await api.get('/credentials/profiles')
     credentialProfiles.value = data || []
   } catch (e) {
-    console.error(e)
+    console.error('Error fetching credentials:', e)
   }
 }
 
 async function loadScanConfig(maestroId) {
   try {
-    // Endpoint hipotético para obtener config por maestro
-    // Si no existe, usamos valores default
     const { data } = await api.get(`/discovery/config/${maestroId}`)
     if (data) {
       scanConfig.value = { ...data }
+      // Asegurar que interface no sea null para el input
+      if (!scanConfig.value.interface) scanConfig.value.interface = ''
     } else {
-      // Reset a defaults si no hay config guardada
+      // Defaults
       scanConfig.value = {
         id: null,
-        network_cidr: '192.168.1.0/24',
+        network_cidr: '192.168.88.0/24',
         interface: '',
         scan_ports: '8728, 80',
         scan_mode: 'manual',
@@ -93,8 +88,7 @@ async function loadScanConfig(maestroId) {
       }
     }
   } catch (e) {
-    // Si da 404 es que no hay config, no es error crítico
-    if (e.response && e.response.status !== 404) {
+    if (e.response?.status !== 404) {
       showNotification('Error cargando configuración', 'error')
     }
   }
@@ -103,35 +97,45 @@ async function loadScanConfig(maestroId) {
 async function saveConfig() {
   if (!selectedMaestroId.value) return
   try {
-    const payload = { ...scanConfig.value, maestro_id: selectedMaestroId.value }
+    // Convertir string vacío a null si es necesario, o enviarlo vacío
+    const payload = {
+      ...scanConfig.value,
+      maestro_id: selectedMaestroId.value,
+      interface: scanConfig.value.interface || null,
+    }
     await api.post('/discovery/config', payload)
     showNotification('Configuración guardada', 'success')
   } catch (e) {
-    console.error('Error saving config:', e) // Corregido: Usamos 'e'
-    showNotification('Error al guardar configuración', 'error')
+    console.error(e)
+    showNotification('Error guardando configuración', 'error')
   }
 }
 
 async function runManualScan() {
   if (!selectedMaestroId.value) return
+
   isScanning.value = true
-  discoveredDevices.value = []
+  discoveredDevices.value = [] // Limpiar tabla
+  selectedDevices.value = [] // Limpiar selección
+
   try {
-    // Guardamos primero por si cambió algo
+    // 1. Guardar configuración actual antes de escanear
     await saveConfig()
 
-    // Disparar escaneo
+    // 2. Ejecutar Scan
     const { data } = await api.post(`/discovery/scan/${selectedMaestroId.value}`)
     discoveredDevices.value = data || []
 
     if (discoveredDevices.value.length === 0) {
-      showNotification('Escaneo finalizado. No se encontraron nuevos dispositivos.', 'info')
+      showNotification('Escaneo finalizado sin resultados.', 'info')
     } else {
-      showNotification(`Se encontraron ${discoveredDevices.value.length} dispositivos.`, 'success')
+      showNotification(`¡${discoveredDevices.value.length} dispositivos encontrados!`, 'success')
     }
   } catch (e) {
-    console.error('Error scanning:', e) // Corregido: Usamos 'e' para loguear
-    showNotification(e.response?.data?.detail || 'Error durante el escaneo', 'error')
+    console.error('Scan error:', e)
+    // Mostrar el mensaje específico del backend (ej: Fallo Mikrotik...)
+    const errorMsg = e.response?.data?.detail || 'Error desconocido durante el escaneo'
+    showNotification(errorMsg, 'error')
   } finally {
     isScanning.value = false
   }
@@ -151,24 +155,25 @@ async function adoptSelected() {
       devices: devicesToAdopt,
     }
 
-    await api.post('/discovery/adopt', payload)
-    showNotification(`¡${devicesToAdopt.length} dispositivos adoptados correctamente!`, 'success')
+    const { data } = await api.post('/discovery/adopt', payload)
 
-    // Limpiar lista
+    showNotification(`Adoptados: ${data.adopted}`, 'success')
+
+    // Quitar de la lista los adoptados
     discoveredDevices.value = discoveredDevices.value.filter(
       (d) => !selectedDevices.value.includes(d.mac_address),
     )
     selectedDevices.value = []
   } catch (e) {
-    console.error('Error adopting:', e) // Corregido: Usamos 'e'
-    showNotification('Error al adoptar dispositivos', 'error')
+    console.error(e)
+    showNotification('Error durante la adopción', 'error')
   }
 }
 
-// --- HELPERS ---
+// --- UTILIDADES ---
 function showNotification(msg, type) {
   notification.value = { show: true, message: msg, type }
-  setTimeout(() => (notification.value.show = false), 4000)
+  setTimeout(() => (notification.value.show = false), 5000) // 5 segundos para leer errores largos
 }
 
 function toggleSelection(mac) {
@@ -190,18 +195,20 @@ function selectAll() {
 
 <template>
   <div class="discovery-layout fade-in">
-    <div v-if="notification.show" :class="['notification', notification.type]">
-      {{ notification.message }}
-    </div>
+    <transition name="slide-fade">
+      <div v-if="notification.show" :class="['notification', notification.type]">
+        {{ notification.message }}
+      </div>
+    </transition>
 
     <div class="header">
       <h1>📡 Descubrimiento de Red</h1>
       <div class="maestro-selector">
-        <label>Escaneando desde:</label>
-        <select v-model="selectedMaestroId" class="maestro-select">
-          <option :value="null" disabled>-- Selecciona un Maestro --</option>
+        <label>Router Maestro:</label>
+        <select v-model="selectedMaestroId" class="maestro-select" :disabled="isScanning">
+          <option :value="null" disabled>-- Selecciona --</option>
           <option v-for="m in maestros" :key="m.id" :value="m.id">
-            {{ m.name || m.client_name }} ({{ m.ip_address }})
+            {{ m.client_name || m.ip_address }} ({{ m.ip_address }})
           </option>
         </select>
       </div>
@@ -210,78 +217,66 @@ function selectAll() {
     <div class="content-grid" v-if="selectedMaestroId">
       <aside class="config-panel">
         <div class="panel-section">
-          <h3>🎯 Objetivo</h3>
+          <h3>🎯 Configuración de Escaneo</h3>
+
           <div class="form-group">
-            <label>Red a Escanear (CIDR)</label>
+            <label>Red (CIDR)</label>
             <input
               type="text"
               v-model="scanConfig.network_cidr"
               placeholder="Ej: 192.168.88.0/24"
+              :disabled="isScanning"
             />
           </div>
+
+          <div class="form-group">
+            <label>Interfaz (Opcional pero Recomendado)</label>
+            <input
+              type="text"
+              v-model="scanConfig.interface"
+              placeholder="Ej: bridge, ether1 (Vacío = auto)"
+              :disabled="isScanning"
+            />
+            <small>Si falla, especifica la interfaz exacta.</small>
+          </div>
+
           <div class="form-group">
             <label>Puertos (Filtro)</label>
-            <input type="text" v-model="scanConfig.scan_ports" placeholder="Ej: 8728, 80" />
-            <small>Solo mostrará equipos con estos puertos abiertos.</small>
-          </div>
-          <div class="form-group">
-            <label>Interfaz (Opcional)</label>
-            <input type="text" v-model="scanConfig.interface" placeholder="Ej: ether2" />
+            <input
+              type="text"
+              v-model="scanConfig.scan_ports"
+              placeholder="Ej: 8728, 80"
+              :disabled="isScanning"
+            />
           </div>
         </div>
 
         <div class="panel-section">
-          <h3>🔐 Acceso</h3>
+          <h3>🔐 Adopción</h3>
           <div class="form-group">
             <label>Perfil de Credenciales</label>
-            <select v-model="scanConfig.credential_profile_id">
-              <option :value="null">-- Sin credenciales (Solo Ping) --</option>
+            <select v-model="scanConfig.credential_profile_id" :disabled="isScanning">
+              <option :value="null">-- Ninguno --</option>
               <option v-for="p in credentialProfiles" :key="p.id" :value="p.id">
                 {{ p.name }}
               </option>
             </select>
-            <small>Se usarán para intentar la adopción.</small>
-          </div>
-        </div>
-
-        <div class="panel-section automation-section">
-          <h3>🤖 Automatización</h3>
-          <div class="radio-group">
-            <label class="radio-label">
-              <input type="radio" v-model="scanConfig.scan_mode" value="manual" />
-              <span class="radio-custom"></span>
-              Manual (Off)
-            </label>
-            <label class="radio-label">
-              <input type="radio" v-model="scanConfig.scan_mode" value="notify" />
-              <span class="radio-custom"></span>
-              Solo Notificar
-            </label>
-            <label class="radio-label">
-              <input type="radio" v-model="scanConfig.scan_mode" value="auto" />
-              <span class="radio-custom"></span>
-              Auto-Adoptar
-            </label>
-          </div>
-          <div class="switch-group">
-            <label>Tarea Activa</label>
-            <input type="checkbox" v-model="scanConfig.is_active" />
           </div>
         </div>
 
         <div class="panel-actions">
-          <button @click="saveConfig" class="btn-save">Guardar Config</button>
           <button @click="runManualScan" class="btn-scan" :disabled="isScanning">
-            {{ isScanning ? 'Escaneando...' : '🔍 Escanear Ahora' }}
+            <span v-if="isScanning" class="spinner-small"></span>
+            {{ isScanning ? 'Escaneando...' : '🔍 Iniciar Escaneo' }}
           </button>
         </div>
       </aside>
 
       <main class="results-panel">
         <div class="results-header">
-          <h3>Dispositivos Encontrados ({{ discoveredDevices.length }})</h3>
+          <h3>Resultados ({{ discoveredDevices.length }})</h3>
           <button v-if="selectedDevices.length > 0" @click="adoptSelected" class="btn-adopt">
-            Adoptar Seleccionados ({{ selectedDevices.length }})
+            Adoptar ({{ selectedDevices.length }})
           </button>
         </div>
 
@@ -294,32 +289,40 @@ function selectAll() {
                     type="checkbox"
                     @change="selectAll"
                     :checked="
-                      selectedDevices.length > 0 &&
+                      discoveredDevices.length > 0 &&
                       selectedDevices.length === discoveredDevices.length
                     "
+                    :disabled="discoveredDevices.length === 0"
                   />
                 </th>
                 <th>IP Address</th>
                 <th>MAC Address</th>
+                <th>Hostname / DNS</th>
                 <th>Fabricante</th>
-                <th>Hostname</th>
                 <th>Estado</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="discoveredDevices.length === 0 && !isScanning">
-                <td colspan="6" class="empty-row">
-                  {{
-                    isScanning ? '...' : 'Haz clic en "Escanear Ahora" para buscar dispositivos.'
-                  }}
-                </td>
-              </tr>
               <tr v-if="isScanning">
-                <td colspan="6" class="empty-row scanning-row">
-                  <span class="spinner">🌀</span> Escaneando la red {{ scanConfig.network_cidr }}...
+                <td colspan="6" class="state-row scanning">
+                  <div class="spinner"></div>
+                  <p>
+                    Escaneando la red {{ scanConfig.network_cidr }} via
+                    {{ scanConfig.interface || 'auto' }}...
+                  </p>
+                  <small>Esto puede tardar unos segundos.</small>
                 </td>
               </tr>
+
+              <tr v-else-if="discoveredDevices.length === 0">
+                <td colspan="6" class="state-row empty">
+                  No hay dispositivos pendientes. Configura los parámetros y pulsa "Iniciar
+                  Escaneo".
+                </td>
+              </tr>
+
               <tr
+                v-else
                 v-for="dev in discoveredDevices"
                 :key="dev.mac_address"
                 :class="{ selected: selectedDevices.includes(dev.mac_address) }"
@@ -332,10 +335,10 @@ function selectAll() {
                     @click.stop="toggleSelection(dev.mac_address)"
                   />
                 </td>
-                <td class="font-mono">{{ dev.ip_address }}</td>
+                <td class="font-mono text-highlight">{{ dev.ip_address }}</td>
                 <td class="font-mono text-dim">{{ dev.mac_address }}</td>
+                <td>{{ dev.hostname || dev.dns || '-' }}</td>
                 <td>{{ dev.vendor || 'Desconocido' }}</td>
-                <td>{{ dev.hostname || '-' }}</td>
                 <td><span class="status-badge pending">Pendiente</span></td>
               </tr>
             </tbody>
@@ -345,34 +348,25 @@ function selectAll() {
     </div>
 
     <div v-else class="empty-state">
-      <p>⚠️ No se encontraron dispositivos "Maestros" configurados.</p>
-      <p>
-        Debes configurar un dispositivo como Maestro (con VPN activa) para poder escanear redes
-        remotas.
-      </p>
+      <h2>⚠️ Selecciona un Maestro</h2>
+      <p>Debes seleccionar un router con la sesión VPN activa para poder escanear su red local.</p>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Layout Base */
+/* Variables locales para facilitar cambios */
+:root {
+  --primary: #3b82f6;
+  --bg-panel: #1e1e1e;
+  --border: #333;
+}
+
 .discovery-layout {
-  padding: 1rem;
+  padding: 1.5rem;
   max-width: 1600px;
   margin: 0 auto;
-}
-.fade-in {
-  animation: fadeIn 0.4s ease-out;
-}
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: 0;
-  }
+  color: #e5e5e5;
 }
 
 /* Header */
@@ -386,247 +380,220 @@ function selectAll() {
 }
 .header h1 {
   margin: 0;
-  font-size: 1.8rem;
-  color: var(--blue);
-}
-.maestro-selector {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-.maestro-select {
-  padding: 0.6rem;
-  border-radius: 6px;
-  background-color: var(--surface-color);
-  color: white;
-  border: 1px solid var(--primary-color);
-  min-width: 250px;
+  color: var(--primary);
 }
 
-/* Grid Layout */
+.maestro-select {
+  padding: 0.6rem 1rem;
+  background: #2d2d2d;
+  border: 1px solid #444;
+  color: white;
+  border-radius: 6px;
+  min-width: 300px;
+}
+
+/* Grid */
 .content-grid {
   display: grid;
-  grid-template-columns: 350px 1fr;
-  gap: 2rem;
+  grid-template-columns: 320px 1fr;
+  gap: 1.5rem;
   align-items: start;
 }
 
-/* Config Panel */
-.config-panel {
-  background-color: var(--surface-color);
-  border-radius: 12px;
+/* Paneles */
+.config-panel,
+.results-panel {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
   padding: 1.5rem;
-  border: 1px solid var(--primary-color);
 }
+
 .panel-section {
   margin-bottom: 2rem;
 }
 .panel-section h3 {
   margin-top: 0;
-  font-size: 1.1rem;
-  color: var(--blue);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+  border-bottom: 1px solid #333;
   padding-bottom: 0.5rem;
   margin-bottom: 1rem;
 }
 
+/* Formularios */
 .form-group {
   margin-bottom: 1rem;
 }
 .form-group label {
   display: block;
+  font-size: 0.85rem;
   margin-bottom: 0.4rem;
-  font-weight: 500;
-  font-size: 0.9rem;
+  color: #ccc;
 }
 .form-group input,
 .form-group select {
   width: 100%;
   padding: 0.6rem;
-  border-radius: 6px;
-  background-color: var(--bg-color);
-  border: 1px solid var(--primary-color);
+  background: #252525;
+  border: 1px solid #444;
   color: white;
+  border-radius: 4px;
+}
+.form-group input:focus {
+  border-color: var(--primary);
+  outline: none;
 }
 .form-group small {
-  color: var(--gray);
-  font-size: 0.8rem;
   display: block;
-  margin-top: 0.3rem;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: #666;
 }
 
-.automation-section {
-  background-color: rgba(0, 0, 0, 0.2);
-  padding: 1rem;
-  border-radius: 8px;
-}
-.radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-.radio-label {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-.radio-label input {
-  margin-right: 0.5rem;
-}
-
-.panel-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-}
-.btn-save {
-  padding: 0.8rem;
-  background-color: var(--primary-color);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: bold;
-}
+/* Botones */
 .btn-scan {
+  width: 100%;
   padding: 0.8rem;
-  background-color: var(--blue);
+  background: var(--primary);
   color: white;
   border: none;
   border-radius: 6px;
-  cursor: pointer;
   font-weight: bold;
-  font-size: 1.05rem;
-  transition: background 0.2s;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
 }
 .btn-scan:disabled {
-  opacity: 0.7;
+  opacity: 0.6;
   cursor: not-allowed;
 }
-.btn-scan:hover:not(:disabled) {
-  background-color: #2563eb;
-}
-
-/* Results Panel */
-.results-panel {
-  background-color: var(--surface-color);
-  border-radius: 12px;
-  padding: 1.5rem;
-  min-height: 500px;
-  border: 1px solid var(--primary-color);
-  display: flex;
-  flex-direction: column;
-}
-.results-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
 .btn-adopt {
-  background-color: var(--green);
+  background: #10b981;
   color: white;
   border: none;
-  padding: 0.6rem 1.2rem;
-  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
   cursor: pointer;
   font-weight: bold;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
+/* Tabla */
 .table-container {
   overflow-x: auto;
-  flex-grow: 1;
 }
 .devices-table {
   width: 100%;
   border-collapse: collapse;
+  font-size: 0.9rem;
 }
 .devices-table th {
   text-align: left;
-  padding: 1rem;
-  border-bottom: 2px solid var(--primary-color);
-  color: var(--gray);
-  font-size: 0.9rem;
+  padding: 0.8rem;
+  border-bottom: 2px solid #444;
+  color: #aaa;
 }
 .devices-table td {
-  padding: 1rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 0.8rem;
+  border-bottom: 1px solid #333;
 }
 .devices-table tr:hover {
-  background-color: rgba(255, 255, 255, 0.02);
+  background: #252525;
+  cursor: pointer;
 }
 .devices-table tr.selected {
-  background-color: rgba(58, 130, 246, 0.1);
+  background: rgba(59, 130, 246, 0.15);
 }
 
-.empty-row {
+/* Estados de Tabla */
+.state-row {
   text-align: center;
   padding: 4rem !important;
-  color: var(--gray);
-  font-style: italic;
+  color: #777;
 }
-.scanning-row {
-  color: var(--blue);
+.state-row.scanning {
+  color: var(--primary);
+}
+
+/* Tipografía */
+.font-mono {
+  font-family: 'Consolas', monospace;
+}
+.text-highlight {
+  color: #fff;
+  font-weight: 500;
+}
+.text-dim {
+  color: #777;
+}
+.status-badge {
+  background: #f59e0b;
+  color: #000;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
   font-weight: bold;
+  text-transform: uppercase;
 }
+
+/* Spinner */
 .spinner {
-  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(59, 130, 246, 0.3);
+  border-radius: 50%;
+  border-top-color: var(--primary);
   animation: spin 1s linear infinite;
-  margin-right: 0.5rem;
+  margin: 0 auto 1rem;
+}
+.spinner-small {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
 }
 @keyframes spin {
-  100% {
+  to {
     transform: rotate(360deg);
   }
 }
 
-.font-mono {
-  font-family: monospace;
-}
-.text-dim {
-  color: var(--gray);
-}
-.status-badge {
-  padding: 0.2rem 0.6rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: bold;
-  text-transform: uppercase;
-}
-.status-badge.pending {
-  background-color: #f59e0b;
-  color: black;
-}
-
-/* Utils */
+/* Notificaciones */
 .notification {
   position: fixed;
-  top: 90px;
+  top: 80px;
   right: 20px;
   padding: 1rem 1.5rem;
-  border-radius: 8px;
+  border-radius: 6px;
   color: white;
-  font-weight: bold;
-  z-index: 1000;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 9999;
 }
 .notification.success {
-  background-color: var(--green);
+  background: #10b981;
 }
 .notification.error {
-  background-color: var(--error-red);
+  background: #ef4444;
 }
 .notification.info {
-  background-color: var(--blue);
+  background: #3b82f6;
 }
 
-.empty-state {
-  text-align: center;
-  padding: 4rem;
-  color: var(--gray);
-  font-size: 1.1rem;
+/* Transiciones */
+.slide-fade-enter-active,
+.slide-fade-leave-active {
+  transition: all 0.3s ease;
+}
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  transform: translateX(20px);
+  opacity: 0;
 }
 </style>
