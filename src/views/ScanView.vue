@@ -384,9 +384,9 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-/* FIX DEFINITIVO DE COLORES */
-:root {
-  color-scheme: dark; /* Fuerza controles oscuros nativos */
+/* --- CONFIGURACIÓN DE COLORES Y TEMA --- */
+.discovery-layout {
+  /* Definimos las variables AQUÍ en lugar de :root para que funcionen con scoped */
   --bg-color: #121212;
   --panel-bg: #1b1b1b;
   --input-bg: #0e0e0e;
@@ -397,14 +397,16 @@ function getMaestroName(id) {
   --error-red: #d9534f;
   --gray: #9aa0a6;
   --border: #333;
-}
 
-/* Layout Base */
-.discovery-layout {
+  /* Estilos base del contenedor */
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
   color: var(--font-color);
+  background-color: var(--bg-color);
+
+  /* Importante: fuerza a los controles del navegador a usar modo oscuro */
+  color-scheme: dark;
 }
 
 /* Header */
@@ -498,7 +500,7 @@ function getMaestroName(id) {
   padding: 5px;
   outline: none;
 }
-/* Fix para opciones en select */
+/* Forzar background en opciones del select */
 .credential-select option {
   background-color: var(--input-bg);
   color: white;
@@ -537,7 +539,7 @@ function getMaestroName(id) {
   border-collapse: collapse;
 }
 .devices-table th {
-  background: rgba(255, 255, 255, 0.05); /* Header suave */
+  background: rgba(255, 255, 255, 0.05);
   color: #ccc;
   text-align: left;
   padding: 12px;
@@ -553,7 +555,7 @@ function getMaestroName(id) {
 }
 .devices-table tr.selected {
   background: rgba(39, 174, 96, 0.1);
-} /* Verde muy suave */
+}
 
 .font-mono {
   font-family: monospace;
@@ -619,16 +621,18 @@ function getMaestroName(id) {
   font-weight: 500;
   font-size: 0.9rem;
 }
+
+/* INPUTS Y SELECTS FIXED - Aquí está la corrección visual crítica */
 .form-group input,
 .form-group select {
   width: 100%;
   padding: 10px;
-  background-color: var(--input-bg); /* FORZADO */
+  background-color: var(--input-bg) !important;
   border: 1px solid #444;
-  color: white;
+  color: white !important;
   border-radius: 4px;
 }
-/* FIX: Forzar color en opciones del select principal */
+/* Asegura que el desplegable sea oscuro */
 .form-group select option {
   background-color: var(--input-bg);
   color: white;
