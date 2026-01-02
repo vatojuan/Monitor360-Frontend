@@ -419,8 +419,9 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-/* VARIABLES DE COLOR (FIX RESTAURADO) */
+/* FIX DEFINITIVO DE COLORES */
 :root {
+  color-scheme: dark; /* Fuerza controles oscuros nativos */
   --bg-color: #121212;
   --panel-bg: #1b1b1b;
   --input-bg: #0e0e0e;
