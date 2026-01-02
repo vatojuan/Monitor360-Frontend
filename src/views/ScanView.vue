@@ -384,12 +384,16 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-/* ESTILOS HARDCODEADOS PARA EVITAR ERRORES DE VARIABLES */
+:root {
+  color-scheme: dark; /* Clave para que los controles nativos sean oscuros */
+}
+
+/* Layout Base */
 .discovery-layout {
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
-  color: #eaeaea;
+  color: #e0e0e0;
 }
 
 /* Header */
@@ -408,7 +412,7 @@ function getMaestroName(id) {
 }
 .title-block .subtitle {
   margin: 5px 0 0;
-  color: #9aa0a6;
+  color: #888;
   font-size: 0.9rem;
 }
 
@@ -421,7 +425,7 @@ function getMaestroName(id) {
   background: none;
   border: none;
   padding: 10px 20px;
-  color: #9aa0a6;
+  color: #888;
   font-size: 1rem;
   cursor: pointer;
   border-bottom: 3px solid transparent;
@@ -449,12 +453,12 @@ function getMaestroName(id) {
 
 /* Inbox Styles */
 .content-panel {
-  background: #1b1b1b;
+  background: #252525;
   border-radius: 8px;
   border: 1px solid #333;
 }
 .toolbar {
-  background: #1b1b1b;
+  background: #252525;
   padding: 15px;
   border-radius: 8px 8px 0 0;
   display: flex;
@@ -465,7 +469,7 @@ function getMaestroName(id) {
 .adopt-control {
   display: flex;
   gap: 10px;
-  background: #0e0e0e;
+  background: #1a1a1a;
   padding: 5px;
   border-radius: 6px;
   border: 1px solid #444;
@@ -477,14 +481,13 @@ function getMaestroName(id) {
   padding: 5px;
   outline: none;
 }
-/* Asegurar fondo oscuro en opciones */
 .credential-select option {
-  background-color: #0e0e0e;
+  background-color: #1a1a1a;
   color: white;
 }
 
 .btn-adopt {
-  background: #2ea043;
+  background: #27ae60;
   color: white;
   border: none;
   padding: 5px 15px;
@@ -512,7 +515,7 @@ function getMaestroName(id) {
   border-collapse: collapse;
 }
 .devices-table th {
-  background: rgba(255, 255, 255, 0.05);
+  background: #2a2a2a;
   color: #ccc;
   padding: 12px;
   text-align: left;
@@ -523,7 +526,7 @@ function getMaestroName(id) {
   color: #ddd;
 }
 .devices-table tr:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: #2a2a2a;
 }
 .devices-table tr.selected {
   background: rgba(77, 166, 255, 0.1);
@@ -550,7 +553,7 @@ function getMaestroName(id) {
   cursor: pointer;
 }
 .btn-danger {
-  background: #d9534f;
+  background: #c0392b;
   color: white;
 }
 
@@ -561,13 +564,13 @@ function getMaestroName(id) {
   gap: 20px;
 }
 .config-panel {
-  background: #1b1b1b;
+  background: #252525;
   border-radius: 8px;
   border: 1px solid #333;
   overflow: hidden;
 }
 .panel-header {
-  background: rgba(255, 255, 255, 0.05);
+  background: #2a2a2a;
   padding: 15px;
   border-bottom: 1px solid #333;
 }
@@ -590,19 +593,18 @@ function getMaestroName(id) {
   font-size: 0.9rem;
 }
 
-/* ESTILOS HARDCODEADOS PARA INPUTS Y SELECTS */
+/* ESTILOS RESTAURADOS A LA GAMA DE GRISES ORIGINAL */
 .form-group input,
 .form-group select {
   width: 100%;
   padding: 10px;
-  background-color: #0e0e0e !important;
+  background-color: #1a1a1a !important;
   border: 1px solid #444;
   color: white;
   border-radius: 4px;
 }
-/* REGLA CRÍTICA PARA OPCIONES */
 .form-group select option {
-  background-color: #0e0e0e !important;
+  background-color: #1a1a1a !important;
   color: white;
 }
 
@@ -613,11 +615,11 @@ function getMaestroName(id) {
   font-size: 0.8rem;
 }
 .required {
-  color: #d9534f;
+  color: #e74c3c;
 }
 
 .automation-box {
-  background: #0e0e0e;
+  background: #1a1a1a;
   padding: 10px;
   border-radius: 4px;
   margin-bottom: 20px;
@@ -654,7 +656,7 @@ function getMaestroName(id) {
 
 /* Profiles */
 .profiles-panel {
-  background: #1b1b1b;
+  background: #252525;
   border-radius: 8px;
   border: 1px solid #333;
 }
@@ -670,7 +672,7 @@ function getMaestroName(id) {
   justify-content: space-between;
   align-items: center;
   padding: 15px;
-  background: #0e0e0e;
+  background: #1a1a1a;
   border-radius: 6px;
   margin-bottom: 10px;
   border: 1px solid #333;
@@ -687,7 +689,7 @@ function getMaestroName(id) {
   gap: 15px;
 }
 .badge-success {
-  background: #2ea043;
+  background: #27ae60;
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 0.7rem;
@@ -710,11 +712,11 @@ function getMaestroName(id) {
   z-index: 9999;
 }
 .notification.success {
-  background: #2ea043;
+  background: #27ae60;
   color: white;
 }
 .notification.error {
-  background: #d9534f;
+  background: #c0392b;
   color: white;
 }
 .notification.info {
