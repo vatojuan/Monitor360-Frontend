@@ -74,7 +74,6 @@ async function fetchScanProfiles() {
     const { data } = await api.get('/discovery/profiles')
     scanProfiles.value = data || []
   } catch (e) {
-    // Si el backend no tiene este endpoint aún, no rompemos la UI
     console.warn('No se pudieron cargar perfiles', e)
   }
 }
@@ -157,7 +156,6 @@ async function adoptSelected() {
   }
 }
 
-// Busca la función deletePending (aprox línea 162) y reemplaza el bloque catch:
 async function deletePending(mac) {
   if (!confirm('¿Descartar este dispositivo de la bandeja?')) return
   try {
@@ -165,7 +163,7 @@ async function deletePending(mac) {
     await fetchPendingDevices()
     showNotification('Dispositivo descartado', 'success')
   } catch (e) {
-    console.error(e) // <--- Agregamos esto para usar la variable 'e'
+    console.error(e)
     showNotification('Error al eliminar', 'error')
   }
 }
@@ -421,12 +419,26 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-/* Variables y Reset */
+/* VARIABLES DE COLOR (FIX RESTAURADO) */
+:root {
+  --bg-color: #121212;
+  --surface-color: #1b1b1b;
+  --font-color: #eaeaea;
+  --primary-color: #6ab4ff;
+  --blue: #4da6ff;
+  --green: #2ea043;
+  --error-red: #d9534f;
+  --gray: #9aa0a6;
+  --border: #333;
+}
+
+/* Layout Base */
 .discovery-layout {
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
-  color: #e0e0e0;
+  color: #e0e0e0; /* Fallback si var falla */
+  color: var(--font-color);
 }
 
 /* Header */
@@ -435,17 +447,17 @@ function getMaestroName(id) {
   justify-content: space-between;
   align-items: flex-end;
   margin-bottom: 20px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 10px;
 }
 .title-block h1 {
   margin: 0;
-  color: #4da6ff;
+  color: var(--blue);
   font-size: 1.8rem;
 }
 .title-block .subtitle {
   margin: 5px 0 0;
-  color: #888;
+  color: var(--gray);
   font-size: 0.9rem;
 }
 
@@ -458,7 +470,7 @@ function getMaestroName(id) {
   background: none;
   border: none;
   padding: 10px 20px;
-  color: #888;
+  color: var(--gray);
   font-size: 1rem;
   cursor: pointer;
   border-bottom: 3px solid transparent;
@@ -469,8 +481,8 @@ function getMaestroName(id) {
   color: #ccc;
 }
 .tab-btn.active {
-  color: #4da6ff;
-  border-bottom-color: #4da6ff;
+  color: var(--blue);
+  border-bottom-color: var(--blue);
   font-weight: bold;
 }
 .badge {
@@ -492,7 +504,7 @@ function getMaestroName(id) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
   border-bottom: none;
 }
 .selection-count {
@@ -521,7 +533,7 @@ function getMaestroName(id) {
   outline: none;
 }
 .btn-adopt {
-  background: #27ae60;
+  background: var(--green);
   color: white;
   border: none;
   padding: 5px 15px;
@@ -531,7 +543,7 @@ function getMaestroName(id) {
 }
 .btn-adopt:disabled {
   background: #444;
-  color: #888;
+  color: var(--gray);
   cursor: not-allowed;
 }
 .btn-icon {
@@ -544,7 +556,7 @@ function getMaestroName(id) {
 /* Tables */
 .table-container {
   background: #1e1e1e;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
   border-radius: 0 0 8px 8px;
   overflow: hidden;
 }
@@ -561,7 +573,7 @@ function getMaestroName(id) {
 }
 .devices-table td {
   padding: 12px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
   color: #ddd;
 }
 .devices-table tr:hover {
@@ -575,7 +587,7 @@ function getMaestroName(id) {
   font-family: monospace;
 }
 .text-highlight {
-  color: #4da6ff;
+  color: var(--blue);
 }
 .text-dim {
   color: #777;
@@ -594,7 +606,7 @@ function getMaestroName(id) {
   cursor: pointer;
 }
 .btn-danger {
-  background: #c0392b;
+  background: var(--error-red);
   color: white;
 }
 
@@ -609,17 +621,17 @@ function getMaestroName(id) {
 .config-panel {
   background: #252525;
   border-radius: 8px;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
   overflow: hidden;
 }
 .panel-header {
   background: #2a2a2a;
   padding: 15px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
 }
 .panel-header h3 {
   margin: 0;
-  color: #4da6ff;
+  color: var(--blue);
   font-size: 1.1rem;
 }
 .form-body {
@@ -684,7 +696,7 @@ function getMaestroName(id) {
 .btn-scan {
   width: 100%;
   padding: 12px;
-  background: #4da6ff;
+  background: var(--blue);
   color: white;
   border: none;
   border-radius: 4px;
@@ -701,7 +713,7 @@ function getMaestroName(id) {
 .profiles-panel {
   background: #1e1e1e;
   border-radius: 8px;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
 }
 .profiles-list {
   padding: 20px;
@@ -720,7 +732,7 @@ function getMaestroName(id) {
   background: #252525;
   border-radius: 6px;
   margin-bottom: 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
 }
 .profile-info strong {
   display: block;
@@ -734,7 +746,7 @@ function getMaestroName(id) {
   gap: 15px;
 }
 .badge-success {
-  background: #27ae60;
+  background: var(--green);
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 0.7rem;
@@ -761,10 +773,10 @@ function getMaestroName(id) {
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
 }
 .notification.success {
-  background: #27ae60;
+  background: var(--green);
 }
 .notification.error {
-  background: #c0392b;
+  background: var(--error-red);
 }
 .notification.warning {
   background: #f39c12;
