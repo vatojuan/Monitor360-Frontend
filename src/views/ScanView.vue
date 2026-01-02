@@ -384,9 +384,9 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-/* --- CONFIGURACIÓN DE COLORES Y TEMA --- */
+/* FIX: Definimos variables en la clase contenedora para que funcionen con scoped */
 .discovery-layout {
-  /* Definimos las variables AQUÍ en lugar de :root para que funcionen con scoped */
+  /* Restauro tus colores originales aquí */
   --bg-color: #121212;
   --panel-bg: #1b1b1b;
   --input-bg: #0e0e0e;
@@ -398,15 +398,15 @@ function getMaestroName(id) {
   --gray: #9aa0a6;
   --border: #333;
 
-  /* Estilos base del contenedor */
+  /* Esto asegura que los controles nativos sean oscuros */
+  color-scheme: dark;
+
+  /* Aplicación de estilos base usando variables */
+  background-color: var(--bg-color); /* Fondo global */
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
   color: var(--font-color);
-  background-color: var(--bg-color);
-
-  /* Importante: fuerza a los controles del navegador a usar modo oscuro */
-  color-scheme: dark;
 }
 
 /* Header */
@@ -500,7 +500,7 @@ function getMaestroName(id) {
   padding: 5px;
   outline: none;
 }
-/* Forzar background en opciones del select */
+/* Fix para opciones en select */
 .credential-select option {
   background-color: var(--input-bg);
   color: white;
@@ -539,7 +539,7 @@ function getMaestroName(id) {
   border-collapse: collapse;
 }
 .devices-table th {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.05); /* Header suave */
   color: #ccc;
   text-align: left;
   padding: 12px;
@@ -555,7 +555,7 @@ function getMaestroName(id) {
 }
 .devices-table tr.selected {
   background: rgba(39, 174, 96, 0.1);
-}
+} /* Verde muy suave */
 
 .font-mono {
   font-family: monospace;
@@ -621,21 +621,20 @@ function getMaestroName(id) {
   font-weight: 500;
   font-size: 0.9rem;
 }
-
-/* INPUTS Y SELECTS FIXED - Aquí está la corrección visual crítica */
+/* AQUI ESTA EL ARREGLO IMPORTANTE PARA INPUTS */
 .form-group input,
 .form-group select {
   width: 100%;
   padding: 10px;
-  background-color: var(--input-bg) !important;
+  background-color: var(--input-bg); /* Usa variable en vez de #0e0e0e */
   border: 1px solid #444;
-  color: white !important;
+  color: var(--font-color); /* Usa variable */
   border-radius: 4px;
 }
-/* Asegura que el desplegable sea oscuro */
+/* Fix para opciones del select */
 .form-group select option {
   background-color: var(--input-bg);
-  color: white;
+  color: var(--font-color);
 }
 
 .form-group small {
