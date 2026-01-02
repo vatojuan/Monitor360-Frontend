@@ -1,20 +1,21 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import api from '@/lib/api' // ⬅️ Axios preconfigurado con Bearer
+import api from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
 const router = useRouter()
 
 // ===== UI Estado general =====
-const currentTab = ref('add')
+const currentTab = ref('add') // 'add' | 'manage'
 const notification = ref({ show: false, message: '', type: 'success' })
+
 function showNotification(message, type = 'success') {
   notification.value = { show: true, message, type }
   setTimeout(() => (notification.value.show = false), 4000)
 }
 
-// ===== Usuario (mostrar email y logout) =====
+// ===== Usuario =====
 const userEmail = ref('')
 async function loadUser() {
   const { data } = await supabase.auth.getUser()
@@ -26,38 +27,55 @@ async function logout() {
   router.push('/login')
 }
 
-// ===== Estado “Alta en un paso” =====
+// ===== Alta en un paso =====
 const addForm = ref({
   client_name: '',
   ip_address: '',
-  api_port: 8728, // <--- NUEVO CAMPO (default 8728)
+  api_port: 8728,
   mac_address: '',
   node: '',
-  connection_method: 'vpn', // 'vpn' | 'maestro'
+  connection_method: 'vpn',
   vpn_profile_id: null,
   maestro_id: null,
 })
-
 const isSubmitting = ref(false)
 const isTesting = ref(false)
 const testResult = ref(null)
 
-// ===== Listados y soporte =====
+// ===== Listados =====
 const allDevices = ref([])
 const vpnProfiles = ref([])
 const isLoadingDevices = ref(false)
-const deletingId = ref(null) // id del dispositivo que se está borrando
+const deletingId = ref(null)
+
+// ===== ESTADO ACCIONES MASIVAS (NUEVO) =====
+const selectedDevices = ref([]) // IDs seleccionados
+const showBulkModal = ref(false)
+const isBulking = ref(false)
+
+const bulkForm = ref({
+  sensor_type: 'ping',
+  name_template: '{{hostname}} - Ping Check',
+  interval: 60,
+  packet_count: 3,
+  packet_size: 56,
+  is_active: true,
+  alerts_paused: false,
+})
 
 const maestros = computed(() => allDevices.value.filter((d) => d.is_maestro))
 
+// ===== CARGA DE DATOS =====
 async function fetchAllDevices() {
   isLoadingDevices.value = true
   try {
-    const { data } = await api.get('/devices') // ⬅️ sin /api
+    const { data } = await api.get('/devices')
     allDevices.value = Array.isArray(data) ? data : []
-  } catch (err) {
-    console.error('Error al cargar dispositivos:', err)
-    showNotification(err.response?.data?.detail || 'Error al cargar dispositivos.', 'error')
+    // Limpiar selección al recargar para evitar IDs fantasma
+    selectedDevices.value = []
+  } catch (error) {
+    console.error('Error al cargar dispositivos:', error)
+    showNotification(error.response?.data?.detail || 'Error al cargar dispositivos.', 'error')
   } finally {
     isLoadingDevices.value = false
   }
@@ -65,39 +83,29 @@ async function fetchAllDevices() {
 
 async function fetchVpnProfiles() {
   try {
-    const { data } = await api.get('/vpns') // ⬅️ sin /api
+    const { data } = await api.get('/vpns')
     vpnProfiles.value = Array.isArray(data) ? data : []
-  } catch (err) {
-    console.error('Error al cargar perfiles VPN:', err)
-    showNotification(err.response?.data?.detail || 'Error al cargar perfiles VPN.', 'error')
+  } catch (error) {
+    console.error('Error cargando perfiles VPN:', error)
   }
 }
 
-/**
- * Alta en UN paso:
- * - VPN: backend levanta túnel, valida credencial y crea el dispositivo.
- * - Directo: conecta contra la IP y crea.
- * - Maestro: a través de un Maestro existente.
- */
+// ===== FUNCIONES ALTA =====
 async function handleAddDeviceOneStep() {
-  // Validaciones mínimas
   if (!addForm.value.client_name?.trim() || !addForm.value.ip_address?.trim()) {
-    showNotification('Completá Cliente e IP.', 'error')
-    return
+    return showNotification('Completá Cliente e IP.', 'error')
   }
   if (addForm.value.connection_method === 'vpn' && !addForm.value.vpn_profile_id) {
-    showNotification('Seleccioná un Perfil VPN o cambiá el método de conexión.', 'error')
-    return
+    return showNotification('Seleccioná un Perfil VPN.', 'error')
   }
   if (addForm.value.connection_method === 'maestro' && !addForm.value.maestro_id) {
-    showNotification('Seleccioná un Maestro o cambiá el método de conexión.', 'error')
-    return
+    return showNotification('Seleccioná un Maestro.', 'error')
   }
 
   const payload = {
     client_name: addForm.value.client_name,
     ip_address: addForm.value.ip_address,
-    api_port: Number(addForm.value.api_port) || 8728, // <--- ENVIAMOS PUERTO
+    api_port: Number(addForm.value.api_port) || 8728,
     mac_address: addForm.value.mac_address || '',
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
@@ -106,28 +114,25 @@ async function handleAddDeviceOneStep() {
 
   isSubmitting.value = true
   try {
-    const { data } = await api.post('/devices/manual', payload) // ⬅️ sin /api
+    const { data } = await api.post('/devices/manual', payload)
     showNotification(`Dispositivo "${data.client_name}" creado.`, 'success')
     resetAddForm()
     fetchAllDevices()
     currentTab.value = 'manage'
-  } catch (err) {
-    console.error('Error al añadir dispositivo (one-step):', err)
-    showNotification(err.response?.data?.detail || 'Error al añadir dispositivo.', 'error')
+  } catch (error) {
+    console.error('Error creando dispositivo:', error)
+    showNotification(error.response?.data?.detail || 'Error al añadir dispositivo.', 'error')
   } finally {
     isSubmitting.value = false
   }
 }
 
-/** Probar conexión antes de crear (opcional) */
 async function handleTestReachability() {
-  if (!addForm.value.ip_address?.trim()) {
-    showNotification('Ingresá la IP a probar.', 'error')
-    return
-  }
+  if (!addForm.value.ip_address?.trim()) return showNotification('Ingresá la IP.', 'error')
+
   const payload = {
     ip_address: addForm.value.ip_address,
-    api_port: Number(addForm.value.api_port) || 8728, // <--- ENVIAMOS PUERTO
+    api_port: Number(addForm.value.api_port) || 8728,
   }
   if (addForm.value.connection_method === 'vpn') {
     payload.vpn_profile_id = addForm.value.vpn_profile_id
@@ -138,16 +143,13 @@ async function handleTestReachability() {
   isTesting.value = true
   testResult.value = null
   try {
-    const { data } = await api.post('/devices/test_reachability', payload) // ⬅️ sin /api
+    const { data } = await api.post('/devices/test_reachability', payload)
     testResult.value = data
-    if (data.reachable) {
-      showNotification('¡Conexión OK! Podés crear el dispositivo.', 'success')
-    } else {
-      showNotification(data.detail || 'Dispositivo no alcanzable.', 'error')
-    }
-  } catch (err) {
-    console.error('Error al probar la conexión:', err)
-    showNotification(err.response?.data?.detail || 'Error al probar la conexión.', 'error')
+    if (data.reachable) showNotification('¡Conexión OK!', 'success')
+    else showNotification(data.detail || 'No alcanzable.', 'error')
+  } catch (error) {
+    console.error('Error probando conexión:', error)
+    showNotification('Error al probar conexión.', 'error')
     testResult.value = { reachable: false }
   } finally {
     isTesting.value = false
@@ -158,7 +160,7 @@ function resetAddForm() {
   addForm.value = {
     client_name: '',
     ip_address: '',
-    api_port: 8728, // <--- RESET CON DEFAULT
+    api_port: 8728,
     mac_address: '',
     node: '',
     connection_method: 'vpn',
@@ -168,62 +170,101 @@ function resetAddForm() {
   testResult.value = null
 }
 
-/* -------- Gestión de maestros / asociación VPN (sección manage) -------- */
+// ===== FUNCIONES GESTIÓN =====
 async function promoteToMaestro(device) {
   if (!confirm(`¿Promover a "${device.client_name}" como Maestro?`)) return
   try {
-    // Agregamos , {} para enviar un JSON vacío y evitar errores de red
     await api.put(`/devices/${device.id}/promote`, {})
-
-    // --> CORRECCIÓN CLAVE: Actualizar estado local para reactividad inmediata <--
     device.is_maestro = true
-
-    showNotification(`${device.client_name} ahora es Maestro.`, 'success')
-    // Opcional: fetchAllDevices() si quieres asegurar consistencia total,
-    // pero con el cambio local es suficiente para la UX
-  } catch (err) {
-    console.error('Error al promover a maestro:', err)
-    showNotification(err.response?.data?.detail || 'Error al promover.', 'error')
+    showNotification('Promovido a Maestro.', 'success')
+  } catch (error) {
+    console.error('Error promoviendo a maestro:', error)
+    showNotification('Error al promover.', 'error')
   }
 }
 
 async function handleVpnAssociation(device) {
-  const vpnId = device.vpn_profile_id === '' ? null : device.vpn_profile_id
   try {
-    await api.put(`/devices/${device.id}/associate_vpn`, { vpn_profile_id: vpnId }) // ⬅️
-    showNotification('Asociación de VPN actualizada.', 'success')
-    await fetchAllDevices()
-  } catch (err) {
-    console.error('Error al asociar VPN:', err)
-    showNotification(err.response?.data?.detail || 'Error al asociar la VPN.', 'error')
-    fetchAllDevices()
+    await api.put(`/devices/${device.id}/associate_vpn`, {
+      vpn_profile_id: device.vpn_profile_id || null,
+    })
+    showNotification('VPN actualizada.', 'success')
+  } catch (error) {
+    console.error('Error asociando VPN:', error)
+    showNotification('Error al actualizar VPN.', 'error')
   }
 }
 
-/* ------------------- Eliminar dispositivo ------------------- */
 async function deleteDevice(device) {
-  const extra = device.is_maestro
-    ? '\n\nATENCIÓN: este dispositivo es Maestro. Los equipos que dependan de él podrían necesitar reconfigurarse.'
-    : ''
-  if (!confirm(`¿Eliminar "${device.client_name}" (${device.ip_address})?${extra}`)) return
-
+  if (!confirm(`¿Eliminar "${device.client_name}"?`)) return
   try {
     deletingId.value = device.id
-    await api.delete(`/devices/${device.id}`) // ⬅️ sin /api
-    showNotification('Dispositivo eliminado.', 'success')
+    await api.delete(`/devices/${device.id}`)
     await fetchAllDevices()
-  } catch (err) {
-    console.error('[DELETE device]', err)
-    showNotification(err.response?.data?.detail || 'No se pudo eliminar el dispositivo.', 'error')
+    showNotification('Eliminado.', 'success')
+  } catch (error) {
+    console.error('Error eliminando dispositivo:', error)
+    showNotification('Error al eliminar.', 'error')
   } finally {
     deletingId.value = null
+  }
+}
+
+// ===== LOGICA SELECCIÓN MULTIPLE (NUEVO) =====
+function toggleSelection(id) {
+  if (selectedDevices.value.includes(id)) {
+    selectedDevices.value = selectedDevices.value.filter((d) => d !== id)
+  } else {
+    selectedDevices.value.push(id)
+  }
+}
+
+function selectAll() {
+  if (selectedDevices.value.length === allDevices.value.length) {
+    selectedDevices.value = []
+  } else {
+    selectedDevices.value = allDevices.value.map((d) => d.id)
+  }
+}
+
+function openBulkModal() {
+  if (selectedDevices.value.length === 0) return
+  showBulkModal.value = true
+}
+
+async function submitBulkMonitors() {
+  isBulking.value = true
+  try {
+    const payload = {
+      device_ids: selectedDevices.value,
+      sensor_config: {
+        sensor_type: bulkForm.value.sensor_type,
+        name_template: bulkForm.value.name_template,
+        is_active: bulkForm.value.is_active,
+        alerts_paused: bulkForm.value.alerts_paused,
+        config: {
+          interval: bulkForm.value.interval,
+          count: bulkForm.value.packet_count,
+          size: bulkForm.value.packet_size,
+        },
+      },
+    }
+
+    const { data } = await api.post('/monitors/bulk', payload)
+    showNotification(`Se crearon ${data.created} monitores exitosamente.`, 'success')
+    showBulkModal.value = false
+    selectedDevices.value = [] // Reset selección
+  } catch (error) {
+    console.error('Error creando monitores masivos:', error)
+    showNotification('Error al crear monitores masivos.', 'error')
+  } finally {
+    isBulking.value = false
   }
 }
 
 // ===== Lifecycle =====
 onMounted(async () => {
   await loadUser()
-  // Si el guard te trajo aquí, ya hay sesión y el cliente api pondrá el Bearer.
   fetchAllDevices()
   fetchVpnProfiles()
 })
@@ -248,7 +289,6 @@ onMounted(async () => {
 
     <section v-if="currentTab === 'add'" class="control-section">
       <h2><i class="icon">➕</i> Alta de dispositivo (en un paso)</h2>
-
       <form @submit.prevent="handleAddDeviceOneStep" class="form-layout">
         <div class="grid-2">
           <div>
@@ -260,16 +300,10 @@ onMounted(async () => {
               required
             />
           </div>
-
           <div class="ip-port-grid">
             <div style="flex-grow: 3">
-              <label>IP del dispositivo *</label>
-              <input
-                type="text"
-                v-model="addForm.ip_address"
-                placeholder="Ej: 192.168.81.4"
-                required
-              />
+              <label>IP *</label>
+              <input type="text" v-model="addForm.ip_address" placeholder="192.168.88.1" required />
             </div>
             <div style="flex-grow: 1">
               <label>Puerto API</label>
@@ -282,43 +316,31 @@ onMounted(async () => {
           <div>
             <label>Método de conexión</label>
             <select v-model="addForm.connection_method">
-              <option value="vpn">A través de un Perfil VPN</option>
-              <option value="maestro">A través de un Maestro existente</option>
+              <option value="vpn">A través de Perfil VPN</option>
+              <option value="maestro">A través de Maestro existente</option>
             </select>
           </div>
-
           <div v-if="addForm.connection_method === 'vpn'">
             <label>Perfil VPN</label>
             <select v-model="addForm.vpn_profile_id" required>
-              <option :value="null" disabled>-- Selecciona un Perfil VPN --</option>
+              <option :value="null" disabled>-- Selecciona VPN --</option>
               <option v-for="vpn in vpnProfiles" :key="vpn.id" :value="vpn.id">
                 {{ vpn.name }}
               </option>
             </select>
-            <small v-if="!vpnProfiles.length">No hay perfiles. Creá uno en la sección VPN.</small>
           </div>
-
           <div v-if="addForm.connection_method === 'maestro'">
             <label>Maestro</label>
             <select v-model="addForm.maestro_id" required>
-              <option :value="null" disabled>-- Selecciona un Maestro --</option>
-              <option v-for="m in maestros" :key="m.id" :value="m.id">
-                {{ m.client_name }} — {{ m.ip_address }}
-              </option>
+              <option :value="null" disabled>-- Selecciona Maestro --</option>
+              <option v-for="m in maestros" :key="m.id" :value="m.id">{{ m.client_name }}</option>
             </select>
-            <small>El Maestro debe tener reachability hacia el destino.</small>
           </div>
         </div>
 
         <div class="grid-2">
-          <div>
-            <label>MAC (opcional)</label>
-            <input type="text" v-model="addForm.mac_address" placeholder="AA:BB:CC:DD:EE:FF" />
-          </div>
-          <div>
-            <label>Node (opcional)</label>
-            <input type="text" v-model="addForm.node" placeholder="Nodo / etiqueta" />
-          </div>
+          <div><label>MAC (opcional)</label><input v-model="addForm.mac_address" /></div>
+          <div><label>Node (opcional)</label><input v-model="addForm.node" /></div>
         </div>
 
         <div class="actions-row">
@@ -331,61 +353,160 @@ onMounted(async () => {
             @click="handleTestReachability"
             :disabled="isTesting"
           >
-            {{ isTesting ? 'Probando...' : 'Probar conexión (opcional)' }}
+            {{ isTesting ? 'Probando...' : 'Probar conexión' }}
           </button>
         </div>
 
         <div v-if="testResult" class="test-box" :class="testResult.reachable ? 'ok' : 'error'">
-          <strong>Resultado de prueba:</strong>
-          <span v-if="testResult.reachable">Alcanzable ✅</span>
-          <span v-else>No alcanzable ❌ — {{ testResult.detail || 'Sin detalle' }}</span>
+          {{
+            testResult.reachable
+              ? '✅ Alcanzable'
+              : '❌ No alcanzable: ' + (testResult.detail || '')
+          }}
         </div>
       </form>
     </section>
 
     <section v-if="currentTab === 'manage'" class="control-section">
-      <h2><i class="icon">👑</i> Gestionar Dispositivos y Maestros</h2>
-      <div v-if="isLoadingDevices" class="loading-text">Cargando...</div>
-      <ul v-else class="device-list">
-        <li v-for="device in allDevices" :key="device.id">
-          <div class="device-info">
-            <strong>{{ device.client_name }}</strong>
-            <span>
-              {{ device.ip_address }}
-              <span
-                v-if="device.api_port && device.api_port !== 8728"
-                style="color: #888; font-size: 0.85em"
-              >
-                :{{ device.api_port }}
-              </span>
-            </span>
-          </div>
-          <div class="actions">
-            <div v-if="device.is_maestro" class="maestro-actions">
-              <select v-model="device.vpn_profile_id" @change="handleVpnAssociation(device)">
-                <option v-for="vpn in vpnProfiles" :key="vpn.id" :value="vpn.id">
-                  {{ vpn.name }}
-                </option>
-              </select>
-              <span class="maestro-badge">Maestro</span>
-            </div>
+      <div class="manage-header">
+        <h2><i class="icon">👑</i> Inventario</h2>
 
-            <button v-else @click="promoteToMaestro(device)" class="btn-promote">
-              Promover a Maestro
-            </button>
+        <button v-if="selectedDevices.length > 0" @click="openBulkModal" class="btn-bulk fade-in">
+          ⚡ Acciones Masivas ({{ selectedDevices.length }})
+        </button>
+      </div>
 
-            <button
-              class="btn-danger"
-              :disabled="deletingId === device.id"
-              @click="deleteDevice(device)"
-              title="Eliminar dispositivo"
+      <div v-if="isLoadingDevices" class="loading-text">Cargando inventario...</div>
+
+      <div v-else class="table-responsive">
+        <table class="device-table">
+          <thead>
+            <tr>
+              <th width="40">
+                <input
+                  type="checkbox"
+                  @change="selectAll"
+                  :checked="
+                    selectedDevices.length > 0 && selectedDevices.length === allDevices.length
+                  "
+                />
+              </th>
+              <th>Nombre</th>
+              <th>IP Address</th>
+              <th>Rol</th>
+              <th>Conexión</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="device in allDevices"
+              :key="device.id"
+              :class="{ selected: selectedDevices.includes(device.id) }"
             >
-              {{ deletingId === device.id ? 'Eliminando...' : 'Eliminar' }}
-            </button>
-          </div>
-        </li>
-      </ul>
+              <td>
+                <input
+                  type="checkbox"
+                  :checked="selectedDevices.includes(device.id)"
+                  @click="toggleSelection(device.id)"
+                />
+              </td>
+              <td>
+                <strong>{{ device.client_name }}</strong>
+              </td>
+              <td class="font-mono">
+                {{ device.ip_address
+                }}<span v-if="device.api_port !== 8728" class="text-dim"
+                  >:{{ device.api_port }}</span
+                >
+              </td>
+              <td>
+                <span v-if="device.is_maestro" class="badge maestro">Maestro</span>
+                <span v-else class="badge device">Dispositivo</span>
+              </td>
+              <td>
+                <div v-if="device.is_maestro">
+                  <select
+                    v-model="device.vpn_profile_id"
+                    @change="handleVpnAssociation(device)"
+                    class="mini-select"
+                  >
+                    <option :value="null">Sin VPN</option>
+                    <option v-for="vpn in vpnProfiles" :key="vpn.id" :value="vpn.id">
+                      {{ vpn.name }}
+                    </option>
+                  </select>
+                </div>
+                <div v-else class="text-dim">-</div>
+              </td>
+              <td>
+                <div class="row-actions">
+                  <button
+                    v-if="!device.is_maestro"
+                    @click="promoteToMaestro(device)"
+                    class="btn-sm"
+                    title="Promover a Maestro"
+                  >
+                    ⬆️
+                  </button>
+                  <button
+                    @click="deleteDevice(device)"
+                    class="btn-sm btn-del"
+                    :disabled="deletingId === device.id"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
+
+    <div v-if="showBulkModal" class="modal-overlay">
+      <div class="modal-content">
+        <h3>⚡ Crear Monitores Masivos</h3>
+        <p>
+          Se crearán monitores para <strong>{{ selectedDevices.length }}</strong> dispositivos.
+        </p>
+
+        <div class="bulk-form">
+          <div class="form-group">
+            <label>Plantilla de Nombre</label>
+            <input v-model="bulkForm.name_template" placeholder="{{hostname}} - Ping Check" />
+            <small
+              >Usa <code v-pre>{{ hostname }}</code> o <code v-pre>{{ ip }}</code> para nombres
+              dinámicos.</small
+            >
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Intervalo (seg)</label>
+              <input type="number" v-model="bulkForm.interval" />
+            </div>
+            <div class="form-group">
+              <label>Paquetes</label>
+              <input type="number" v-model="bulkForm.packet_count" />
+            </div>
+          </div>
+
+          <div class="form-group checkbox">
+            <label
+              ><input type="checkbox" v-model="bulkForm.is_active" /> Activar inmediatamente</label
+            >
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button @click="showBulkModal = false" class="btn-secondary">Cancelar</button>
+          <button @click="submitBulkMonitors" class="btn-primary" :disabled="isBulking">
+            {{ isBulking ? 'Procesando...' : 'Crear Monitores' }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="notification.show" class="notification" :class="notification.type">
       {{ notification.message }}
@@ -394,25 +515,30 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* Variables */
 :root {
   --bg-color: #121212;
   --panel: #1b1b1b;
   --font-color: #eaeaea;
-  --gray: #9aa0a6;
   --primary-color: #6ab4ff;
-  --secondary-color: #ff6b6b;
   --green: #2ea043;
   --error-red: #d9534f;
+  --border: #333;
 }
 
 .page-wrap {
+  padding: 1rem;
+  max-width: 1400px;
+  margin: 0 auto;
   color: var(--font-color);
 }
+
+/* Topbar */
 .topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
 }
 .auth-box {
   display: flex;
@@ -421,24 +547,12 @@ onMounted(async () => {
 }
 .user-pill {
   padding: 0.25rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid #2a2a2a;
+  border: 1px solid var(--border);
+  border-radius: 20px;
   font-size: 0.9rem;
 }
 
-h1 {
-  margin: 0;
-}
-h2 {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-.icon {
-  font-style: normal;
-}
-
+/* Tabs */
 .tabs {
   display: flex;
   gap: 0.5rem;
@@ -449,152 +563,241 @@ h2 {
   color: var(--font-color);
   border: 1px solid var(--primary-color);
   border-radius: 8px;
-  padding: 0.5rem 0.8rem;
+  padding: 0.5rem 1rem;
   cursor: pointer;
+  transition: 0.2s;
 }
 .tabs > button.active {
   background: var(--primary-color);
   color: #0b1220;
+  font-weight: bold;
 }
 
+/* Forms */
 .control-section {
   background: var(--panel);
-  padding: 1rem;
+  padding: 1.5rem;
   border-radius: 10px;
+  border: 1px solid var(--border);
 }
 .form-layout {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  max-width: 800px;
 }
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
-/* Estilo para juntar IP y Puerto en una misma fila visual */
 .ip-port-grid {
   display: flex;
   gap: 1rem;
 }
-
-@media (max-width: 900px) {
-  .grid-2,
-  .ip-port-grid {
-    grid-template-columns: 1fr;
-    display: grid;
-  }
-}
-
 input,
 select {
   width: 100%;
   background: #0e0e0e;
-  color: var(--font-color);
-  border: 1px solid #2a2a2a;
-  border-radius: 8px;
-  padding: 0.6rem 0.7rem;
+  color: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.7rem;
+  margin-top: 0.3rem;
+}
+label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #ccc;
 }
 
+/* Buttons */
 .actions-row {
   display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.btn-primary,
-.btn-secondary,
-.btn-promote,
-.btn-danger {
-  border-radius: 8px;
-  padding: 0.6rem 0.9rem;
-  cursor: pointer;
-  border: 1px solid transparent;
+  gap: 1rem;
+  margin-top: 1rem;
 }
 .btn-primary {
   background: var(--green);
   color: white;
+  padding: 0.7rem 1.2rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
 }
 .btn-secondary {
   background: transparent;
-  color: var(--font-color);
-  border-color: var(--primary-color);
+  border: 1px solid var(--primary-color);
+  color: white;
+  padding: 0.7rem 1.2rem;
+  border-radius: 6px;
+  cursor: pointer;
 }
-.btn-promote {
-  background: var(--primary-color);
-  color: #0b1220;
-}
-.btn-danger {
-  background: var(--error-red);
+.btn-bulk {
+  background: #f39c12;
   color: #fff;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
 }
 
-.test-box {
-  padding: 0.8rem;
-  border-radius: 8px;
-  background: #0e0e0e;
-  border: 1px solid #2a2a2a;
-}
-.test-box.ok {
-  border-color: var(--green);
-}
-.test-box.error {
-  border-color: var(--error-red);
-}
-
-.device-list {
-  list-style: none;
-  padding: 0;
-  margin-top: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.device-list li {
+/* Table Style (Nueva Tabla más limpia) */
+.manage-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: var(--bg-color);
-  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+.table-responsive {
+  overflow-x: auto;
+}
+.device-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.device-table th {
+  text-align: left;
   padding: 1rem;
-  gap: 1rem;
+  background: #252525;
+  color: #aaa;
+  font-weight: 500;
 }
-.device-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+.device-table td {
+  padding: 1rem;
+  border-bottom: 1px solid #2a2a2a;
 }
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+.device-table tr:hover {
+  background: #252525;
 }
-.maestro-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.maestro-badge {
-  border: 1px solid var(--primary-color);
-  color: var(--primary-color);
-  padding: 0.15rem 0.4rem;
-  border-radius: 6px;
-  font-size: 0.8rem;
+.device-table tr.selected {
+  background: rgba(106, 180, 255, 0.1);
 }
 
-.loading-text {
-  color: var(--gray);
+.badge {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: bold;
+}
+.badge.maestro {
+  background: rgba(106, 180, 255, 0.2);
+  color: #6ab4ff;
+  border: 1px solid #6ab4ff;
+}
+.badge.device {
+  background: #333;
+  color: #aaa;
+}
+
+.mini-select {
+  padding: 0.4rem;
+  font-size: 0.85rem;
+  border-radius: 4px;
+}
+.row-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.btn-sm {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  background: #222;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-del:hover {
+  background: var(--error-red);
+  border-color: var(--error-red);
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+.modal-content {
+  background: #1e1e1e;
+  padding: 2rem;
+  border-radius: 10px;
+  width: 500px;
+  max-width: 90%;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  border: 1px solid #444;
+}
+.bulk-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+.form-row {
+  display: flex;
+  gap: 1rem;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+/* Utilities */
+.test-box {
+  padding: 1rem;
+  margin-top: 1rem;
+  border-radius: 6px;
+  background: #000;
+  border: 1px solid #333;
+}
+.test-box.ok {
+  border-color: var(--green);
+  color: var(--green);
+}
+.test-box.error {
+  border-color: var(--error-red);
+  color: var(--error-red);
+}
+.font-mono {
+  font-family: monospace;
+}
+.text-dim {
+  color: #777;
+}
+.fade-in {
+  animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: 0;
+  }
 }
 
 .notification {
   position: fixed;
   bottom: 20px;
   right: 20px;
-  z-index: 2000;
-  padding: 1rem 1.2rem;
+  z-index: 4000;
+  padding: 1rem 1.5rem;
   border-radius: 8px;
+  font-weight: bold;
   color: white;
-  font-weight: 600;
 }
 .notification.success {
   background: var(--green);
