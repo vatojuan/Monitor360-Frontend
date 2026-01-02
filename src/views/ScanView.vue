@@ -662,7 +662,7 @@ function getMaestroName(id) {
   color: white;
   border-radius: 4px;
 }
-/* FIX: Forzar color en opciones */
+/* FIX: Forzar color en opciones del select principal */
 .form-group select option {
   background-color: var(--input-bg);
   color: white;
