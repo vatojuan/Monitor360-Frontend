@@ -71,7 +71,6 @@ async function fetchAllDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevices.value = Array.isArray(data) ? data : []
-    // Limpiar selección al recargar
     selectedDevices.value = []
   } catch (error) {
     console.error('Error al cargar dispositivos:', error)
@@ -515,22 +514,12 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* VARIABLES LOCALES PARA ASEGURAR COLORES */
-.page-wrap {
-  --bg-color: #121212;
-  --surface-color: #1b1b1b;
-  --font-color: #eaeaea;
-  --primary-color: #6ab4ff;
-  --green: #2ea043;
-  --error-red: #d9534f;
-  --border: #333;
-  --gray: #9aa0a6;
-  --blue: #4da6ff;
+/* ESTILO CORREGIDO: Variables globales + Fallback para selects */
 
+.page-wrap {
   padding: 1rem;
   max-width: 1400px;
   margin: 0 auto;
-  color: var(--font-color);
 }
 
 /* Topbar */
@@ -609,38 +598,30 @@ onMounted(async () => {
   margin-bottom: 1rem;
 }
 
-/* INPUTS & SELECTS - FIX DEFINITIVO PARA EL FONDO GRIS */
+/* Inputs & Selects - ARREGLADO CON IMPORTANT PARA EVITAR GRIS */
 input,
 select {
   width: 100%;
-  /* Forzamos el color de fondo para evitar que 'required' lo ponga gris */
-  background-color: var(--bg-color) !important;
-  color: white;
+  /* Fallback a #121212 si la variable no carga */
+  background-color: var(--bg-color, #121212) !important;
+  color: white !important;
   border: 1px solid var(--primary-color);
   border-radius: 6px;
   padding: 0.7rem;
   margin-top: 0.3rem;
   outline: none;
 
-  /* Elimina estilos nativos del sistema operativo */
+  /* Reset de estilos nativos que causan el fondo gris */
   -webkit-appearance: none;
   appearance: none;
 
-  /* Restaura la flechita SVG porque appearance:none la quita */
-  background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%236ab4ff%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
+  /* Flecha personalizada */
+  background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23FFF%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
   background-repeat: no-repeat;
   background-position: right 0.7em top 50%;
   background-size: 0.65em auto;
 }
 
-/* Evita que select vacíos/inválidos se pongan grises */
-select:required:invalid {
-  color: #777; /* Color del placeholder */
-  background-color: var(--bg-color) !important;
-  box-shadow: none;
-}
-
-/* Inputs de texto no necesitan flecha */
 input[type='text'],
 input[type='number'] {
   background-image: none;
@@ -648,7 +629,7 @@ input[type='number'] {
 
 /* Opciones del select */
 select option {
-  background-color: #121212; /* Color fijo oscuro por si var falla en options */
+  background-color: #121212 !important; /* Fallback manual */
   color: white;
 }
 
@@ -680,7 +661,6 @@ label {
   padding: 0.7rem 1.2rem;
   border-radius: 6px;
   cursor: pointer;
-  color: white;
 }
 .btn-bulk {
   background: #f39c12;
@@ -746,10 +726,10 @@ label {
   padding: 0.4rem;
   font-size: 0.85rem;
   border-radius: 4px;
-  background-color: var(--bg-color) !important;
+  /* Importante para el deslizador en la tabla */
+  background-color: var(--bg-color, #121212) !important;
   border: 1px solid var(--primary-color);
   color: white;
-  background-image: none; /* Mini select sin flecha custom para simplificar */
 }
 
 .row-actions {
