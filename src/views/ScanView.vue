@@ -11,20 +11,20 @@ const notification = ref({ show: false, message: '', type: 'success' })
 // --- DATOS ---
 const maestros = ref([])
 const credentialProfiles = ref([])
-const pendingDevices = ref([]) // La Bandeja de Entrada (Persistente)
+const pendingDevices = ref([]) // La Bandeja de Entrada
 const scanProfiles = ref([]) // Lista de Automatizaciones
 
 // --- ESTADO INBOX ---
 const selectedPending = ref([])
-const adoptCredentialId = ref(null) // Credencial elegida para la adopción masiva
+const adoptCredentialId = ref(null)
 
-// --- ESTADO CONFIGURACIÓN (SCANNER) ---
+// --- ESTADO CONFIGURACIÓN ---
 const scanConfig = ref({
   maestro_id: '',
   network_cidr: '192.168.88.0/24',
-  interface: '', // OBLIGATORIO
+  interface: '',
   scan_ports: '8728, 80',
-  scan_mode: 'manual', // manual, notify, auto
+  scan_mode: 'manual',
   credential_profile_id: null,
   is_active: false,
 })
@@ -52,7 +52,6 @@ async function loadGlobalData() {
 }
 
 // --- API CALLS ---
-
 async function fetchMaestros() {
   const { data } = await api.get('/devices?is_maestro=true')
   maestros.value = data || []
@@ -64,7 +63,6 @@ async function fetchCredentialProfiles() {
 }
 
 async function fetchPendingDevices() {
-  // Carga lo que está en la base de datos (Persistencia)
   const { data } = await api.get('/discovery/pending')
   pendingDevices.value = data || []
 }
@@ -78,39 +76,27 @@ async function fetchScanProfiles() {
   }
 }
 
-// --- ACCIONES DE ESCANEO ---
-
+// --- ACCIONES ---
 async function runScan() {
   if (!scanConfig.value.maestro_id) return showNotification('Selecciona un Router Maestro', 'error')
-
-  // VALIDACIÓN ESTRICTA
   if (!scanConfig.value.interface || scanConfig.value.interface.trim() === '') {
     return showNotification('⚠️ La Interfaz es OBLIGATORIA (Ej: ether1, bridge)', 'error')
   }
 
   isScanning.value = true
   try {
-    // 1. Guardar Configuración
     const payload = { ...scanConfig.value }
     await api.post('/discovery/config', payload)
-
-    // 2. Ejecutar Escaneo
     const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`)
 
-    // 3. Feedback
     const count = data.length
     if (count > 0) {
-      showNotification(
-        `✅ Escaneo completado. ${count} nuevos dispositivos en la Bandeja.`,
-        'success',
-      )
+      showNotification(`✅ Escaneo completado. ${count} nuevos en Bandeja.`, 'success')
       await fetchPendingDevices()
-      activeTab.value = 'inbox' // Llevamos al usuario a ver los resultados
+      activeTab.value = 'inbox'
     } else {
-      showNotification('Escaneo completado. No se encontraron dispositivos NUEVOS.', 'info')
+      showNotification('Escaneo completado. No se encontraron nuevos.', 'info')
     }
-
-    // Actualizar lista de automatizaciones
     await fetchScanProfiles()
   } catch (e) {
     console.error(e)
@@ -120,34 +106,20 @@ async function runScan() {
   }
 }
 
-// --- ACCIONES DE ADOPCIÓN ---
-
 async function adoptSelected() {
   if (selectedPending.value.length === 0) return
-
   try {
-    // Filtramos los objetos completos
     const devicesToAdopt = pendingDevices.value.filter((d) =>
       selectedPending.value.includes(d.mac_address),
     )
-
     const payload = {
-      maestro_id: devicesToAdopt[0].maestro_id, // Asumimos contexto del mismo maestro
-      credential_profile_id: adoptCredentialId.value, // Usamos lo que el usuario eligió en el Inbox
+      maestro_id: devicesToAdopt[0].maestro_id,
+      credential_profile_id: adoptCredentialId.value,
       devices: devicesToAdopt,
-      naming_strategy: 'hostname', // El backend intentará usar Hostname, si falla usa IP
+      naming_strategy: 'hostname',
     }
-
     const { data } = await api.post('/discovery/adopt', payload)
-
-    const adopted = data.adopted || 0
-    const skipped = data.skipped || 0
-
-    if (adopted > 0)
-      showNotification(`¡${adopted} dispositivos adoptados e inventariados!`, 'success')
-    if (skipped > 0) showNotification(`${skipped} dispositivos omitidos (ya existían).`, 'warning')
-
-    // Limpieza
+    if (data.adopted > 0) showNotification(`¡${data.adopted} dispositivos adoptados!`, 'success')
     selectedPending.value = []
     await fetchPendingDevices()
   } catch (e) {
@@ -157,7 +129,7 @@ async function adoptSelected() {
 }
 
 async function deletePending(mac) {
-  if (!confirm('¿Descartar este dispositivo de la bandeja?')) return
+  if (!confirm('¿Descartar este dispositivo?')) return
   try {
     await api.delete(`/discovery/pending/${mac}`)
     await fetchPendingDevices()
@@ -207,7 +179,6 @@ function getMaestroName(id) {
         <h1>📡 Centro de Descubrimiento</h1>
         <p class="subtitle">Escanea, clasifica y adopta dispositivos en tu red.</p>
       </div>
-
       <div class="tabs">
         <button
           :class="['tab-btn', { active: activeTab === 'inbox' }]"
@@ -233,7 +204,6 @@ function getMaestroName(id) {
           </span>
           <span class="selection-count" v-else> Selecciona dispositivos para adoptar </span>
         </div>
-
         <div class="toolbar-right">
           <div class="adopt-control">
             <select
@@ -254,7 +224,6 @@ function getMaestroName(id) {
               ✅ Adoptar
             </button>
           </div>
-
           <button @click="loadGlobalData" class="btn-icon" title="Recargar Lista">🔄</button>
         </div>
       </div>
@@ -275,15 +244,15 @@ function getMaestroName(id) {
               <th>IP Address</th>
               <th>MAC Address</th>
               <th>Fabricante</th>
-              <th>Hostname Detectado</th>
-              <th>Router Origen</th>
+              <th>Hostname</th>
+              <th>Origen</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="pendingDevices.length === 0">
               <td colspan="7" class="empty-row">
-                📭 La bandeja está vacía. Ve a "Motores de Escaneo" para buscar nuevos dispositivos.
+                📭 La bandeja está vacía. Ve a "Motores de Escaneo" para buscar.
               </td>
             </tr>
             <tr
@@ -323,7 +292,6 @@ function getMaestroName(id) {
         <div class="panel-header">
           <h3>🚀 Nuevo Escaneo</h3>
         </div>
-
         <div class="form-body">
           <div class="form-group">
             <label>Router Maestro</label>
@@ -345,7 +313,7 @@ function getMaestroName(id) {
           </div>
 
           <div class="form-group">
-            <label>Interfaz <span class="required">* (Obligatorio)</span></label>
+            <label>Interfaz <span class="required">*</span></label>
             <input
               type="text"
               v-model="scanConfig.interface"
@@ -357,12 +325,11 @@ function getMaestroName(id) {
           <div class="form-group">
             <label>Perfil Credenciales (Default)</label>
             <select v-model="scanConfig.credential_profile_id">
-              <option :value="null">-- Ninguno --</option>
+              <option :value="null">-- Ninguno (Solo Ping) --</option>
               <option v-for="p in credentialProfiles" :key="p.id" :value="p.id">
                 {{ p.name }}
               </option>
             </select>
-            <small>Se guardará como sugerencia para la adopción.</small>
           </div>
 
           <div class="automation-box">
@@ -396,9 +363,7 @@ function getMaestroName(id) {
           <h3>⚙️ Automatizaciones Activas</h3>
         </div>
         <div class="profiles-list">
-          <div v-if="scanProfiles.length === 0" class="empty-list">
-            No hay tareas configuradas. Ejecuta un escaneo con "Guardar como Tarea" activado.
-          </div>
+          <div v-if="scanProfiles.length === 0" class="empty-list">No hay tareas configuradas.</div>
           <div v-for="prof in scanProfiles" :key="prof.id" class="profile-card">
             <div class="profile-info">
               <strong>{{ getMaestroName(prof.maestro_id) }}</strong>
@@ -419,27 +384,12 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-/* FIX DEFINITIVO DE COLORES */
-:root {
-  color-scheme: dark; /* Fuerza controles oscuros nativos */
-  --bg-color: #121212;
-  --panel-bg: #1b1b1b;
-  --input-bg: #0e0e0e;
-  --font-color: #eaeaea;
-  --primary-color: #6ab4ff;
-  --blue: #4da6ff;
-  --green: #2ea043;
-  --error-red: #d9534f;
-  --gray: #9aa0a6;
-  --border: #333;
-}
-
-/* Layout Base */
+/* ESTILOS FIJOS (Sin variables rotas) */
 .discovery-layout {
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
-  color: var(--font-color);
+  color: #eaeaea;
 }
 
 /* Header */
@@ -448,17 +398,17 @@ function getMaestroName(id) {
   justify-content: space-between;
   align-items: flex-end;
   margin-bottom: 20px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #333;
   padding-bottom: 10px;
 }
 .title-block h1 {
   margin: 0;
-  color: var(--blue);
+  color: #4da6ff;
   font-size: 1.8rem;
 }
 .title-block .subtitle {
   margin: 5px 0 0;
-  color: var(--gray);
+  color: #9aa0a6;
   font-size: 0.9rem;
 }
 
@@ -471,19 +421,19 @@ function getMaestroName(id) {
   background: none;
   border: none;
   padding: 10px 20px;
-  color: var(--gray);
+  color: #9aa0a6;
   font-size: 1rem;
   cursor: pointer;
   border-bottom: 3px solid transparent;
-  transition: all 0.2s;
+  transition: 0.2s;
   position: relative;
 }
 .tab-btn:hover {
   color: #ccc;
 }
 .tab-btn.active {
-  color: var(--blue);
-  border-bottom-color: var(--blue);
+  color: #4da6ff;
+  border-bottom-color: #4da6ff;
   font-weight: bold;
 }
 .badge {
@@ -497,31 +447,25 @@ function getMaestroName(id) {
   right: 5px;
 }
 
-/* Inbox Toolbar */
+/* Inbox Styles */
+.content-panel {
+  background: #1b1b1b;
+  border-radius: 8px;
+  border: 1px solid #333;
+}
 .toolbar {
-  background: var(--panel-bg);
+  background: #1b1b1b;
   padding: 15px;
   border-radius: 8px 8px 0 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border: 1px solid var(--border);
-  border-bottom: none;
+  border-bottom: 1px solid #333;
 }
-.selection-count {
-  color: #aaa;
-  font-weight: 500;
-}
-.toolbar-right {
-  display: flex;
-  gap: 15px;
-  align-items: center;
-}
-
 .adopt-control {
   display: flex;
   gap: 10px;
-  background: var(--input-bg);
+  background: #0e0e0e;
   padding: 5px;
   border-radius: 6px;
   border: 1px solid #444;
@@ -533,24 +477,22 @@ function getMaestroName(id) {
   padding: 5px;
   outline: none;
 }
-/* Fix para opciones en select */
 .credential-select option {
-  background-color: var(--input-bg);
+  background-color: #0e0e0e;
   color: white;
-}
+} /* Fix para select */
 
 .btn-adopt {
-  background: var(--green);
+  background: #2ea043;
   color: white;
   border: none;
   padding: 5px 15px;
   border-radius: 4px;
-  cursor: pointer;
   font-weight: bold;
+  cursor: pointer;
 }
 .btn-adopt:disabled {
   background: #444;
-  color: var(--gray);
   cursor: not-allowed;
 }
 .btn-icon {
@@ -560,41 +502,36 @@ function getMaestroName(id) {
   cursor: pointer;
 }
 
-/* Tables */
+/* Table */
 .table-container {
-  background: var(--panel-bg);
-  border: 1px solid var(--border);
-  border-radius: 0 0 8px 8px;
-  overflow: hidden;
+  overflow-x: auto;
 }
 .devices-table {
   width: 100%;
   border-collapse: collapse;
 }
 .devices-table th {
-  background: rgba(255, 255, 255, 0.05); /* Header suave */
+  background: rgba(255, 255, 255, 0.05);
   color: #ccc;
-  text-align: left;
   padding: 12px;
-  font-size: 0.9rem;
+  text-align: left;
 }
 .devices-table td {
   padding: 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #333;
   color: #ddd;
 }
 .devices-table tr:hover {
   background: rgba(255, 255, 255, 0.03);
 }
 .devices-table tr.selected {
-  background: rgba(39, 174, 96, 0.1);
-} /* Verde muy suave */
-
+  background: rgba(77, 166, 255, 0.1);
+}
 .font-mono {
   font-family: monospace;
 }
 .text-highlight {
-  color: var(--blue);
+  color: #4da6ff;
 }
 .text-dim {
   color: #777;
@@ -605,7 +542,6 @@ function getMaestroName(id) {
   color: #666;
   font-style: italic;
 }
-
 .btn-sm {
   padding: 4px 8px;
   border: none;
@@ -613,32 +549,30 @@ function getMaestroName(id) {
   cursor: pointer;
 }
 .btn-danger {
-  background: var(--error-red);
+  background: #d9534f;
   color: white;
 }
 
-/* Scanners Grid */
+/* Config Panel */
 .content-grid {
   display: grid;
   grid-template-columns: 350px 1fr;
   gap: 20px;
 }
-
-/* Config Panel */
 .config-panel {
-  background: var(--panel-bg);
+  background: #1b1b1b;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid #333;
   overflow: hidden;
 }
 .panel-header {
   background: rgba(255, 255, 255, 0.05);
   padding: 15px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #333;
 }
 .panel-header h3 {
   margin: 0;
-  color: var(--blue);
+  color: #4da6ff;
   font-size: 1.1rem;
 }
 .form-body {
@@ -654,18 +588,18 @@ function getMaestroName(id) {
   font-weight: 500;
   font-size: 0.9rem;
 }
+/* ESTILOS DE INPUT Y SELECT EXPLÍCITOS */
 .form-group input,
 .form-group select {
   width: 100%;
   padding: 10px;
-  background-color: var(--input-bg); /* FORZADO */
+  background-color: #0e0e0e !important;
   border: 1px solid #444;
   color: white;
   border-radius: 4px;
 }
-/* FIX: Forzar color en opciones del select principal */
 .form-group select option {
-  background-color: var(--input-bg);
+  background-color: #0e0e0e;
   color: white;
 }
 
@@ -676,27 +610,20 @@ function getMaestroName(id) {
   font-size: 0.8rem;
 }
 .required {
-  color: #e74c3c;
-  font-size: 0.8rem;
+  color: #d9534f;
 }
 
 .automation-box {
-  background: var(--input-bg);
+  background: #0e0e0e;
   padding: 10px;
   border-radius: 4px;
   margin-bottom: 20px;
   border: 1px dashed #444;
 }
-.automation-box h4 {
-  margin: 0 0 10px 0;
-  font-size: 0.9rem;
-  color: #aaa;
-}
 .checkbox-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 5px;
 }
 .radio-group {
   display: flex;
@@ -709,7 +636,7 @@ function getMaestroName(id) {
 .btn-scan {
   width: 100%;
   padding: 12px;
-  background: var(--blue);
+  background: #4da6ff;
   color: white;
   border: none;
   border-radius: 4px;
@@ -722,11 +649,11 @@ function getMaestroName(id) {
   cursor: not-allowed;
 }
 
-/* Profiles List */
+/* Profiles */
 .profiles-panel {
-  background: var(--panel-bg);
+  background: #1b1b1b;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid #333;
 }
 .profiles-list {
   padding: 20px;
@@ -734,18 +661,16 @@ function getMaestroName(id) {
 .empty-list {
   color: #666;
   text-align: center;
-  padding: 20px;
 }
-
 .profile-card {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 15px;
-  background: var(--input-bg);
+  background: #0e0e0e;
   border-radius: 6px;
   margin-bottom: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid #333;
 }
 .profile-info strong {
   display: block;
@@ -759,18 +684,16 @@ function getMaestroName(id) {
   gap: 15px;
 }
 .badge-success {
-  background: var(--green);
+  background: #2ea043;
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 0.7rem;
-  color: white;
 }
 .badge-inactive {
   background: #555;
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 0.7rem;
-  color: #ccc;
 }
 
 /* Notification */
@@ -780,26 +703,22 @@ function getMaestroName(id) {
   right: 20px;
   padding: 15px 25px;
   border-radius: 6px;
-  color: white;
   font-weight: bold;
   z-index: 9999;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
 }
 .notification.success {
-  background: var(--green);
+  background: #2ea043;
+  color: white;
 }
 .notification.error {
-  background: var(--error-red);
-}
-.notification.warning {
-  background: #f39c12;
-  color: #000;
+  background: #d9534f;
+  color: white;
 }
 .notification.info {
-  background: #2980b9;
+  background: #4da6ff;
+  color: white;
 }
 
-/* Animations */
 .fade-in {
   animation: fadeIn 0.3s ease;
 }
