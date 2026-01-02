@@ -71,6 +71,7 @@ async function fetchAllDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevices.value = Array.isArray(data) ? data : []
+    // Limpiar selección al recargar
     selectedDevices.value = []
   } catch (error) {
     console.error('Error al cargar dispositivos:', error)
@@ -514,7 +515,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* ESTILO CORREGIDO: Usando variables globales del tema en lugar de hardcode */
+/* FIX DEFINITIVO: Usamos variables globales para que coincida con ChannelsView */
 
 .page-wrap {
   padding: 1rem;
@@ -530,7 +531,7 @@ onMounted(async () => {
   margin-bottom: 1rem;
 }
 .topbar h1 {
-  color: var(--blue);
+  color: var(--blue); /* Variable global */
 }
 .auth-box {
   display: flex;
@@ -568,7 +569,7 @@ onMounted(async () => {
 
 /* Sections */
 .control-section {
-  background: var(--surface-color); /* Fondo correcto */
+  background: var(--surface-color); /* Fondo correcto desde variables globales */
   padding: 1.5rem;
   border-radius: 10px;
 }
@@ -598,18 +599,19 @@ onMounted(async () => {
   margin-bottom: 1rem;
 }
 
-/* Inputs & Selects - Fix del fondo negro/gris */
+/* Inputs & Selects - ARREGLADO: Fondo variable global */
 input,
 select {
   width: 100%;
-  background: var(--bg-color); /* Fondo global */
+  background: var(--bg-color); /* Fondo del tema, no negro fijo */
   color: white;
-  border: 1px solid var(--primary-color);
+  border: 1px solid var(--primary-color); /* Borde azul suave */
   border-radius: 6px;
   padding: 0.7rem;
   margin-top: 0.3rem;
   outline: none;
 }
+/* Asegura que las opciones del desplegable también tengan fondo correcto */
 select option {
   background-color: var(--bg-color);
   color: white;
@@ -704,11 +706,12 @@ label {
   color: #ccc;
 }
 
+/* ARREGLO DEL DESLIZADOR GRIS */
 .mini-select {
   padding: 0.4rem;
   font-size: 0.85rem;
   border-radius: 4px;
-  background: var(--bg-color); /* Fix deslizador gris */
+  background: var(--bg-color); /* Ahora usa el fondo del tema */
   border: 1px solid var(--primary-color);
   color: white;
 }
