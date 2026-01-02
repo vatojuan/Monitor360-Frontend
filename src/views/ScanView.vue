@@ -419,11 +419,11 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-/* PALETA DE COLORES UNIFICADA */
+/* VARIABLES DE COLOR (FIX RESTAURADO) */
 :root {
   --bg-color: #121212;
-  --panel-bg: #1b1b1b; /* Coincide con ManageDeviceView */
-  --input-bg: #0e0e0e; /* Coincide con ManageDeviceView */
+  --panel-bg: #1b1b1b;
+  --input-bg: #0e0e0e;
   --font-color: #eaeaea;
   --primary-color: #6ab4ff;
   --blue: #4da6ff;
@@ -532,6 +532,12 @@ function getMaestroName(id) {
   padding: 5px;
   outline: none;
 }
+/* Fix para opciones en select */
+.credential-select option {
+  background-color: var(--input-bg);
+  color: white;
+}
+
 .btn-adopt {
   background: var(--green);
   color: white;
@@ -656,6 +662,12 @@ function getMaestroName(id) {
   color: white;
   border-radius: 4px;
 }
+/* FIX: Forzar color en opciones */
+.form-group select option {
+  background-color: var(--input-bg);
+  color: white;
+}
+
 .form-group small {
   display: block;
   margin-top: 4px;
