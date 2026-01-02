@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import api from '@/lib/api'
 
 // --- ESTADO GLOBAL ---
-const activeTab = ref('inbox') // 'inbox' | 'scanners'
+const activeTab = ref('inbox')
 const isLoading = ref(false)
 const isScanning = ref(false)
 const notification = ref({ show: false, message: '', type: 'success' })
@@ -11,8 +11,8 @@ const notification = ref({ show: false, message: '', type: 'success' })
 // --- DATOS ---
 const maestros = ref([])
 const credentialProfiles = ref([])
-const pendingDevices = ref([]) // La Bandeja de Entrada
-const scanProfiles = ref([]) // Lista de Automatizaciones
+const pendingDevices = ref([])
+const scanProfiles = ref([])
 
 // --- ESTADO INBOX ---
 const selectedPending = ref([])
@@ -384,12 +384,23 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-/* ESTILOS FIJOS (Sin variables rotas) */
+/* VARIABLES LOCALES (Mismo estilo que ManageDeviceView) */
 .discovery-layout {
+  --bg-color: #121212;
+  --panel: #1b1b1b;
+  --input-bg: #0e0e0e;
+  --font-color: #eaeaea;
+  --primary-color: #6ab4ff;
+  --blue: #4da6ff;
+  --green: #2ea043;
+  --error-red: #d9534f;
+  --gray: #9aa0a6;
+  --border: #2a2a2a; /* Borde sutil del ManageDeviceView */
+
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
-  color: #eaeaea;
+  color: var(--font-color);
 }
 
 /* Header */
@@ -398,17 +409,17 @@ function getMaestroName(id) {
   justify-content: space-between;
   align-items: flex-end;
   margin-bottom: 20px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 10px;
 }
 .title-block h1 {
   margin: 0;
-  color: #4da6ff;
+  color: var(--blue);
   font-size: 1.8rem;
 }
 .title-block .subtitle {
   margin: 5px 0 0;
-  color: #9aa0a6;
+  color: var(--gray);
   font-size: 0.9rem;
 }
 
@@ -421,7 +432,7 @@ function getMaestroName(id) {
   background: none;
   border: none;
   padding: 10px 20px;
-  color: #9aa0a6;
+  color: var(--gray);
   font-size: 1rem;
   cursor: pointer;
   border-bottom: 3px solid transparent;
@@ -432,8 +443,8 @@ function getMaestroName(id) {
   color: #ccc;
 }
 .tab-btn.active {
-  color: #4da6ff;
-  border-bottom-color: #4da6ff;
+  color: var(--blue);
+  border-bottom-color: var(--blue);
   font-weight: bold;
 }
 .badge {
@@ -449,23 +460,23 @@ function getMaestroName(id) {
 
 /* Inbox Styles */
 .content-panel {
-  background: #1b1b1b;
+  background: var(--panel);
   border-radius: 8px;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
 }
 .toolbar {
-  background: #1b1b1b;
+  background: var(--panel);
   padding: 15px;
   border-radius: 8px 8px 0 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
 }
 .adopt-control {
   display: flex;
   gap: 10px;
-  background: #0e0e0e;
+  background: var(--input-bg);
   padding: 5px;
   border-radius: 6px;
   border: 1px solid #444;
@@ -478,12 +489,12 @@ function getMaestroName(id) {
   outline: none;
 }
 .credential-select option {
-  background-color: #0e0e0e;
+  background-color: var(--input-bg);
   color: white;
-} /* Fix para select */
+}
 
 .btn-adopt {
-  background: #2ea043;
+  background: var(--green);
   color: white;
   border: none;
   padding: 5px 15px;
@@ -518,7 +529,7 @@ function getMaestroName(id) {
 }
 .devices-table td {
   padding: 12px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
   color: #ddd;
 }
 .devices-table tr:hover {
@@ -531,7 +542,7 @@ function getMaestroName(id) {
   font-family: monospace;
 }
 .text-highlight {
-  color: #4da6ff;
+  color: var(--blue);
 }
 .text-dim {
   color: #777;
@@ -549,7 +560,7 @@ function getMaestroName(id) {
   cursor: pointer;
 }
 .btn-danger {
-  background: #d9534f;
+  background: var(--error-red);
   color: white;
 }
 
@@ -560,19 +571,19 @@ function getMaestroName(id) {
   gap: 20px;
 }
 .config-panel {
-  background: #1b1b1b;
+  background: var(--panel);
   border-radius: 8px;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
   overflow: hidden;
 }
 .panel-header {
   background: rgba(255, 255, 255, 0.05);
   padding: 15px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
 }
 .panel-header h3 {
   margin: 0;
-  color: #4da6ff;
+  color: var(--blue);
   font-size: 1.1rem;
 }
 .form-body {
@@ -588,18 +599,19 @@ function getMaestroName(id) {
   font-weight: 500;
   font-size: 0.9rem;
 }
-/* ESTILOS DE INPUT Y SELECT EXPLÍCITOS */
+
+/* ESTILOS DE INPUT Y SELECT - COPIADO DE ManageDeviceView */
 .form-group input,
 .form-group select {
   width: 100%;
   padding: 10px;
-  background-color: #0e0e0e !important;
-  border: 1px solid #444;
+  background-color: var(--input-bg);
+  border: 1px solid var(--border);
   color: white;
   border-radius: 4px;
 }
 .form-group select option {
-  background-color: #0e0e0e;
+  background-color: var(--input-bg);
   color: white;
 }
 
@@ -610,11 +622,11 @@ function getMaestroName(id) {
   font-size: 0.8rem;
 }
 .required {
-  color: #d9534f;
+  color: var(--error-red);
 }
 
 .automation-box {
-  background: #0e0e0e;
+  background: var(--input-bg);
   padding: 10px;
   border-radius: 4px;
   margin-bottom: 20px;
@@ -636,7 +648,7 @@ function getMaestroName(id) {
 .btn-scan {
   width: 100%;
   padding: 12px;
-  background: #4da6ff;
+  background: var(--blue);
   color: white;
   border: none;
   border-radius: 4px;
@@ -651,9 +663,9 @@ function getMaestroName(id) {
 
 /* Profiles */
 .profiles-panel {
-  background: #1b1b1b;
+  background: var(--panel);
   border-radius: 8px;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
 }
 .profiles-list {
   padding: 20px;
@@ -667,10 +679,10 @@ function getMaestroName(id) {
   justify-content: space-between;
   align-items: center;
   padding: 15px;
-  background: #0e0e0e;
+  background: var(--input-bg);
   border-radius: 6px;
   margin-bottom: 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--border);
 }
 .profile-info strong {
   display: block;
@@ -684,7 +696,7 @@ function getMaestroName(id) {
   gap: 15px;
 }
 .badge-success {
-  background: #2ea043;
+  background: var(--green);
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 0.7rem;
@@ -707,15 +719,15 @@ function getMaestroName(id) {
   z-index: 9999;
 }
 .notification.success {
-  background: #2ea043;
+  background: var(--green);
   color: white;
 }
 .notification.error {
-  background: #d9534f;
+  background: var(--error-red);
   color: white;
 }
 .notification.info {
-  background: #4da6ff;
+  background: var(--blue);
   color: white;
 }
 
