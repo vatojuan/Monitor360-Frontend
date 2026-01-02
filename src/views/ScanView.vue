@@ -658,7 +658,7 @@ function getMaestroName(id) {
 .form-group select {
   width: 100%;
   padding: 10px;
-  background: var(--input-bg);
+  background-color: var(--input-bg); /* FORZADO */
   border: 1px solid #444;
   color: white;
   border-radius: 4px;
