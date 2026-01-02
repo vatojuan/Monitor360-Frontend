@@ -48,7 +48,7 @@ const vpnProfiles = ref([])
 const isLoadingDevices = ref(false)
 const deletingId = ref(null)
 
-// ===== ESTADO ACCIONES MASIVAS (NUEVO) =====
+// ===== ESTADO ACCIONES MASIVAS =====
 const selectedDevices = ref([]) // IDs seleccionados
 const showBulkModal = ref(false)
 const isBulking = ref(false)
@@ -71,7 +71,6 @@ async function fetchAllDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevices.value = Array.isArray(data) ? data : []
-    // Limpiar selección al recargar para evitar IDs fantasma
     selectedDevices.value = []
   } catch (error) {
     console.error('Error al cargar dispositivos:', error)
@@ -210,7 +209,7 @@ async function deleteDevice(device) {
   }
 }
 
-// ===== LOGICA SELECCIÓN MULTIPLE (NUEVO) =====
+// ===== LOGICA SELECCIÓN MULTIPLE =====
 function toggleSelection(id) {
   if (selectedDevices.value.includes(id)) {
     selectedDevices.value = selectedDevices.value.filter((d) => d !== id)
@@ -287,7 +286,7 @@ onMounted(async () => {
       </button>
     </div>
 
-    <section v-if="currentTab === 'add'" class="control-section">
+    <section v-if="currentTab === 'add'" class="control-section fade-in">
       <h2><i class="icon">➕</i> Alta de dispositivo (en un paso)</h2>
       <form @submit.prevent="handleAddDeviceOneStep" class="form-layout">
         <div class="grid-2">
@@ -367,7 +366,7 @@ onMounted(async () => {
       </form>
     </section>
 
-    <section v-if="currentTab === 'manage'" class="control-section">
+    <section v-if="currentTab === 'manage'" class="control-section fade-in">
       <div class="manage-header">
         <h2><i class="icon">👑</i> Inventario</h2>
 
@@ -515,22 +514,12 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* Variables */
-:root {
-  --bg-color: #121212;
-  --panel: #1b1b1b;
-  --font-color: #eaeaea;
-  --primary-color: #6ab4ff;
-  --green: #2ea043;
-  --error-red: #d9534f;
-  --border: #333;
-}
+/* ESTILO CORREGIDO: Usando variables globales del tema en lugar de hardcode */
 
 .page-wrap {
   padding: 1rem;
   max-width: 1400px;
   margin: 0 auto;
-  color: var(--font-color);
 }
 
 /* Topbar */
@@ -540,6 +529,9 @@ onMounted(async () => {
   align-items: center;
   margin-bottom: 1rem;
 }
+.topbar h1 {
+  color: var(--blue);
+}
 .auth-box {
   display: flex;
   gap: 0.5rem;
@@ -547,9 +539,10 @@ onMounted(async () => {
 }
 .user-pill {
   padding: 0.25rem 0.5rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--primary-color);
   border-radius: 20px;
   font-size: 0.9rem;
+  color: var(--gray);
 }
 
 /* Tabs */
@@ -560,26 +553,32 @@ onMounted(async () => {
 }
 .tabs > button {
   background: transparent;
-  color: var(--font-color);
+  color: var(--gray);
   border: 1px solid var(--primary-color);
   border-radius: 8px;
   padding: 0.5rem 1rem;
   cursor: pointer;
   transition: 0.2s;
+  font-weight: bold;
 }
 .tabs > button.active {
   background: var(--primary-color);
-  color: #0b1220;
-  font-weight: bold;
+  color: white;
+}
+
+/* Sections */
+.control-section {
+  background: var(--surface-color); /* Fondo correcto */
+  padding: 1.5rem;
+  border-radius: 10px;
+}
+.control-section h2 {
+  color: white;
+  margin-top: 0;
+  margin-bottom: 1.5rem;
 }
 
 /* Forms */
-.control-section {
-  background: var(--panel);
-  padding: 1.5rem;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-}
 .form-layout {
   display: flex;
   flex-direction: column;
@@ -595,20 +594,31 @@ onMounted(async () => {
   display: flex;
   gap: 1rem;
 }
+.form-group {
+  margin-bottom: 1rem;
+}
+
+/* Inputs & Selects - Fix del fondo negro/gris */
 input,
 select {
   width: 100%;
-  background: #0e0e0e;
+  background: var(--bg-color); /* Fondo global */
   color: white;
-  border: 1px solid var(--border);
+  border: 1px solid var(--primary-color);
   border-radius: 6px;
   padding: 0.7rem;
   margin-top: 0.3rem;
+  outline: none;
 }
+select option {
+  background-color: var(--bg-color);
+  color: white;
+}
+
 label {
   font-size: 0.9rem;
-  font-weight: 500;
-  color: #ccc;
+  font-weight: bold;
+  color: var(--gray);
 }
 
 /* Buttons */
@@ -642,10 +652,9 @@ label {
   border-radius: 6px;
   font-weight: bold;
   cursor: pointer;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
 }
 
-/* Table Style (Nueva Tabla más limpia) */
+/* Table Style */
 .manage-header {
   display: flex;
   justify-content: space-between;
@@ -662,16 +671,18 @@ label {
 .device-table th {
   text-align: left;
   padding: 1rem;
-  background: #252525;
-  color: #aaa;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--gray);
   font-weight: 500;
+  border-bottom: 1px solid var(--primary-color);
 }
 .device-table td {
   padding: 1rem;
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid var(--primary-color);
+  color: white;
 }
 .device-table tr:hover {
-  background: #252525;
+  background: rgba(255, 255, 255, 0.03);
 }
 .device-table tr.selected {
   background: rgba(106, 180, 255, 0.1);
@@ -679,40 +690,44 @@ label {
 
 .badge {
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: 12px;
   font-size: 0.75rem;
   text-transform: uppercase;
   font-weight: bold;
 }
 .badge.maestro {
-  background: rgba(106, 180, 255, 0.2);
-  color: #6ab4ff;
-  border: 1px solid #6ab4ff;
+  background: var(--blue);
+  color: white;
 }
 .badge.device {
-  background: #333;
-  color: #aaa;
+  background: #555;
+  color: #ccc;
 }
 
 .mini-select {
   padding: 0.4rem;
   font-size: 0.85rem;
   border-radius: 4px;
+  background: var(--bg-color); /* Fix deslizador gris */
+  border: 1px solid var(--primary-color);
+  color: white;
 }
+
 .row-actions {
   display: flex;
   gap: 0.5rem;
 }
 .btn-sm {
   padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border);
-  background: #222;
+  border: 1px solid var(--primary-color);
+  background: transparent;
   border-radius: 4px;
   cursor: pointer;
+  color: white;
 }
-.btn-del:hover {
-  background: var(--error-red);
-  border-color: var(--error-red);
+.btn-del {
+  background-color: var(--error-red);
+  border: none;
 }
 
 /* Modal */
@@ -729,13 +744,14 @@ label {
   z-index: 3000;
 }
 .modal-content {
-  background: #1e1e1e;
+  background: var(--surface-color);
   padding: 2rem;
   border-radius: 10px;
   width: 500px;
   max-width: 90%;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-  border: 1px solid #444;
+  border: 1px solid var(--primary-color);
+  color: white;
 }
 .bulk-form {
   display: flex;
@@ -758,8 +774,8 @@ label {
   padding: 1rem;
   margin-top: 1rem;
   border-radius: 6px;
-  background: #000;
-  border: 1px solid #333;
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
 }
 .test-box.ok {
   border-color: var(--green);
@@ -791,7 +807,7 @@ label {
 
 .notification {
   position: fixed;
-  bottom: 20px;
+  top: 90px;
   right: 20px;
   z-index: 4000;
   padding: 1rem 1.5rem;
