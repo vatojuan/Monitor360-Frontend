@@ -180,11 +180,17 @@ function getMaestroName(id) {
         <p class="subtitle">Escanea, clasifica y adopta dispositivos en tu red.</p>
       </div>
       <div class="tabs">
-        <button :class="{ active: activeTab === 'inbox' }" @click="activeTab = 'inbox'">
+        <button
+          :class="['tab-btn', { active: activeTab === 'inbox' }]"
+          @click="activeTab = 'inbox'"
+        >
           📨 Bandeja de Entrada
-          <span v-if="pendingDevices.length">({{ pendingDevices.length }})</span>
+          <span class="badge" v-if="pendingDevices.length">{{ pendingDevices.length }}</span>
         </button>
-        <button :class="{ active: activeTab === 'scanners' }" @click="activeTab = 'scanners'">
+        <button
+          :class="['tab-btn', { active: activeTab === 'scanners' }]"
+          @click="activeTab = 'scanners'"
+        >
           ⚙️ Motores de Escaneo
         </button>
       </div>
@@ -196,11 +202,15 @@ function getMaestroName(id) {
           <span class="selection-count" v-if="selectedPending.length > 0">
             {{ selectedPending.length }} seleccionados
           </span>
-          <span class="selection-count" v-else>Selecciona para adoptar</span>
+          <span class="selection-count" v-else> Selecciona dispositivos para adoptar </span>
         </div>
         <div class="toolbar-right">
           <div class="adopt-control">
-            <select v-model="adoptCredentialId" :disabled="selectedPending.length === 0">
+            <select
+              v-model="adoptCredentialId"
+              class="credential-select"
+              :disabled="selectedPending.length === 0"
+            >
               <option :value="null">Sin Credenciales (Solo Ping)</option>
               <option v-for="p in credentialProfiles" :key="p.id" :value="p.id">
                 🔐 {{ p.name }}
@@ -208,15 +218,13 @@ function getMaestroName(id) {
             </select>
             <button
               @click="adoptSelected"
-              class="btn-primary"
+              class="btn-adopt"
               :disabled="selectedPending.length === 0"
             >
               ✅ Adoptar
             </button>
           </div>
-          <button @click="loadGlobalData" class="btn-secondary btn-icon" title="Recargar">
-            🔄
-          </button>
+          <button @click="loadGlobalData" class="btn-icon" title="Recargar Lista">🔄</button>
         </div>
       </div>
 
@@ -243,7 +251,9 @@ function getMaestroName(id) {
           </thead>
           <tbody>
             <tr v-if="pendingDevices.length === 0">
-              <td colspan="7" class="empty-row">📭 La bandeja está vacía.</td>
+              <td colspan="7" class="empty-row">
+                📭 La bandeja está vacía. Ve a "Motores de Escaneo" para buscar.
+              </td>
             </tr>
             <tr
               v-for="dev in pendingDevices"
@@ -257,13 +267,17 @@ function getMaestroName(id) {
                   @click="toggleSelection(dev.mac_address)"
                 />
               </td>
-              <td class="font-mono">{{ dev.ip_address }}</td>
+              <td class="font-mono text-highlight">{{ dev.ip_address }}</td>
               <td class="font-mono text-dim">{{ dev.mac_address }}</td>
               <td>{{ dev.vendor || 'Desconocido' }}</td>
               <td>{{ dev.hostname || '-' }}</td>
               <td>{{ getMaestroName(dev.maestro_id) }}</td>
               <td>
-                <button @click="deletePending(dev.mac_address)" class="btn-danger btn-sm">
+                <button
+                  @click="deletePending(dev.mac_address)"
+                  class="btn-sm btn-danger"
+                  title="Descartar"
+                >
                   🗑️
                 </button>
               </td>
@@ -274,9 +288,11 @@ function getMaestroName(id) {
     </div>
 
     <div v-if="activeTab === 'scanners'" class="content-grid fade-in">
-      <div class="config-panel">
-        <h3>🚀 Nuevo Escaneo</h3>
-        <div class="form-layout">
+      <aside class="config-panel">
+        <div class="panel-header">
+          <h3>🚀 Nuevo Escaneo</h3>
+        </div>
+        <div class="form-body">
           <div class="form-group">
             <label>Router Maestro</label>
             <select v-model="scanConfig.maestro_id">
@@ -297,12 +313,13 @@ function getMaestroName(id) {
           </div>
 
           <div class="form-group">
-            <label>Interfaz <span style="color: var(--error-red)">*</span></label>
+            <label>Interfaz <span class="required">*</span></label>
             <input
               type="text"
               v-model="scanConfig.interface"
               placeholder="Ej: ether1, bridge-lan"
             />
+            <small>Nombre exacto de la interfaz en el Mikrotik.</small>
           </div>
 
           <div class="form-group">
@@ -319,7 +336,7 @@ function getMaestroName(id) {
             <h4>🤖 Automatización</h4>
             <div class="checkbox-row">
               <input type="checkbox" id="activeTask" v-model="scanConfig.is_active" />
-              <label for="activeTask">Guardar como Tarea</label>
+              <label for="activeTask">Guardar como Tarea Recurrente</label>
             </div>
             <div class="radio-group" v-if="scanConfig.is_active">
               <label
@@ -334,64 +351,74 @@ function getMaestroName(id) {
           </div>
 
           <div class="form-actions">
-            <button @click="runScan" class="btn-primary full-width" :disabled="isScanning">
+            <button @click="runScan" class="btn-scan" :disabled="isScanning">
               {{ isScanning ? '⏳ Escaneando...' : '🔍 Ejecutar Ahora' }}
             </button>
           </div>
         </div>
-      </div>
+      </aside>
 
-      <div class="profiles-panel">
-        <h3>⚙️ Automatizaciones Activas</h3>
-        <div v-if="scanProfiles.length === 0" class="empty-list">No hay tareas configuradas.</div>
-        <ul class="profiles-list">
-          <li v-for="prof in scanProfiles" :key="prof.id" class="profile-card">
+      <section class="profiles-panel">
+        <div class="panel-header">
+          <h3>⚙️ Automatizaciones Activas</h3>
+        </div>
+        <div class="profiles-list">
+          <div v-if="scanProfiles.length === 0" class="empty-list">No hay tareas configuradas.</div>
+          <div v-for="prof in scanProfiles" :key="prof.id" class="profile-card">
             <div class="profile-info">
               <strong>{{ getMaestroName(prof.maestro_id) }}</strong>
-              <small>{{ prof.network_cidr }} ({{ prof.interface }})</small>
+              <div class="profile-details">
+                <span>🌐 {{ prof.network_cidr }}</span>
+                <span>🔌 {{ prof.interface }}</span>
+              </div>
             </div>
-            <span v-if="prof.is_active" class="badge-success">ACTIVO</span>
-            <span v-else class="badge-inactive">PAUSADO</span>
-          </li>
-        </ul>
-      </div>
+            <div class="profile-status">
+              <span v-if="prof.is_active" class="badge-success">ACTIVO</span>
+              <span v-else class="badge-inactive">PAUSADO</span>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* VARIABLES (Copiadas de ManageDeviceView) */
+/* FIX DEFINITIVO DE COLORES */
 :root {
+  color-scheme: dark; /* Fuerza controles oscuros nativos */
   --bg-color: #121212;
-  --panel: #1b1b1b;
+  --panel-bg: #1b1b1b;
+  --input-bg: #0e0e0e;
   --font-color: #eaeaea;
-  --gray: #9aa0a6;
   --primary-color: #6ab4ff;
-  --secondary-color: #ff6b6b;
+  --blue: #4da6ff;
   --green: #2ea043;
   --error-red: #d9534f;
+  --gray: #9aa0a6;
   --border: #333;
 }
 
+/* Layout Base */
 .discovery-layout {
-  padding: 1rem;
   max-width: 1400px;
   margin: 0 auto;
+  padding: 20px;
   color: var(--font-color);
 }
 
-/* Header & Tabs */
+/* Header */
 .header {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  margin-bottom: 1rem;
+  margin-bottom: 20px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 10px;
 }
 .title-block h1 {
   margin: 0;
-  color: var(--primary-color);
+  color: var(--blue);
   font-size: 1.8rem;
 }
 .title-block .subtitle {
@@ -400,231 +427,328 @@ function getMaestroName(id) {
   font-size: 0.9rem;
 }
 
+/* Tabs */
 .tabs {
   display: flex;
-  gap: 0.5rem;
+  gap: 10px;
 }
-.tabs > button {
-  background: transparent;
-  color: var(--font-color);
-  border: 1px solid var(--primary-color);
-  border-radius: 8px;
-  padding: 0.5rem 1rem;
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 10px 20px;
+  color: var(--gray);
+  font-size: 1rem;
   cursor: pointer;
-  transition: 0.2s;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+  position: relative;
 }
-.tabs > button.active {
-  background: var(--primary-color);
-  color: #0b1220;
+.tab-btn:hover {
+  color: #ccc;
+}
+.tab-btn.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
   font-weight: bold;
 }
-
-/* Panels */
-.content-panel,
-.config-panel,
-.profiles-panel {
-  background: #252525;
+.badge {
+  background: #e74c3c;
+  color: white;
+  font-size: 0.7rem;
+  padding: 2px 6px;
   border-radius: 10px;
-  padding: 1.5rem;
-  border: 1px solid var(--border);
-}
-.content-grid {
-  display: grid;
-  grid-template-columns: 350px 1fr;
-  gap: 20px;
-  align-items: start;
+  position: absolute;
+  top: 5px;
+  right: 5px;
 }
 
-/* Forms & Inputs (Igual que ManageDeviceView) */
-.form-layout {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-.form-group label {
-  display: block;
-  margin-bottom: 0.4rem;
-  font-weight: 500;
-  font-size: 0.9rem;
-}
-
-input,
-select {
-  width: 100%;
-  background: #1a1a1a;
-  color: var(--font-color);
-  border: 1px solid #333;
-  border-radius: 8px;
-  padding: 0.6rem 0.7rem;
-}
-
-/* Fix específico para opciones en select */
-select option {
-  background-color: #1a1a1a;
-  color: var(--font-color);
-}
-
-.automation-box {
-  background: #1a1a1a;
-  padding: 1rem;
-  border-radius: 8px;
-  border: 1px dashed #444;
-}
-.checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-.checkbox-row input {
-  width: auto;
-}
-.radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.radio-group input {
-  margin-right: 0.5rem;
-}
-
-/* Buttons */
-.btn-primary {
-  background: var(--green);
-  color: white;
-  border: none;
-  padding: 0.6rem 1.2rem;
-  border-radius: 8px;
-  font-weight: bold;
-  cursor: pointer;
-}
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.btn-secondary {
-  background: transparent;
-  border: 1px solid var(--primary-color);
-  color: var(--font-color);
-  border-radius: 8px;
-  padding: 0.6rem;
-  cursor: pointer;
-}
-.btn-danger {
-  background: var(--error-red);
-  color: white;
-  border: none;
-  padding: 0.4rem 0.8rem;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.btn-icon {
-  font-size: 1.2rem;
-  padding: 0.4rem 0.8rem;
-}
-.full-width {
-  width: 100%;
-  margin-top: 10px;
-}
-
-/* Toolbar & Table */
+/* Inbox Toolbar */
 .toolbar {
+  background: var(--panel-bg);
+  padding: 15px;
+  border-radius: 8px 8px 0 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid #333;
+  border: 1px solid var(--border);
+  border-bottom: none;
 }
+.selection-count {
+  color: #aaa;
+  font-weight: 500;
+}
+.toolbar-right {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
 .adopt-control {
   display: flex;
-  gap: 0.5rem;
+  gap: 10px;
+  background: var(--input-bg);
+  padding: 5px;
+  border-radius: 6px;
+  border: 1px solid #444;
 }
+.credential-select {
+  background: transparent;
+  border: none;
+  color: white;
+  padding: 5px;
+  outline: none;
+}
+/* Fix para opciones en select */
+.credential-select option {
+  background-color: var(--input-bg);
+  color: white;
+}
+
+.btn-adopt {
+  background: var(--green);
+  color: white;
+  border: none;
+  padding: 5px 15px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.btn-adopt:disabled {
+  background: #444;
+  color: var(--gray);
+  cursor: not-allowed;
+}
+.btn-icon {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+/* Tables */
 .table-container {
-  overflow-x: auto;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
 }
 .devices-table {
   width: 100%;
   border-collapse: collapse;
 }
 .devices-table th {
+  background: rgba(255, 255, 255, 0.05); /* Header suave */
+  color: #ccc;
   text-align: left;
-  padding: 1rem;
-  color: var(--gray);
-  border-bottom: 1px solid #333;
+  padding: 12px;
+  font-size: 0.9rem;
 }
 .devices-table td {
-  padding: 1rem;
-  border-bottom: 1px solid #333;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
   color: #ddd;
 }
 .devices-table tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.03);
 }
 .devices-table tr.selected {
-  background: rgba(106, 180, 255, 0.1);
-}
+  background: rgba(39, 174, 96, 0.1);
+} /* Verde muy suave */
 
 .font-mono {
   font-family: monospace;
 }
+.text-highlight {
+  color: var(--blue);
+}
 .text-dim {
-  color: var(--gray);
+  color: #777;
 }
 .empty-row {
   text-align: center;
-  padding: 3rem;
-  color: var(--gray);
+  padding: 40px;
+  color: #666;
   font-style: italic;
 }
 
-/* Profiles List */
-.profiles-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+.btn-sm {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
 }
+.btn-danger {
+  background: var(--error-red);
+  color: white;
+}
+
+/* Scanners Grid */
+.content-grid {
+  display: grid;
+  grid-template-columns: 350px 1fr;
+  gap: 20px;
+}
+
+/* Config Panel */
+.config-panel {
+  background: var(--panel-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.panel-header {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 15px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-header h3 {
+  margin: 0;
+  color: var(--blue);
+  font-size: 1.1rem;
+}
+.form-body {
+  padding: 20px;
+}
+
+.form-group {
+  margin-bottom: 15px;
+}
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 10px;
+  background-color: var(--input-bg); /* FORZADO */
+  border: 1px solid #444;
+  color: white;
+  border-radius: 4px;
+}
+/* FIX: Forzar color en opciones del select principal */
+.form-group select option {
+  background-color: var(--input-bg);
+  color: white;
+}
+
+.form-group small {
+  display: block;
+  margin-top: 4px;
+  color: #777;
+  font-size: 0.8rem;
+}
+.required {
+  color: #e74c3c;
+  font-size: 0.8rem;
+}
+
+.automation-box {
+  background: var(--input-bg);
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  border: 1px dashed #444;
+}
+.automation-box h4 {
+  margin: 0 0 10px 0;
+  font-size: 0.9rem;
+  color: #aaa;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+.radio-group {
+  display: flex;
+  gap: 15px;
+  margin-top: 5px;
+  font-size: 0.9rem;
+  color: #ccc;
+}
+
+.btn-scan {
+  width: 100%;
+  padding: 12px;
+  background: var(--blue);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.btn-scan:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Profiles List */
+.profiles-panel {
+  background: var(--panel-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.profiles-list {
+  padding: 20px;
+}
+.empty-list {
+  color: #666;
+  text-align: center;
+  padding: 20px;
+}
+
 .profile-card {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem;
-  background: #1a1a1a;
-  border-radius: 8px;
-  margin-bottom: 0.5rem;
-  border: 1px solid #333;
+  padding: 15px;
+  background: var(--input-bg);
+  border-radius: 6px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
 }
-.profile-info {
+.profile-info strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #eee;
+}
+.profile-details {
+  font-size: 0.85rem;
+  color: #aaa;
   display: flex;
-  flex-direction: column;
+  gap: 15px;
 }
 .badge-success {
-  color: var(--green);
-  font-weight: bold;
-  font-size: 0.8rem;
-  border: 1px solid var(--green);
-  padding: 2px 6px;
+  background: var(--green);
+  padding: 3px 8px;
   border-radius: 4px;
+  font-size: 0.7rem;
+  color: white;
 }
 .badge-inactive {
-  color: var(--gray);
-  font-weight: bold;
-  font-size: 0.8rem;
-  border: 1px solid var(--gray);
-  padding: 2px 6px;
+  background: #555;
+  padding: 3px 8px;
   border-radius: 4px;
+  font-size: 0.7rem;
+  color: #ccc;
 }
 
 /* Notification */
 .notification {
   position: fixed;
-  bottom: 20px;
+  top: 80px;
   right: 20px;
-  padding: 1rem 1.5rem;
-  border-radius: 8px;
+  padding: 15px 25px;
+  border-radius: 6px;
   color: white;
   font-weight: bold;
-  z-index: 2000;
+  z-index: 9999;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
 }
 .notification.success {
   background: var(--green);
@@ -632,10 +756,15 @@ select option {
 .notification.error {
   background: var(--error-red);
 }
+.notification.warning {
+  background: #f39c12;
+  color: #000;
+}
 .notification.info {
-  background: var(--primary-color);
+  background: #2980b9;
 }
 
+/* Animations */
 .fade-in {
   animation: fadeIn 0.3s ease;
 }
