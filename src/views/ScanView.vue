@@ -384,16 +384,12 @@ function getMaestroName(id) {
 </template>
 
 <style scoped>
-:root {
-  color-scheme: dark; /* Clave para que los controles nativos sean oscuros */
-}
-
-/* Layout Base */
+/* ESTILOS FIJOS (Sin variables rotas) */
 .discovery-layout {
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
-  color: #e0e0e0;
+  color: #eaeaea;
 }
 
 /* Header */
@@ -407,12 +403,12 @@ function getMaestroName(id) {
 }
 .title-block h1 {
   margin: 0;
-  color: #4da6ff;
+  color: #6ab4ff;
   font-size: 1.8rem;
 }
 .title-block .subtitle {
   margin: 5px 0 0;
-  color: #888;
+  color: #9aa0a6;
   font-size: 0.9rem;
 }
 
@@ -425,7 +421,7 @@ function getMaestroName(id) {
   background: none;
   border: none;
   padding: 10px 20px;
-  color: #888;
+  color: #9aa0a6;
   font-size: 1rem;
   cursor: pointer;
   border-bottom: 3px solid transparent;
@@ -436,12 +432,12 @@ function getMaestroName(id) {
   color: #ccc;
 }
 .tab-btn.active {
-  color: #4da6ff;
-  border-bottom-color: #4da6ff;
+  color: #6ab4ff;
+  border-bottom-color: #6ab4ff;
   font-weight: bold;
 }
 .badge {
-  background: #e74c3c;
+  background: #d9534f;
   color: white;
   font-size: 0.7rem;
   padding: 2px 6px;
@@ -453,12 +449,12 @@ function getMaestroName(id) {
 
 /* Inbox Styles */
 .content-panel {
-  background: #252525;
+  background: #1b1b1b;
   border-radius: 8px;
   border: 1px solid #333;
 }
 .toolbar {
-  background: #252525;
+  background: #1b1b1b;
   padding: 15px;
   border-radius: 8px 8px 0 0;
   display: flex;
@@ -469,10 +465,10 @@ function getMaestroName(id) {
 .adopt-control {
   display: flex;
   gap: 10px;
-  background: #1a1a1a;
+  background: #0e0e0e;
   padding: 5px;
   border-radius: 6px;
-  border: 1px solid #444;
+  border: 1px solid #333;
 }
 .credential-select {
   background: transparent;
@@ -482,12 +478,12 @@ function getMaestroName(id) {
   outline: none;
 }
 .credential-select option {
-  background-color: #1a1a1a;
+  background-color: #0e0e0e;
   color: white;
 }
 
 .btn-adopt {
-  background: #27ae60;
+  background: #2ea043;
   color: white;
   border: none;
   padding: 5px 15px;
@@ -496,7 +492,8 @@ function getMaestroName(id) {
   cursor: pointer;
 }
 .btn-adopt:disabled {
-  background: #444;
+  background: #333;
+  color: #777;
   cursor: not-allowed;
 }
 .btn-icon {
@@ -515,8 +512,8 @@ function getMaestroName(id) {
   border-collapse: collapse;
 }
 .devices-table th {
-  background: #2a2a2a;
-  color: #ccc;
+  background: #252525;
+  color: #aaa;
   padding: 12px;
   text-align: left;
 }
@@ -526,16 +523,16 @@ function getMaestroName(id) {
   color: #ddd;
 }
 .devices-table tr:hover {
-  background: #2a2a2a;
+  background: #252525;
 }
 .devices-table tr.selected {
-  background: rgba(77, 166, 255, 0.1);
+  background: rgba(106, 180, 255, 0.1);
 }
 .font-mono {
   font-family: monospace;
 }
 .text-highlight {
-  color: #4da6ff;
+  color: #6ab4ff;
 }
 .text-dim {
   color: #777;
@@ -553,7 +550,7 @@ function getMaestroName(id) {
   cursor: pointer;
 }
 .btn-danger {
-  background: #c0392b;
+  background: #d9534f;
   color: white;
 }
 
@@ -564,19 +561,19 @@ function getMaestroName(id) {
   gap: 20px;
 }
 .config-panel {
-  background: #252525;
+  background: #1b1b1b;
   border-radius: 8px;
   border: 1px solid #333;
   overflow: hidden;
 }
 .panel-header {
-  background: #2a2a2a;
+  background: #252525;
   padding: 15px;
   border-bottom: 1px solid #333;
 }
 .panel-header h3 {
   margin: 0;
-  color: #4da6ff;
+  color: #6ab4ff;
   font-size: 1.1rem;
 }
 .form-body {
@@ -593,18 +590,18 @@ function getMaestroName(id) {
   font-size: 0.9rem;
 }
 
-/* ESTILOS RESTAURADOS A LA GAMA DE GRISES ORIGINAL */
+/* ESTILOS HARDCODEADOS PARA INPUTS Y SELECTS */
 .form-group input,
 .form-group select {
   width: 100%;
   padding: 10px;
-  background-color: #1a1a1a !important;
-  border: 1px solid #444;
+  background-color: #0e0e0e !important;
+  border: 1px solid #333;
   color: white;
   border-radius: 4px;
 }
 .form-group select option {
-  background-color: #1a1a1a !important;
+  background-color: #0e0e0e !important;
   color: white;
 }
 
@@ -615,15 +612,15 @@ function getMaestroName(id) {
   font-size: 0.8rem;
 }
 .required {
-  color: #e74c3c;
+  color: #d9534f;
 }
 
 .automation-box {
-  background: #1a1a1a;
+  background: #0e0e0e;
   padding: 10px;
   border-radius: 4px;
   margin-bottom: 20px;
-  border: 1px dashed #444;
+  border: 1px dashed #333;
 }
 .checkbox-row {
   display: flex;
@@ -641,7 +638,7 @@ function getMaestroName(id) {
 .btn-scan {
   width: 100%;
   padding: 12px;
-  background: #4da6ff;
+  background: #6ab4ff;
   color: white;
   border: none;
   border-radius: 4px;
@@ -656,7 +653,7 @@ function getMaestroName(id) {
 
 /* Profiles */
 .profiles-panel {
-  background: #252525;
+  background: #1b1b1b;
   border-radius: 8px;
   border: 1px solid #333;
 }
@@ -672,7 +669,7 @@ function getMaestroName(id) {
   justify-content: space-between;
   align-items: center;
   padding: 15px;
-  background: #1a1a1a;
+  background: #252525;
   border-radius: 6px;
   margin-bottom: 10px;
   border: 1px solid #333;
@@ -689,7 +686,7 @@ function getMaestroName(id) {
   gap: 15px;
 }
 .badge-success {
-  background: #27ae60;
+  background: #2ea043;
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 0.7rem;
@@ -712,15 +709,15 @@ function getMaestroName(id) {
   z-index: 9999;
 }
 .notification.success {
-  background: #27ae60;
+  background: #2ea043;
   color: white;
 }
 .notification.error {
-  background: #c0392b;
+  background: #d9534f;
   color: white;
 }
 .notification.info {
-  background: #4da6ff;
+  background: #6ab4ff;
   color: white;
 }
 
