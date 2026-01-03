@@ -443,7 +443,7 @@ onMounted(async () => {
                   <button
                     v-if="!device.is_maestro"
                     @click="promoteToMaestro(device)"
-                    class="btn-sm"
+                    class="btn-sm btn-action"
                     title="Promover a Maestro"
                   >
                     ⬆️
@@ -598,8 +598,9 @@ onMounted(async () => {
   margin-bottom: 1rem;
 }
 
-/* Inputs & Selects - FIX DEFINITIVO */
-input,
+/* Inputs & Selects - FIX PARA CHECKBOXES Y SELECTS */
+/* Excluimos checkbox de la regla width: 100% para que no se deformen */
+input:not([type='checkbox']),
 select {
   width: 100%;
   background-color: var(--bg-color); /* Fondo del tema */
@@ -610,29 +611,33 @@ select {
   margin-top: 0.3rem;
   outline: none;
 
-  /* Eliminar estilo nativo para asegurar que tome el fondo */
+  /* Estilos para selectores correctos */
   -webkit-appearance: none;
   appearance: none;
-
-  /* Restaurar flechita del select */
   background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23FFF%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
   background-repeat: no-repeat;
   background-position: right 0.7em top 50%;
   background-size: 0.65em auto;
 }
 
-/* Excepción para inputs de texto */
+/* Excepción para inputs de texto (quitar flecha) */
 input[type='text'],
 input[type='number'] {
   background-image: none;
 }
 
-/* FIX: Forzar color blanco incluso si es "invalido" (placeholder seleccionado) */
-select:invalid {
-  color: white !important;
+/* Estilo específico para Checkboxes normales */
+input[type='checkbox'] {
+  width: auto;
+  margin-right: 0.5rem;
+  transform: scale(1.2);
+  cursor: pointer;
 }
 
 /* FIX: Opciones del desplegable oscuras */
+select:invalid {
+  color: white !important;
+}
 select option {
   background-color: var(--bg-color) !important;
   color: white !important;
@@ -736,21 +741,28 @@ label {
   color: white;
 }
 
+/* BOTONES DE ACCIÓN DE TABLA */
 .row-actions {
   display: flex;
   gap: 0.5rem;
 }
 .btn-sm {
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--primary-color);
-  background: transparent;
+  padding: 4px 8px;
+  border: none;
   border-radius: 4px;
   cursor: pointer;
+}
+/* Estilo unificado para botón de acción normal */
+.btn-action {
+  border: 1px solid var(--primary-color);
+  background: transparent;
   color: white;
 }
+/* FIX: Estilo del botón de borrar para que coincida con ScanView */
 .btn-del {
   background-color: var(--error-red);
-  border: none;
+  color: white;
+  border: none; /* Quitamos borde para que sea sólido */
 }
 
 /* Modal */
