@@ -179,6 +179,7 @@ async function promoteToMaestro(device) {
   if (!confirm(`¿Promover a "${device.client_name}" como Maestro?`)) return
   try {
     await api.put(`/devices/${device.id}/promote`, {})
+    // Actualizamos localmente para reflejar el cambio inmediato
     device.is_maestro = true
     showNotification('Promovido a Maestro.', 'success')
   } catch (error) {
@@ -264,6 +265,15 @@ async function submitBulkMonitors() {
   } finally {
     isBulking.value = false
   }
+}
+
+// ===== LÓGICA DE ROLES (Visual) =====
+function getDeviceRole(device) {
+  if (device.is_maestro) return { label: 'Maestro', class: 'maestro' }
+  // Si no es maestro pero tiene credenciales -> Gestionado
+  if (device.credential_id) return { label: 'Gestionado', class: 'managed' }
+  // Si no -> Dispositivo (Ping only)
+  return { label: 'Dispositivo', class: 'device' }
 }
 
 // ===== Lifecycle =====
@@ -425,8 +435,9 @@ onMounted(async () => {
                 >
               </td>
               <td>
-                <span v-if="device.is_maestro" class="badge maestro">Maestro</span>
-                <span v-else class="badge device">Dispositivo</span>
+                <span :class="['badge', getDeviceRole(device).class]">
+                  {{ getDeviceRole(device).label }}
+                </span>
               </td>
               <td>
                 <div v-if="device.is_maestro">
@@ -446,7 +457,7 @@ onMounted(async () => {
               <td>
                 <div class="row-actions">
                   <button
-                    v-if="!device.is_maestro"
+                    v-if="!device.is_maestro && device.credential_id"
                     @click="promoteToMaestro(device)"
                     class="btn-sm btn-action"
                     title="Promover a Maestro"
@@ -519,8 +530,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* ESTILO CORREGIDO */
-
+/* VARIABLES CSS - COPIADAS DE SCANVIEW PARA COHERENCIA */
 .page-wrap {
   padding: 1rem;
   max-width: 1400px;
@@ -576,6 +586,7 @@ onMounted(async () => {
   background: var(--surface-color);
   padding: 1.5rem;
   border-radius: 10px;
+  border: 1px solid var(--primary-color); /* Borde sutil añadido */
 }
 .control-section h2 {
   color: white;
@@ -603,49 +614,23 @@ onMounted(async () => {
   margin-bottom: 1rem;
 }
 
-/* Inputs & Selects - FIX PARA CHECKBOXES Y SELECTS */
-/* Excluimos checkbox de la regla width: 100% para que no se deformen */
+/* INPUTS & SELECTS - CORRECCIÓN DE COLOR DE FONDO */
 input:not([type='checkbox']),
 select {
   width: 100%;
-  background-color: var(--bg-color); /* Fondo del tema */
+  background-color: var(--bg-color); /* Asegura contraste */
   color: white;
   border: 1px solid var(--primary-color);
   border-radius: 6px;
   padding: 0.7rem;
   margin-top: 0.3rem;
   outline: none;
-
-  /* Estilos para selectores correctos */
-  -webkit-appearance: none;
-  appearance: none;
-  background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23FFF%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
-  background-repeat: no-repeat;
-  background-position: right 0.7em top 50%;
-  background-size: 0.65em auto;
 }
 
-/* Excepción para inputs de texto (quitar flecha) */
-input[type='text'],
-input[type='number'] {
-  background-image: none;
-}
-
-/* Estilo específico para Checkboxes normales */
-input[type='checkbox'] {
-  width: auto;
-  margin-right: 0.5rem;
-  transform: scale(1.2);
-  cursor: pointer;
-}
-
-/* FIX: Opciones del desplegable oscuras */
-select:invalid {
-  color: white !important;
-}
+/* FIX PARA OPCIONES DE SELECT */
 select option {
-  background-color: var(--bg-color) !important;
-  color: white !important;
+  background-color: var(--bg-color);
+  color: white;
 }
 
 label {
@@ -721,6 +706,7 @@ label {
   background: rgba(106, 180, 255, 0.1);
 }
 
+/* BADGES PARA ROLES */
 .badge {
   padding: 3px 8px;
   border-radius: 12px;
@@ -730,6 +716,10 @@ label {
 }
 .badge.maestro {
   background: var(--blue);
+  color: white;
+}
+.badge.managed {
+  background: var(--green); /* Color para gestionados */
   color: white;
 }
 .badge.device {
@@ -746,7 +736,7 @@ label {
   color: white;
 }
 
-/* BOTONES DE ACCIÓN DE TABLA */
+/* BOTONES DE ACCIÓN */
 .row-actions {
   display: flex;
   gap: 0.5rem;
@@ -757,13 +747,11 @@ label {
   border-radius: 4px;
   cursor: pointer;
 }
-/* Estilo unificado para botón de acción normal */
 .btn-action {
   border: 1px solid var(--primary-color);
   background: transparent;
   color: white;
 }
-/* FIX: Nuevo estilo profesional para el botón borrar */
 .btn-del {
   background: transparent;
   border: 1px solid var(--error-red);
