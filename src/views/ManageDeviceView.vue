@@ -61,6 +61,11 @@ const bulkForm = ref({
   packet_size: 56,
   is_active: true,
   alerts_paused: false,
+  config: {
+    interval: 60,
+    count: 3,
+    size: 56,
+  },
 })
 
 const maestros = computed(() => allDevices.value.filter((d) => d.is_maestro))
@@ -758,11 +763,15 @@ label {
   background: transparent;
   color: white;
 }
-/* FIX: Estilo del botón de borrar para que coincida con ScanView */
+/* FIX: Nuevo estilo profesional para el botón borrar */
 .btn-del {
+  background: transparent;
+  border: 1px solid var(--error-red);
+  color: var(--error-red);
+}
+.btn-del:hover {
   background-color: var(--error-red);
   color: white;
-  border: none; /* Quitamos borde para que sea sólido */
 }
 
 /* Modal */
