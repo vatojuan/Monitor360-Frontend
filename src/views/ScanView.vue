@@ -275,7 +275,7 @@ function getMaestroName(id) {
               <td>
                 <button
                   @click="deletePending(dev.mac_address)"
-                  class="btn-sm btn-danger"
+                  class="btn-sm btn-del"
                   title="Descartar"
                 >
                   🗑️
@@ -385,10 +385,7 @@ function getMaestroName(id) {
 
 <style scoped>
 /* ESTILOS BASADOS EN TU TEMA GLOBAL */
-/* Usamos variables CSS globales como --bg-color, --surface-color, --primary-color */
-
 .discovery-layout {
-  /* No redefinimos colores aquí para no romper el tema global */
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
@@ -400,7 +397,7 @@ function getMaestroName(id) {
   justify-content: space-between;
   align-items: flex-end;
   margin-bottom: 20px;
-  border-bottom: 1px solid var(--primary-color); /* Usamos variable global */
+  border-bottom: 1px solid var(--primary-color);
   padding-bottom: 10px;
 }
 .title-block h1 {
@@ -451,7 +448,7 @@ function getMaestroName(id) {
 
 /* Inbox Toolbar */
 .toolbar {
-  background: var(--surface-color); /* Usamos variable global */
+  background: var(--surface-color);
   padding: 15px;
   border-radius: 8px 8px 0 0;
   display: flex;
@@ -471,7 +468,7 @@ function getMaestroName(id) {
 .adopt-control {
   display: flex;
   gap: 10px;
-  background: var(--bg-color); /* Usamos variable global */
+  background: var(--bg-color);
   padding: 5px;
   border-radius: 6px;
   border: 1px solid var(--primary-color);
@@ -537,7 +534,7 @@ function getMaestroName(id) {
   background: rgba(255, 255, 255, 0.03);
 }
 .devices-table tr.selected {
-  background: rgba(var(--primary-color-rgb), 0.1); /* Asumiendo que existe o fallback seguro */
+  background: rgba(106, 180, 255, 0.1);
 }
 
 .font-mono {
@@ -564,8 +561,14 @@ function getMaestroName(id) {
   border-radius: 4px;
   cursor: pointer;
 }
-.btn-danger {
-  background: var(--error-red);
+/* Estilo del botón borrar corregido: outline rojo profesional */
+.btn-del {
+  background: transparent;
+  border: 1px solid var(--error-red);
+  color: var(--error-red);
+}
+.btn-del:hover {
+  background-color: var(--error-red);
   color: white;
 }
 
@@ -610,7 +613,7 @@ function getMaestroName(id) {
 .form-group select {
   width: 100%;
   padding: 10px;
-  background-color: var(--bg-color); /* Variable global */
+  background-color: var(--bg-color);
   border: 1px solid var(--primary-color);
   color: white;
   border-radius: 6px;
