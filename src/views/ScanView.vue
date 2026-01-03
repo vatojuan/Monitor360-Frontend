@@ -140,6 +140,19 @@ async function deletePending(mac) {
   }
 }
 
+// --- NUEVA FUNCIÓN: ELIMINAR PERFIL DE ESCANEO ---
+async function deleteScanProfile(id) {
+  if (!confirm('¿Eliminar esta automatización de escaneo?')) return
+  try {
+    await api.delete(`/discovery/profiles/${id}`)
+    await fetchScanProfiles()
+    showNotification('Automatización eliminada', 'success')
+  } catch (e) {
+    console.error(e)
+    showNotification('Error al eliminar automatización', 'error')
+  }
+}
+
 // --- UTILIDADES ---
 function showNotification(msg, type) {
   notification.value = { show: true, message: msg, type }
@@ -372,9 +385,18 @@ function getMaestroName(id) {
                 <span>🔌 {{ prof.interface }}</span>
               </div>
             </div>
-            <div class="profile-status">
-              <span v-if="prof.is_active" class="badge-success">ACTIVO</span>
-              <span v-else class="badge-inactive">PAUSADO</span>
+            <div class="profile-actions">
+              <div class="profile-status">
+                <span v-if="prof.is_active" class="badge-success">ACTIVO</span>
+                <span v-else class="badge-inactive">PAUSADO</span>
+              </div>
+              <button
+                @click="deleteScanProfile(prof.id)"
+                class="btn-sm btn-del"
+                title="Eliminar Automatización"
+              >
+                🗑️
+              </button>
             </div>
           </div>
         </div>
@@ -712,6 +734,11 @@ function getMaestroName(id) {
   color: #aaa;
   display: flex;
   gap: 15px;
+}
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .badge-success {
   background: var(--green);
