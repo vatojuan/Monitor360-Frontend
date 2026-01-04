@@ -27,7 +27,7 @@ async function logout() {
   router.push('/login')
 }
 
-// ===== Alta en un paso =====
+// ===== Alta en un paso (Intacto) =====
 const addForm = ref({
   client_name: '',
   ip_address: '',
@@ -45,30 +45,112 @@ const testResult = ref(null)
 // ===== Listados =====
 const allDevices = ref([])
 const vpnProfiles = ref([])
+const channels = ref([]) // Canales para alertas
 const isLoadingDevices = ref(false)
 const deletingId = ref(null)
 
-// ===== ESTADO ACCIONES MASIVAS =====
+// ===== ESTADO ACCIONES MASIVAS (MEJORADO) =====
 const selectedDevices = ref([]) // IDs seleccionados
 const showBulkModal = ref(false)
 const isBulking = ref(false)
+const isDeletingBulk = ref(false)
 
-const bulkForm = ref({
-  sensor_type: 'ping',
-  name_template: '{{hostname}} - Ping Check',
-  interval: 60,
-  packet_count: 3,
-  packet_size: 56,
+// Estado del Modal Masivo (Réplica del Builder)
+const bulkSensorType = ref('ping') // 'ping' | 'ethernet'
+const bulkNameTemplate = ref('{{hostname}} - Sensor')
+
+// Modelos de configuración avanzados
+const createNewPingSensor = () => ({
+  config: {
+    interval_sec: 60,
+    latency_threshold_ms: 150,
+    display_mode: 'realtime',
+    average_count: 5,
+  },
+  ui_alert_timeout: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
+  ui_alert_latency: {
+    enabled: false,
+    threshold_ms: 200,
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
   is_active: true,
   alerts_paused: false,
-  config: {
-    interval: 60,
-    count: 3,
-    size: 56,
-  },
 })
 
+const createNewEthernetSensor = () => ({
+  config: {
+    interface_name: 'ether1',
+    interval_sec: 30,
+  },
+  ui_alert_speed_change: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
+  ui_alert_traffic: {
+    enabled: false,
+    threshold_mbps: 100,
+    direction: 'any',
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
+  is_active: true,
+  alerts_paused: false,
+})
+
+const bulkPingConfig = ref(createNewPingSensor())
+const bulkEthernetConfig = ref(createNewEthernetSensor())
+
+// ===== COMPUTADAS INTELIGENTES (Segmentación) =====
 const maestros = computed(() => allDevices.value.filter((d) => d.is_maestro))
+
+const selectionStats = computed(() => {
+  const selected = allDevices.value.filter((d) => selectedDevices.value.includes(d.id))
+  const managedCount = selected.filter((d) => d.credential_id || d.is_maestro).length
+  const genericCount = selected.length - managedCount
+
+  return {
+    total: selected.length,
+    managed: managedCount, // RouterOS/API capable
+    generic: genericCount, // ICMP only
+  }
+})
+
+const bulkCompatibility = computed(() => {
+  const stats = selectionStats.value
+  if (bulkSensorType.value === 'ping') {
+    return {
+      compatible: stats.total,
+      skipped: 0,
+      isPartial: false,
+      message: `✅ Compatible con TODOS los ${stats.total} dispositivos.`,
+    }
+  } else {
+    // Ethernet requiere API
+    return {
+      compatible: stats.managed,
+      skipped: stats.generic,
+      isPartial: stats.generic > 0,
+      message:
+        stats.generic > 0
+          ? `⚠️ Atención: Se aplicará solo a ${stats.managed} dispositivos gestionados. Se omitirán ${stats.generic} genéricos.`
+          : `✅ Compatible con los ${stats.managed} dispositivos gestionados seleccionados.`,
+    }
+  }
+})
 
 // ===== CARGA DE DATOS =====
 async function fetchAllDevices() {
@@ -76,7 +158,9 @@ async function fetchAllDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevices.value = Array.isArray(data) ? data : []
-    selectedDevices.value = []
+    // Limpiar selección si ya no existen
+    const currentIds = allDevices.value.map((d) => d.id)
+    selectedDevices.value = selectedDevices.value.filter((id) => currentIds.includes(id))
   } catch (error) {
     console.error('Error al cargar dispositivos:', error)
     showNotification(error.response?.data?.detail || 'Error al cargar dispositivos.', 'error')
@@ -90,11 +174,20 @@ async function fetchVpnProfiles() {
     const { data } = await api.get('/vpns')
     vpnProfiles.value = Array.isArray(data) ? data : []
   } catch (error) {
-    console.error('Error cargando perfiles VPN:', error)
+    console.error(error)
   }
 }
 
-// ===== FUNCIONES ALTA =====
+async function fetchChannels() {
+  try {
+    const { data } = await api.get('/channels')
+    channels.value = data || []
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+// ===== FUNCIONES ALTA (Intactas) =====
 async function handleAddDeviceOneStep() {
   if (!addForm.value.client_name?.trim() || !addForm.value.ip_address?.trim()) {
     return showNotification('Completá Cliente e IP.', 'error')
@@ -133,7 +226,6 @@ async function handleAddDeviceOneStep() {
 
 async function handleTestReachability() {
   if (!addForm.value.ip_address?.trim()) return showNotification('Ingresá la IP.', 'error')
-
   const payload = {
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
@@ -152,7 +244,7 @@ async function handleTestReachability() {
     if (data.reachable) showNotification('¡Conexión OK!', 'success')
     else showNotification(data.detail || 'No alcanzable.', 'error')
   } catch (error) {
-    console.error('Error probando conexión:', error)
+    console.error(error)
     showNotification('Error al probar conexión.', 'error')
     testResult.value = { reachable: false }
   } finally {
@@ -179,11 +271,10 @@ async function promoteToMaestro(device) {
   if (!confirm(`¿Promover a "${device.client_name}" como Maestro?`)) return
   try {
     await api.put(`/devices/${device.id}/promote`, {})
-    // Actualizamos localmente para reflejar el cambio inmediato
     device.is_maestro = true
     showNotification('Promovido a Maestro.', 'success')
   } catch (error) {
-    console.error('Error promoviendo a maestro:', error)
+    console.error(error)
     showNotification('Error al promover.', 'error')
   }
 }
@@ -195,7 +286,7 @@ async function handleVpnAssociation(device) {
     })
     showNotification('VPN actualizada.', 'success')
   } catch (error) {
-    console.error('Error asociando VPN:', error)
+    console.error(error)
     showNotification('Error al actualizar VPN.', 'error')
   }
 }
@@ -208,14 +299,14 @@ async function deleteDevice(device) {
     await fetchAllDevices()
     showNotification('Eliminado.', 'success')
   } catch (error) {
-    console.error('Error eliminando dispositivo:', error)
+    console.error(error)
     showNotification('Error al eliminar.', 'error')
   } finally {
     deletingId.value = null
   }
 }
 
-// ===== LOGICA SELECCIÓN MULTIPLE =====
+// ===== LÓGICA DE SELECCIÓN Y MASIVAS =====
 function toggleSelection(id) {
   if (selectedDevices.value.includes(id)) {
     selectedDevices.value = selectedDevices.value.filter((d) => d !== id)
@@ -232,33 +323,133 @@ function selectAll() {
   }
 }
 
+// ---- Borrado Masivo ----
+async function handleBulkDelete() {
+  if (selectedDevices.value.length === 0) return
+  if (
+    !confirm(
+      `⚠️ ¿Estás seguro de eliminar PERMANENTEMENTE ${selectedDevices.value.length} dispositivos y todo su historial?`,
+    )
+  )
+    return
+
+  isDeletingBulk.value = true
+  try {
+    await api.post('/devices/bulk-delete', { device_ids: selectedDevices.value })
+    showNotification(`${selectedDevices.value.length} dispositivos eliminados.`, 'success')
+    selectedDevices.value = []
+    await fetchAllDevices()
+  } catch (error) {
+    console.error(error)
+    showNotification('Error en borrado masivo.', 'error')
+  } finally {
+    isDeletingBulk.value = false
+  }
+}
+
+// ---- Modal Creación Masiva ----
 function openBulkModal() {
   if (selectedDevices.value.length === 0) return
+  // Reset configs
+  bulkPingConfig.value = createNewPingSensor()
+  bulkEthernetConfig.value = createNewEthernetSensor()
+  bulkNameTemplate.value = '{{hostname}} - Sensor'
   showBulkModal.value = true
 }
 
+// Helper de construcción de payload (Igual que en Builder)
+function buildSensorConfig(type, data) {
+  const finalConfig = { ...data.config }
+  const alerts = []
+  const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
+
+  if (type === 'ping') {
+    // Forzamos device_to_external ya que es genérico
+    finalConfig.ping_type = 'device_to_external'
+    if (!finalConfig.target_ip) finalConfig.target_ip = '8.8.8.8'
+
+    if (data.ui_alert_timeout.enabled) {
+      const a = data.ui_alert_timeout
+      if (a.channel_id)
+        alerts.push({
+          type: 'timeout',
+          channel_id: a.channel_id,
+          cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+          tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+          notify_recovery: !!a.notify_recovery,
+        })
+    }
+    if (data.ui_alert_latency.enabled) {
+      const a = data.ui_alert_latency
+      if (a.channel_id)
+        alerts.push({
+          type: 'high_latency',
+          threshold_ms: onlyNums(a.threshold_ms, 200),
+          channel_id: a.channel_id,
+          cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+          tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+          notify_recovery: !!a.notify_recovery,
+        })
+    }
+  } else if (type === 'ethernet') {
+    if (data.ui_alert_speed_change.enabled) {
+      const a = data.ui_alert_speed_change
+      if (a.channel_id)
+        alerts.push({
+          type: 'speed_change',
+          channel_id: a.channel_id,
+          cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
+          tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+          notify_recovery: !!a.notify_recovery,
+        })
+    }
+    if (data.ui_alert_traffic.enabled) {
+      const a = data.ui_alert_traffic
+      if (a.channel_id)
+        alerts.push({
+          type: 'traffic_threshold',
+          threshold_mbps: onlyNums(a.threshold_mbps, 100),
+          direction: a.direction || 'any',
+          channel_id: a.channel_id,
+          cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+          tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+          notify_recovery: !!a.notify_recovery,
+        })
+    }
+  }
+
+  finalConfig.alerts = alerts
+  return {
+    sensor_type: type,
+    name_template: bulkNameTemplate.value,
+    config: finalConfig,
+    is_active: data.is_active,
+    alerts_paused: data.alerts_paused,
+  }
+}
+
 async function submitBulkMonitors() {
+  if (!bulkNameTemplate.value) return showNotification('Define una plantilla de nombre', 'error')
+
+  const sourceData =
+    bulkSensorType.value === 'ping' ? bulkPingConfig.value : bulkEthernetConfig.value
+  const sensorConfigPayload = buildSensorConfig(bulkSensorType.value, sourceData)
+
   isBulking.value = true
   try {
     const payload = {
       device_ids: selectedDevices.value,
-      sensor_config: {
-        sensor_type: bulkForm.value.sensor_type,
-        name_template: bulkForm.value.name_template,
-        is_active: bulkForm.value.is_active,
-        alerts_paused: bulkForm.value.alerts_paused,
-        config: {
-          interval: bulkForm.value.interval,
-          count: bulkForm.value.packet_count,
-          size: bulkForm.value.packet_size,
-        },
-      },
+      sensor_config: sensorConfigPayload,
     }
 
     const { data } = await api.post('/monitors/bulk', payload)
-    showNotification(`Se crearon ${data.created} monitores exitosamente.`, 'success')
+
+    let msg = `Creados: ${data.created}`
+    if (data.skipped > 0) msg += ` | Omitidos: ${data.skipped} (No compatibles)`
+
+    showNotification(msg, data.skipped > 0 ? 'warning' : 'success')
     showBulkModal.value = false
-    selectedDevices.value = [] // Reset selección
+    selectedDevices.value = []
   } catch (error) {
     console.error('Error creando monitores masivos:', error)
     showNotification('Error al crear monitores masivos.', 'error')
@@ -270,9 +461,7 @@ async function submitBulkMonitors() {
 // ===== LÓGICA DE ROLES (Visual) =====
 function getDeviceRole(device) {
   if (device.is_maestro) return { label: 'Maestro', class: 'maestro' }
-  // Si no es maestro pero tiene credenciales -> Gestionado
   if (device.credential_id) return { label: 'Gestionado', class: 'managed' }
-  // Si no -> Dispositivo (Ping only)
   return { label: 'Dispositivo', class: 'device' }
 }
 
@@ -281,6 +470,7 @@ onMounted(async () => {
   await loadUser()
   fetchAllDevices()
   fetchVpnProfiles()
+  fetchChannels()
 })
 </script>
 
@@ -385,9 +575,14 @@ onMounted(async () => {
       <div class="manage-header">
         <h2><i class="icon">👑</i> Inventario</h2>
 
-        <button v-if="selectedDevices.length > 0" @click="openBulkModal" class="btn-bulk fade-in">
-          ⚡ Acciones Masivas ({{ selectedDevices.length }})
-        </button>
+        <div v-if="selectedDevices.length > 0" class="bulk-actions-wrapper fade-in">
+          <button @click="openBulkModal" class="btn-bulk btn-warning">
+            ⚡ Configurar Monitores ({{ selectedDevices.length }})
+          </button>
+          <button @click="handleBulkDelete" class="btn-bulk btn-danger" :disabled="isDeletingBulk">
+            {{ isDeletingBulk ? 'Eliminando...' : `🗑️ Eliminar (${selectedDevices.length})` }}
+          </button>
+        </div>
       </div>
 
       <div v-if="isLoadingDevices" class="loading-text">Cargando inventario...</div>
@@ -435,9 +630,9 @@ onMounted(async () => {
                 >
               </td>
               <td>
-                <span :class="['badge', getDeviceRole(device).class]">
-                  {{ getDeviceRole(device).label }}
-                </span>
+                <span :class="['badge', getDeviceRole(device).class]">{{
+                  getDeviceRole(device).label
+                }}</span>
               </td>
               <td>
                 <div v-if="device.is_maestro">
@@ -480,44 +675,190 @@ onMounted(async () => {
     </section>
 
     <div v-if="showBulkModal" class="modal-overlay">
-      <div class="modal-content">
+      <div class="modal-content large-modal">
         <h3>⚡ Crear Monitores Masivos</h3>
-        <p>
-          Se crearán monitores para <strong>{{ selectedDevices.length }}</strong> dispositivos.
-        </p>
+
+        <div class="compatibility-box" :class="bulkCompatibility.isPartial ? 'warning' : 'ok'">
+          {{ bulkCompatibility.message }}
+        </div>
 
         <div class="bulk-form">
           <div class="form-group">
+            <label>Tipo de Sensor</label>
+            <div class="sensor-type-selector">
+              <button
+                :class="{ active: bulkSensorType === 'ping' }"
+                @click="bulkSensorType = 'ping'"
+              >
+                PING (ICMP)
+              </button>
+              <button
+                :class="{ active: bulkSensorType === 'ethernet' }"
+                @click="bulkSensorType = 'ethernet'"
+              >
+                ETHERNET (Tráfico)
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
             <label>Plantilla de Nombre</label>
-            <input v-model="bulkForm.name_template" placeholder="{{hostname}} - Ping Check" />
+            <input v-model="bulkNameTemplate" placeholder="{{hostname}} - Sensor" />
             <small
-              >Usa <code v-pre>{{ hostname }}</code> o <code v-pre>{{ ip }}</code> para nombres
-              dinámicos.</small
+              >Variables: <code v-pre>{{ hostname }}</code
+              >, <code v-pre>{{ ip }}</code></small
             >
           </div>
 
-          <div class="form-row">
+          <hr class="separator" />
+
+          <div v-if="bulkSensorType === 'ping'" class="config-grid">
             <div class="form-group">
-              <label>Intervalo (seg)</label>
-              <input type="number" v-model="bulkForm.interval" />
+              <label>Destino (Fallback si no es P2P)</label>
+              <input v-model="bulkPingConfig.config.target_ip" placeholder="8.8.8.8" />
             </div>
             <div class="form-group">
-              <label>Paquetes</label>
-              <input type="number" v-model="bulkForm.packet_count" />
+              <label>Intervalo (s)</label>
+              <input type="number" v-model.number="bulkPingConfig.config.interval_sec" />
+            </div>
+
+            <div class="alert-section span-2">
+              <h4>Alertas</h4>
+
+              <div class="alert-row">
+                <div class="chk-label">
+                  <input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" />
+                  Timeout
+                </div>
+                <select
+                  v-model="bulkPingConfig.ui_alert_timeout.channel_id"
+                  :disabled="!bulkPingConfig.ui_alert_timeout.enabled"
+                >
+                  <option :value="null">-- Canal --</option>
+                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                </select>
+                <input
+                  type="number"
+                  placeholder="Tol."
+                  v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
+                  title="Tolerancia"
+                  class="tiny-input"
+                />
+                <label class="tiny-chk"
+                  ><input
+                    type="checkbox"
+                    v-model="bulkPingConfig.ui_alert_timeout.notify_recovery"
+                  />
+                  Recup.</label
+                >
+              </div>
+
+              <div class="alert-row">
+                <div class="chk-label">
+                  <input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.enabled" />
+                  Latencia > {{ bulkPingConfig.ui_alert_latency.threshold_ms }}ms
+                </div>
+                <select
+                  v-model="bulkPingConfig.ui_alert_latency.channel_id"
+                  :disabled="!bulkPingConfig.ui_alert_latency.enabled"
+                >
+                  <option :value="null">-- Canal --</option>
+                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                </select>
+                <input
+                  type="number"
+                  placeholder="Tol."
+                  v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
+                  class="tiny-input"
+                />
+                <label class="tiny-chk"
+                  ><input
+                    type="checkbox"
+                    v-model="bulkPingConfig.ui_alert_latency.notify_recovery"
+                  />
+                  Recup.</label
+                >
+              </div>
             </div>
           </div>
 
-          <div class="form-group checkbox">
-            <label
-              ><input type="checkbox" v-model="bulkForm.is_active" /> Activar inmediatamente</label
-            >
+          <div v-if="bulkSensorType === 'ethernet'" class="config-grid">
+            <div class="form-group">
+              <label>Interfaz</label>
+              <input v-model="bulkEthernetConfig.config.interface_name" placeholder="ether1" />
+            </div>
+            <div class="form-group">
+              <label>Intervalo (s)</label>
+              <input type="number" v-model.number="bulkEthernetConfig.config.interval_sec" />
+            </div>
+
+            <div class="alert-section span-2">
+              <h4>Alertas</h4>
+
+              <div class="alert-row">
+                <div class="chk-label">
+                  <input
+                    type="checkbox"
+                    v-model="bulkEthernetConfig.ui_alert_speed_change.enabled"
+                  />
+                  Cambio Velocidad
+                </div>
+                <select
+                  v-model="bulkEthernetConfig.ui_alert_speed_change.channel_id"
+                  :disabled="!bulkEthernetConfig.ui_alert_speed_change.enabled"
+                >
+                  <option :value="null">-- Canal --</option>
+                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                </select>
+                <label class="tiny-chk"
+                  ><input
+                    type="checkbox"
+                    v-model="bulkEthernetConfig.ui_alert_speed_change.notify_recovery"
+                  />
+                  Recup.</label
+                >
+              </div>
+
+              <div class="alert-row">
+                <div class="chk-label">
+                  <input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.enabled" />
+                  Tráfico > {{ bulkEthernetConfig.ui_alert_traffic.threshold_mbps }}Mbps
+                </div>
+                <select
+                  v-model="bulkEthernetConfig.ui_alert_traffic.channel_id"
+                  :disabled="!bulkEthernetConfig.ui_alert_traffic.enabled"
+                >
+                  <option :value="null">-- Canal --</option>
+                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                </select>
+                <label class="tiny-chk"
+                  ><input
+                    type="checkbox"
+                    v-model="bulkEthernetConfig.ui_alert_traffic.notify_recovery"
+                  />
+                  Recup.</label
+                >
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group checkbox" style="margin-top: 1rem">
+            <label>
+              <input
+                type="checkbox"
+                v-model="
+                  (bulkSensorType === 'ping' ? bulkPingConfig : bulkEthernetConfig).is_active
+                "
+              />
+              Activar monitores inmediatamente
+            </label>
           </div>
         </div>
 
         <div class="modal-actions">
           <button @click="showBulkModal = false" class="btn-secondary">Cancelar</button>
           <button @click="submitBulkMonitors" class="btn-primary" :disabled="isBulking">
-            {{ isBulking ? 'Procesando...' : 'Crear Monitores' }}
+            {{ isBulking ? 'Procesando...' : 'Aplicar Configuración' }}
           </button>
         </div>
       </div>
@@ -530,14 +871,12 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* VARIABLES CSS - COPIADAS DE SCANVIEW PARA COHERENCIA */
+/* ESTILOS BASE (COPIADOS) */
 .page-wrap {
   padding: 1rem;
   max-width: 1400px;
   margin: 0 auto;
 }
-
-/* Topbar */
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -559,8 +898,6 @@ onMounted(async () => {
   font-size: 0.9rem;
   color: var(--gray);
 }
-
-/* Tabs */
 .tabs {
   display: flex;
   gap: 0.5rem;
@@ -580,21 +917,17 @@ onMounted(async () => {
   background: var(--primary-color);
   color: white;
 }
-
-/* Sections */
 .control-section {
   background: var(--surface-color);
   padding: 1.5rem;
   border-radius: 10px;
-  border: 1px solid var(--primary-color); /* Borde sutil añadido */
+  border: 1px solid var(--primary-color);
 }
 .control-section h2 {
   color: white;
   margin-top: 0;
   margin-bottom: 1.5rem;
 }
-
-/* Forms */
 .form-layout {
   display: flex;
   flex-direction: column;
@@ -613,12 +946,10 @@ onMounted(async () => {
 .form-group {
   margin-bottom: 1rem;
 }
-
-/* INPUTS & SELECTS - CORRECCIÓN DE COLOR DE FONDO */
 input:not([type='checkbox']),
 select {
   width: 100%;
-  background-color: var(--bg-color); /* Asegura contraste */
+  background-color: var(--bg-color);
   color: white;
   border: 1px solid var(--primary-color);
   border-radius: 6px;
@@ -626,20 +957,15 @@ select {
   margin-top: 0.3rem;
   outline: none;
 }
-
-/* FIX PARA OPCIONES DE SELECT */
 select option {
   background-color: var(--bg-color);
   color: white;
 }
-
 label {
   font-size: 0.9rem;
   font-weight: bold;
   color: var(--gray);
 }
-
-/* Buttons */
 .actions-row {
   display: flex;
   gap: 1rem;
@@ -662,23 +988,72 @@ label {
   border-radius: 6px;
   cursor: pointer;
 }
-.btn-bulk {
-  background: #f39c12;
-  color: #fff;
-  border: none;
-  padding: 0.6rem 1rem;
+.test-box {
+  padding: 1rem;
+  margin-top: 1rem;
   border-radius: 6px;
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+}
+.test-box.ok {
+  border-color: var(--green);
+  color: var(--green);
+}
+.test-box.error {
+  border-color: var(--error-red);
+  color: var(--error-red);
+}
+.notification {
+  position: fixed;
+  top: 90px;
+  right: 20px;
+  z-index: 4000;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
   font-weight: bold;
-  cursor: pointer;
+  color: white;
+}
+.notification.success {
+  background: var(--green);
+}
+.notification.error {
+  background: var(--error-red);
+}
+.notification.warning {
+  background: #f39c12;
+  color: white;
 }
 
-/* Table Style */
+/* ESTILOS TABLE & BULK */
 .manage-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
 }
+.bulk-actions-wrapper {
+  display: flex;
+  gap: 0.5rem;
+}
+.btn-bulk {
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.btn-warning {
+  background: #f39c12;
+}
+.btn-danger {
+  background: var(--error-red);
+}
+.btn-bulk:hover {
+  opacity: 0.9;
+}
+
 .table-responsive {
   overflow-x: auto;
 }
@@ -705,8 +1080,6 @@ label {
 .device-table tr.selected {
   background: rgba(106, 180, 255, 0.1);
 }
-
-/* BADGES PARA ROLES */
 .badge {
   padding: 3px 8px;
   border-radius: 12px;
@@ -719,14 +1092,13 @@ label {
   color: white;
 }
 .badge.managed {
-  background: var(--green); /* Color para gestionados */
+  background: var(--green);
   color: white;
 }
 .badge.device {
   background: #555;
   color: #ccc;
 }
-
 .mini-select {
   padding: 0.4rem;
   font-size: 0.85rem;
@@ -735,8 +1107,6 @@ label {
   border: 1px solid var(--primary-color);
   color: white;
 }
-
-/* BOTONES DE ACCIÓN */
 .row-actions {
   display: flex;
   gap: 0.5rem;
@@ -761,62 +1131,6 @@ label {
   background-color: var(--error-red);
   color: white;
 }
-
-/* Modal */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 3000;
-}
-.modal-content {
-  background: var(--surface-color);
-  padding: 2rem;
-  border-radius: 10px;
-  width: 500px;
-  max-width: 90%;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-  border: 1px solid var(--primary-color);
-  color: white;
-}
-.bulk-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin: 1.5rem 0;
-}
-.form-row {
-  display: flex;
-  gap: 1rem;
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 1rem;
-}
-
-/* Utilities */
-.test-box {
-  padding: 1rem;
-  margin-top: 1rem;
-  border-radius: 6px;
-  background: var(--bg-color);
-  border: 1px solid var(--primary-color);
-}
-.test-box.ok {
-  border-color: var(--green);
-  color: var(--green);
-}
-.test-box.error {
-  border-color: var(--error-red);
-  color: var(--error-red);
-}
 .font-mono {
   font-family: monospace;
 }
@@ -837,20 +1151,124 @@ label {
   }
 }
 
-.notification {
+/* MODAL AVANZADO ESTILOS */
+.modal-overlay {
   position: fixed;
-  top: 90px;
-  right: 20px;
-  z-index: 4000;
-  padding: 1rem 1.5rem;
-  border-radius: 8px;
-  font-weight: bold;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+.modal-content {
+  background: var(--surface-color);
+  padding: 2rem;
+  border-radius: 10px;
+  border: 1px solid var(--primary-color);
   color: white;
 }
-.notification.success {
-  background: var(--green);
+.large-modal {
+  width: 700px;
+  max-width: 95%;
+  max-height: 90vh;
+  overflow-y: auto;
 }
-.notification.error {
-  background: var(--error-red);
+
+.compatibility-box {
+  padding: 0.8rem;
+  margin-bottom: 1.5rem;
+  border-radius: 6px;
+  font-weight: bold;
+  font-size: 0.9rem;
+  border: 1px solid transparent;
+}
+.compatibility-box.ok {
+  background: rgba(46, 204, 113, 0.15);
+  border-color: var(--green);
+  color: var(--green);
+}
+.compatibility-box.warning {
+  background: rgba(243, 156, 18, 0.15);
+  border-color: #f39c12;
+  color: #f39c12;
+}
+
+.sensor-type-selector {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+.sensor-type-selector button {
+  flex: 1;
+  padding: 0.8rem;
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  color: var(--gray);
+  cursor: pointer;
+  font-weight: bold;
+  border-radius: 6px;
+}
+.sensor-type-selector button.active {
+  background: var(--primary-color);
+  color: white;
+  border-color: white;
+}
+
+.separator {
+  border: 0;
+  border-top: 1px solid var(--primary-color);
+  margin: 1.5rem 0;
+}
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.alert-section {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1rem;
+  border-radius: 6px;
+  margin-top: 0.5rem;
+}
+.span-2 {
+  grid-column: span 2;
+}
+.alert-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+.alert-row:last-child {
+  margin-bottom: 0;
+}
+.chk-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+.tiny-input {
+  width: 60px !important;
+  padding: 0.4rem !important;
+}
+.tiny-chk {
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: normal;
+  color: #ccc;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 2rem;
 }
 </style>
