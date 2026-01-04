@@ -810,6 +810,12 @@ onMounted(async () => {
                   <option :value="null">-- Canal --</option>
                   <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
+                <input
+                  type="number"
+                  placeholder="Tol."
+                  v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
+                  class="tiny-input"
+                />
                 <label class="tiny-chk"
                   ><input
                     type="checkbox"
@@ -831,6 +837,12 @@ onMounted(async () => {
                   <option :value="null">-- Canal --</option>
                   <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
+                <input
+                  type="number"
+                  placeholder="Tol."
+                  v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
+                  class="tiny-input"
+                />
                 <label class="tiny-chk"
                   ><input
                     type="checkbox"
@@ -871,7 +883,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* ESTILOS BASE (COPIADOS) */
+/* ESTILOS BASE */
 .page-wrap {
   padding: 1rem;
   max-width: 1400px;

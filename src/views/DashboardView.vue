@@ -31,7 +31,7 @@ const editMonitorGroup = ref('')
 const showGroupModal = ref(false)
 const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
-const isRebooting = ref(false) // Estado de carga para el reboot
+const isRebooting = ref(false)
 
 // --- COMPUTADOS ---
 const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
@@ -41,7 +41,7 @@ const channelsList = computed(() => Object.values(channelsById.value))
 // Ordenamos los grupos disponibles para los selectores
 const availableGroups = computed(() => [...dbGroups.value].sort())
 
-// --- FORMULARIOS ---
+// --- FORMULARIOS BASE ---
 const createNewPingSensor = () => ({
   name: '',
   is_active: true,
@@ -54,13 +54,20 @@ const createNewPingSensor = () => ({
     display_mode: 'realtime',
     average_count: 5,
   },
-  ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1 },
+  ui_alert_timeout: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
   ui_alert_latency: {
     enabled: false,
     threshold_ms: 200,
     channel_id: null,
     cooldown_minutes: 5,
     tolerance_count: 1,
+    notify_recovery: false,
   },
 })
 const createNewEthernetSensor = () => ({
@@ -73,6 +80,7 @@ const createNewEthernetSensor = () => ({
     channel_id: null,
     cooldown_minutes: 10,
     tolerance_count: 1,
+    notify_recovery: false,
   },
   ui_alert_traffic: {
     enabled: false,
@@ -81,6 +89,7 @@ const createNewEthernetSensor = () => ({
     channel_id: null,
     cooldown_minutes: 5,
     tolerance_count: 1,
+    notify_recovery: false,
   },
 })
 const newPingSensor = ref(createNewPingSensor())
@@ -446,6 +455,7 @@ async function showSensorDetails(s, m, e) {
   sensorDetailsToShow.value = s
   currentMonitorContext.value = m
   const cfg = safeJsonParse(s.config)
+
   if (s.sensor_type === 'ping') {
     const d = createNewPingSensor()
     d.name = s.name
@@ -454,8 +464,25 @@ async function showSensorDetails(s, m, e) {
     d.config = { ...d.config, ...cfg }
     if (!m.maestro_id) d.config.ping_type = 'device_to_external'
     ;(cfg.alerts || []).forEach((a) => {
-      if (a.type === 'timeout') d.ui_alert_timeout = { enabled: true, ...a }
-      if (a.type === 'high_latency') d.ui_alert_latency = { enabled: true, ...a }
+      if (a.type === 'timeout') {
+        d.ui_alert_timeout = {
+          enabled: true,
+          channel_id: a.channel_id,
+          cooldown_minutes: a.cooldown_minutes ?? 5,
+          tolerance_count: a.tolerance_count ?? 1,
+          notify_recovery: a.notify_recovery ?? false,
+        }
+      }
+      if (a.type === 'high_latency') {
+        d.ui_alert_latency = {
+          enabled: true,
+          channel_id: a.channel_id,
+          threshold_ms: a.threshold_ms ?? 200,
+          cooldown_minutes: a.cooldown_minutes ?? 5,
+          tolerance_count: a.tolerance_count ?? 1,
+          notify_recovery: a.notify_recovery ?? false,
+        }
+      }
     })
     newPingSensor.value = d
   } else {
@@ -465,8 +492,26 @@ async function showSensorDetails(s, m, e) {
     d.alerts_paused = s.alerts_paused === true
     d.config = { interface_name: cfg.interface_name || '', interval_sec: cfg.interval_sec || 30 }
     ;(cfg.alerts || []).forEach((a) => {
-      if (a.type === 'speed_change') d.ui_alert_speed_change = { enabled: true, ...a }
-      if (a.type === 'traffic_threshold') d.ui_alert_traffic = { enabled: true, ...a }
+      if (a.type === 'speed_change') {
+        d.ui_alert_speed_change = {
+          enabled: true,
+          channel_id: a.channel_id,
+          cooldown_minutes: a.cooldown_minutes ?? 10,
+          tolerance_count: a.tolerance_count ?? 1,
+          notify_recovery: a.notify_recovery ?? false,
+        }
+      }
+      if (a.type === 'traffic_threshold') {
+        d.ui_alert_traffic = {
+          enabled: true,
+          channel_id: a.channel_id,
+          threshold_mbps: a.threshold_mbps ?? 100,
+          direction: a.direction || 'any',
+          cooldown_minutes: a.cooldown_minutes ?? 5,
+          tolerance_count: a.tolerance_count ?? 1,
+          notify_recovery: a.notify_recovery ?? false,
+        }
+      }
     })
     newEthernetSensor.value = d
   }
@@ -489,6 +534,7 @@ async function handleUpdateSensor() {
         channel_id: t.channel_id,
         cooldown_minutes: num(t.cooldown_minutes, 5),
         tolerance_count: num(t.tolerance_count, 1),
+        notify_recovery: !!t.notify_recovery,
       })
     const l = uiData.ui_alert_latency
     if (l.enabled && l.channel_id)
@@ -498,6 +544,7 @@ async function handleUpdateSensor() {
         channel_id: l.channel_id,
         cooldown_minutes: num(l.cooldown_minutes, 5),
         tolerance_count: num(l.tolerance_count, 1),
+        notify_recovery: !!l.notify_recovery,
       })
   } else {
     const s = uiData.ui_alert_speed_change
@@ -507,6 +554,7 @@ async function handleUpdateSensor() {
         channel_id: s.channel_id,
         cooldown_minutes: num(s.cooldown_minutes, 10),
         tolerance_count: num(s.tolerance_count, 1),
+        notify_recovery: !!s.notify_recovery,
       })
     const tr = uiData.ui_alert_traffic
     if (tr.enabled && tr.channel_id)
@@ -517,6 +565,7 @@ async function handleUpdateSensor() {
         channel_id: tr.channel_id,
         cooldown_minutes: num(tr.cooldown_minutes, 5),
         tolerance_count: num(tr.tolerance_count, 1),
+        notify_recovery: !!tr.notify_recovery,
       })
   }
 
@@ -905,19 +954,88 @@ function closeSensorDetails() {
 
             <div class="sub-section span-3">
               <h4>Alertas</h4>
+
               <div class="alert-config-item">
                 <div class="form-group checkbox-group">
                   <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.enabled" /><label
                     >Timeout</label
                   >
                 </div>
-                <div v-if="newPingSensor.ui_alert_timeout.enabled" class="form-group">
-                  <label>Canal</label>
-                  <select v-model="newPingSensor.ui_alert_timeout.channel_id">
-                    <option v-for="c in channelsList" :key="c.id" :value="c.id">
-                      {{ c.name }}
-                    </option>
-                  </select>
+                <div v-if="newPingSensor.ui_alert_timeout.enabled">
+                  <div class="config-grid">
+                    <div class="form-group">
+                      <label>Canal</label>
+                      <select v-model="newPingSensor.ui_alert_timeout.channel_id">
+                        <option v-for="c in channelsList" :key="c.id" :value="c.id">
+                          {{ c.name }}
+                        </option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Enfriamiento (min)</label>
+                      <input
+                        type="number"
+                        v-model.number="newPingSensor.ui_alert_timeout.cooldown_minutes"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label>Tolerancia</label>
+                      <input
+                        type="number"
+                        v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
+                      />
+                    </div>
+                    <div class="form-group checkbox-group">
+                      <input
+                        type="checkbox"
+                        v-model="newPingSensor.ui_alert_timeout.notify_recovery"
+                      />
+                      <label>Notif. Recuperación 🟢</label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="separator" />
+
+              <div class="alert-config-item">
+                <div class="form-group checkbox-group">
+                  <input type="checkbox" v-model="newPingSensor.ui_alert_latency.enabled" /><label
+                    >Latencia Alta</label
+                  >
+                </div>
+                <div v-if="newPingSensor.ui_alert_latency.enabled">
+                  <div class="config-grid">
+                    <div class="form-group">
+                      <label>Canal</label>
+                      <select v-model="newPingSensor.ui_alert_latency.channel_id">
+                        <option v-for="c in channelsList" :key="c.id" :value="c.id">
+                          {{ c.name }}
+                        </option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Enfriamiento (min)</label>
+                      <input
+                        type="number"
+                        v-model.number="newPingSensor.ui_alert_latency.cooldown_minutes"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label>Tolerancia</label>
+                      <input
+                        type="number"
+                        v-model.number="newPingSensor.ui_alert_latency.tolerance_count"
+                      />
+                    </div>
+                    <div class="form-group checkbox-group">
+                      <input
+                        type="checkbox"
+                        v-model="newPingSensor.ui_alert_latency.notify_recovery"
+                      />
+                      <label>Notif. Recuperación 🟢</label>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -934,20 +1052,105 @@ function closeSensorDetails() {
 
             <div class="sub-section span-3">
               <h4>Alertas</h4>
+
               <div class="alert-config-item">
                 <div class="form-group checkbox-group">
                   <input
                     type="checkbox"
                     v-model="newEthernetSensor.ui_alert_speed_change.enabled"
-                  /><label>Velocidad</label>
+                  /><label>Cambio de Velocidad</label>
                 </div>
-                <div v-if="newEthernetSensor.ui_alert_speed_change.enabled" class="form-group">
-                  <label>Canal</label>
-                  <select v-model="newEthernetSensor.ui_alert_speed_change.channel_id">
-                    <option v-for="c in channelsList" :key="c.id" :value="c.id">
-                      {{ c.name }}
-                    </option>
-                  </select>
+                <div v-if="newEthernetSensor.ui_alert_speed_change.enabled">
+                  <div class="config-grid">
+                    <div class="form-group">
+                      <label>Canal</label>
+                      <select v-model="newEthernetSensor.ui_alert_speed_change.channel_id">
+                        <option v-for="c in channelsList" :key="c.id" :value="c.id">
+                          {{ c.name }}
+                        </option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Enfriamiento</label>
+                      <input
+                        type="number"
+                        v-model.number="newEthernetSensor.ui_alert_speed_change.cooldown_minutes"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label>Tolerancia</label>
+                      <input
+                        type="number"
+                        v-model.number="newEthernetSensor.ui_alert_speed_change.tolerance_count"
+                      />
+                    </div>
+                    <div class="form-group checkbox-group">
+                      <input
+                        type="checkbox"
+                        v-model="newEthernetSensor.ui_alert_speed_change.notify_recovery"
+                      />
+                      <label>Recuperación 🟢</label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="separator" />
+
+              <div class="alert-config-item">
+                <div class="form-group checkbox-group">
+                  <input
+                    type="checkbox"
+                    v-model="newEthernetSensor.ui_alert_traffic.enabled"
+                  /><label>Umbral de Tráfico</label>
+                </div>
+                <div v-if="newEthernetSensor.ui_alert_traffic.enabled">
+                  <div class="config-grid">
+                    <div class="form-group">
+                      <label>Mbps</label>
+                      <input
+                        type="number"
+                        v-model.number="newEthernetSensor.ui_alert_traffic.threshold_mbps"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label>Dirección</label>
+                      <select v-model="newEthernetSensor.ui_alert_traffic.direction">
+                        <option value="any">Cualquiera</option>
+                        <option value="rx">Bajada</option>
+                        <option value="tx">Subida</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Canal</label>
+                      <select v-model="newEthernetSensor.ui_alert_traffic.channel_id">
+                        <option v-for="c in channelsList" :key="c.id" :value="c.id">
+                          {{ c.name }}
+                        </option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Enfriamiento</label>
+                      <input
+                        type="number"
+                        v-model.number="newEthernetSensor.ui_alert_traffic.cooldown_minutes"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label>Tolerancia</label>
+                      <input
+                        type="number"
+                        v-model.number="newEthernetSensor.ui_alert_traffic.tolerance_count"
+                      />
+                    </div>
+                    <div class="form-group checkbox-group">
+                      <input
+                        type="checkbox"
+                        v-model="newEthernetSensor.ui_alert_traffic.notify_recovery"
+                      />
+                      <label>Recuperación 🟢</label>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1454,6 +1657,18 @@ function closeSensorDetails() {
 }
 .alert-config-item {
   display: contents;
+}
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0;
+}
+.separator {
+  border: 0;
+  border-top: 1px solid var(--primary-color);
+  margin: 1rem 0;
 }
 .checkbox-group {
   flex-direction: row;

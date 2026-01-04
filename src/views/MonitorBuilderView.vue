@@ -64,7 +64,7 @@ const createNewPingSensor = () => ({
     channel_id: null,
     cooldown_minutes: 5,
     tolerance_count: 1,
-    notify_recovery: false, // <--- NUEVO
+    notify_recovery: false,
   },
   ui_alert_latency: {
     enabled: false,
@@ -72,7 +72,7 @@ const createNewPingSensor = () => ({
     channel_id: null,
     cooldown_minutes: 5,
     tolerance_count: 1,
-    notify_recovery: false, // <--- NUEVO
+    notify_recovery: false,
   },
 })
 
@@ -87,7 +87,7 @@ const createNewEthernetSensor = () => ({
     channel_id: null,
     cooldown_minutes: 10,
     tolerance_count: 1,
-    notify_recovery: false, // <--- NUEVO
+    notify_recovery: false,
   },
   ui_alert_traffic: {
     enabled: false,
@@ -96,7 +96,7 @@ const createNewEthernetSensor = () => ({
     channel_id: null,
     cooldown_minutes: 5,
     tolerance_count: 1,
-    notify_recovery: false, // <--- NUEVO
+    notify_recovery: false,
   },
 })
 
@@ -285,24 +285,27 @@ function openFormForEdit(sensor) {
 
     const alerts = cfg?.alerts || []
 
-    // Timeout Mapping
+    // Timeout Mapping - CORREGIDO: Mapeo explícito de tolerancia
     const tOut = mapAlert(alerts, 'timeout')
     if (tOut.type) {
       uiData.ui_alert_timeout = {
         enabled: true,
-        ...tOut,
         channel_id: tOut.channel_id ?? null,
+        cooldown_minutes: tOut.cooldown_minutes ?? 5,
+        tolerance_count: tOut.tolerance_count ?? 1, // Default seguro
         notify_recovery: tOut.notify_recovery ?? false,
       }
     }
 
-    // Latency Mapping
+    // Latency Mapping - CORREGIDO
     const tLat = mapAlert(alerts, 'high_latency')
     if (tLat.type) {
       uiData.ui_alert_latency = {
         enabled: true,
-        ...tLat,
+        threshold_ms: tLat.threshold_ms ?? 200,
         channel_id: tLat.channel_id ?? null,
+        cooldown_minutes: tLat.cooldown_minutes ?? 5,
+        tolerance_count: tLat.tolerance_count ?? 1, // Default seguro
         notify_recovery: tLat.notify_recovery ?? false,
       }
     }
@@ -318,24 +321,28 @@ function openFormForEdit(sensor) {
 
     const alerts = cfg?.alerts || []
 
-    // Speed Change Mapping
+    // Speed Change Mapping - CORREGIDO
     const tSpd = mapAlert(alerts, 'speed_change')
     if (tSpd.type) {
       uiData.ui_alert_speed_change = {
         enabled: true,
-        ...tSpd,
         channel_id: tSpd.channel_id ?? null,
+        cooldown_minutes: tSpd.cooldown_minutes ?? 10,
+        tolerance_count: tSpd.tolerance_count ?? 1, // Default seguro
         notify_recovery: tSpd.notify_recovery ?? false,
       }
     }
 
-    // Traffic Mapping
+    // Traffic Mapping - CORREGIDO
     const tTrf = mapAlert(alerts, 'traffic_threshold')
     if (tTrf.type) {
       uiData.ui_alert_traffic = {
         enabled: true,
-        ...tTrf,
+        threshold_mbps: tTrf.threshold_mbps ?? 100,
+        direction: tTrf.direction ?? 'any',
         channel_id: tTrf.channel_id ?? null,
+        cooldown_minutes: tTrf.cooldown_minutes ?? 5,
+        tolerance_count: tTrf.tolerance_count ?? 1, // Default seguro
         notify_recovery: tTrf.notify_recovery ?? false,
       }
     }
