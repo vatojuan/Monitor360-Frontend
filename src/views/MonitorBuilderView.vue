@@ -24,6 +24,9 @@ const customGroupName = ref('') // Input manual
 const sensorToEdit = ref(null)
 const isEditMode = ref(false)
 
+// --- Estado para Selector de Destino (Ping) ---
+const allDevicesList = ref([]) // Lista completa para el selector de destino
+
 // --- COMPUTADO: Validación de Maestro ---
 const hasParentMaestro = computed(() => {
   return !!selectedDevice.value?.maestro_id
@@ -45,6 +48,45 @@ const availableGroups = computed(() => {
   }
   // Convertimos a array y ordenamos alfabéticamente
   return Array.from(groups).sort()
+})
+
+// --- COMPUTADO: Dispositivos Sugeridos para Destino (Filtrado Inteligente) ---
+const suggestedTargetDevices = computed(() => {
+  if (!selectedDevice.value) return []
+
+  // 1. Identificar el contexto de red del dispositivo seleccionado
+  let currentVpnId = selectedDevice.value.vpn_profile_id
+
+  // Si tiene maestro, usamos el perfil del maestro (ya que es quien enruta)
+  if (selectedDevice.value.maestro_id) {
+    const maestro = allDevicesList.value.find((d) => d.id === selectedDevice.value.maestro_id)
+    if (maestro) {
+      currentVpnId = maestro.vpn_profile_id
+    }
+  }
+
+  // 2. Filtrar dispositivos que compartan ese contexto
+  return allDevicesList.value.filter((d) => {
+    // Excluirse a sí mismo
+    if (d.id === selectedDevice.value.id) return false
+
+    // Si no detectamos VPN, mostramos todos (fallback)
+    if (!currentVpnId) return true
+
+    // Si el destino es un maestro, chequear su VPN directa
+    if (d.is_maestro) {
+      return d.vpn_profile_id === currentVpnId
+    }
+
+    // Si el destino es un esclavo, chequear la VPN de SU maestro
+    if (d.maestro_id) {
+      const destMaestro = allDevicesList.value.find((m) => m.id === d.maestro_id)
+      return destMaestro && destMaestro.vpn_profile_id === currentVpnId
+    }
+
+    // Si tiene VPN directa asignada
+    return d.vpn_profile_id === currentVpnId
+  })
 })
 
 //
@@ -109,6 +151,7 @@ onMounted(() => {
   fetchGroups()
   fetchAllMonitors()
   fetchChannels()
+  fetchAllDevices() // Cargar inventario para el buscador
 })
 
 // RESETEO
@@ -144,6 +187,15 @@ async function fetchGroups() {
     dbGroups.value = data.map((g) => g.name)
   } catch (err) {
     console.error('Error fetching groups:', err)
+  }
+}
+
+async function fetchAllDevices() {
+  try {
+    const { data } = await api.get('/devices')
+    allDevicesList.value = Array.isArray(data) ? data : []
+  } catch (err) {
+    console.error('Error fetching devices list:', err)
   }
 }
 
@@ -285,27 +337,24 @@ function openFormForEdit(sensor) {
 
     const alerts = cfg?.alerts || []
 
-    // Timeout Mapping - CORREGIDO: Mapeo explícito de tolerancia
+    // Timeout Mapping
     const tOut = mapAlert(alerts, 'timeout')
     if (tOut.type) {
       uiData.ui_alert_timeout = {
         enabled: true,
+        ...tOut,
         channel_id: tOut.channel_id ?? null,
-        cooldown_minutes: tOut.cooldown_minutes ?? 5,
-        tolerance_count: tOut.tolerance_count ?? 1, // Default seguro
         notify_recovery: tOut.notify_recovery ?? false,
       }
     }
 
-    // Latency Mapping - CORREGIDO
+    // Latency Mapping
     const tLat = mapAlert(alerts, 'high_latency')
     if (tLat.type) {
       uiData.ui_alert_latency = {
         enabled: true,
-        threshold_ms: tLat.threshold_ms ?? 200,
+        ...tLat,
         channel_id: tLat.channel_id ?? null,
-        cooldown_minutes: tLat.cooldown_minutes ?? 5,
-        tolerance_count: tLat.tolerance_count ?? 1, // Default seguro
         notify_recovery: tLat.notify_recovery ?? false,
       }
     }
@@ -321,28 +370,24 @@ function openFormForEdit(sensor) {
 
     const alerts = cfg?.alerts || []
 
-    // Speed Change Mapping - CORREGIDO
+    // Speed Change Mapping
     const tSpd = mapAlert(alerts, 'speed_change')
     if (tSpd.type) {
       uiData.ui_alert_speed_change = {
         enabled: true,
+        ...tSpd,
         channel_id: tSpd.channel_id ?? null,
-        cooldown_minutes: tSpd.cooldown_minutes ?? 10,
-        tolerance_count: tSpd.tolerance_count ?? 1, // Default seguro
         notify_recovery: tSpd.notify_recovery ?? false,
       }
     }
 
-    // Traffic Mapping - CORREGIDO
+    // Traffic Mapping
     const tTrf = mapAlert(alerts, 'traffic_threshold')
     if (tTrf.type) {
       uiData.ui_alert_traffic = {
         enabled: true,
-        threshold_mbps: tTrf.threshold_mbps ?? 100,
-        direction: tTrf.direction ?? 'any',
+        ...tTrf,
         channel_id: tTrf.channel_id ?? null,
-        cooldown_minutes: tTrf.cooldown_minutes ?? 5,
-        tolerance_count: tTrf.tolerance_count ?? 1, // Default seguro
         notify_recovery: tTrf.notify_recovery ?? false,
       }
     }
@@ -575,10 +620,25 @@ watch(searchQuery, (newQuery) => {
             </select>
             <p v-if="!hasParentMaestro" class="form-hint warning-text">⚠️ Sin maestro asignado.</p>
           </div>
+
           <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
             <label>IP de Destino</label>
-            <input type="text" v-model="newPingSensor.config.target_ip" placeholder="8.8.8.8" />
+            <div style="position: relative">
+              <input
+                list="target-devices"
+                type="text"
+                v-model="newPingSensor.config.target_ip"
+                placeholder="Ej: 8.8.8.8 o selecciona de la lista"
+                class="search-input"
+              />
+              <datalist id="target-devices">
+                <option v-for="d in suggestedTargetDevices" :key="d.id" :value="d.ip_address">
+                  {{ d.client_name }}
+                </option>
+              </datalist>
+            </div>
           </div>
+
           <div class="form-group">
             <label>Intervalo (s)</label>
             <input type="number" v-model.number="newPingSensor.config.interval_sec" required />
