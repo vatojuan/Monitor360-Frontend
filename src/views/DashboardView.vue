@@ -33,6 +33,9 @@ const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
 const isRebooting = ref(false)
 
+// --- Nuevo Estado para Selector de IP Destino ---
+const allDevicesList = ref([])
+
 // --- COMPUTADOS ---
 const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
 const channelsById = ref({})
@@ -40,6 +43,47 @@ const channelsList = computed(() => Object.values(channelsById.value))
 
 // Ordenamos los grupos disponibles para los selectores
 const availableGroups = computed(() => [...dbGroups.value].sort())
+
+// --- COMPUTADO: Dispositivos Sugeridos para Edición (Filtrado Inteligente) ---
+const suggestedTargetDevicesForEdit = computed(() => {
+  if (!currentMonitorContext.value) return []
+
+  // 1. Identificar el contexto de red del monitor actual
+  let currentVpnId = currentMonitorContext.value.vpn_profile_id
+
+  // Si tiene maestro, usamos el perfil del maestro
+  if (currentMonitorContext.value.maestro_id) {
+    const maestro = allDevicesList.value.find(
+      (d) => d.id === currentMonitorContext.value.maestro_id,
+    )
+    if (maestro) {
+      currentVpnId = maestro.vpn_profile_id
+    }
+  }
+
+  // 2. Filtrar dispositivos que compartan ese contexto
+  return allDevicesList.value.filter((d) => {
+    // Excluirse a sí mismo
+    if (d.id === currentMonitorContext.value.device_id) return false
+
+    // Si no detectamos VPN, mostramos todos (fallback)
+    if (!currentVpnId) return true
+
+    // Si el destino es un maestro, chequear su VPN directa
+    if (d.is_maestro) {
+      return d.vpn_profile_id === currentVpnId
+    }
+
+    // Si el destino es un esclavo, chequear la VPN de SU maestro
+    if (d.maestro_id) {
+      const destMaestro = allDevicesList.value.find((m) => m.id === d.maestro_id)
+      return destMaestro && destMaestro.vpn_profile_id === currentVpnId
+    }
+
+    // Si tiene VPN directa asignada
+    return d.vpn_profile_id === currentVpnId
+  })
+})
 
 // --- FORMULARIOS BASE ---
 const createNewPingSensor = () => ({
@@ -123,6 +167,16 @@ async function fetchAllMonitors() {
     trySubscribeSensors()
   } catch (err) {
     console.error(err)
+  }
+}
+
+// Nueva función para cargar todos los dispositivos (necesaria para el buscador)
+async function fetchAllDevices() {
+  try {
+    const { data } = await api.get('/devices')
+    allDevicesList.value = Array.isArray(data) ? data : []
+  } catch (err) {
+    console.error('Error fetching devices list:', err)
   }
 }
 
@@ -333,6 +387,7 @@ onMounted(async () => {
   }
   await fetchGroups()
   await fetchAllMonitors()
+  await fetchAllDevices() // Cargar inventario para el buscador
 
   await connectWebSocketWhenAuthenticated()
   wireWsSyncAndSubs()
@@ -901,7 +956,7 @@ function closeSensorDetails() {
           <div class="sub-section span-3">
             <h4>Configuración General</h4>
             <div class="general-config-grid">
-              <div class="form-group checkbox-group">
+              <div class="form-group checkbox-group aligned-chk">
                 <input
                   type="checkbox"
                   v-model="
@@ -912,7 +967,7 @@ function closeSensorDetails() {
                 />
                 <label for="gAct">Encendido</label>
               </div>
-              <div class="form-group checkbox-group">
+              <div class="form-group checkbox-group aligned-chk">
                 <input
                   type="checkbox"
                   v-model="
@@ -940,8 +995,25 @@ function closeSensorDetails() {
             </div>
 
             <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
-              <label>IP Destino</label
-              ><input type="text" v-model="newPingSensor.config.target_ip" />
+              <label>IP Destino</label>
+              <div style="position: relative">
+                <input
+                  list="edit-target-devices"
+                  type="text"
+                  v-model="newPingSensor.config.target_ip"
+                  placeholder="Ej: 8.8.8.8 o selecciona de la lista"
+                  class="search-input"
+                />
+                <datalist id="edit-target-devices">
+                  <option
+                    v-for="d in suggestedTargetDevicesForEdit"
+                    :key="d.id"
+                    :value="d.ip_address"
+                  >
+                    {{ d.client_name }}
+                  </option>
+                </datalist>
+              </div>
             </div>
             <div class="form-group">
               <label>Intervalo</label
@@ -956,7 +1028,7 @@ function closeSensorDetails() {
               <h4>Alertas</h4>
 
               <div class="alert-config-item">
-                <div class="form-group checkbox-group">
+                <div class="form-group checkbox-group aligned-chk">
                   <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.enabled" /><label
                     >Timeout</label
                   >
@@ -979,13 +1051,14 @@ function closeSensorDetails() {
                       />
                     </div>
                     <div class="form-group">
-                      <label>Tolerancia</label>
+                      <span class="small-label">Tolerancia a Fallos:</span>
                       <input
                         type="number"
                         v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
+                        class="tiny-input"
                       />
                     </div>
-                    <div class="form-group checkbox-group">
+                    <div class="form-group checkbox-group aligned-chk">
                       <input
                         type="checkbox"
                         v-model="newPingSensor.ui_alert_timeout.notify_recovery"
@@ -999,7 +1072,7 @@ function closeSensorDetails() {
               <hr class="separator" />
 
               <div class="alert-config-item">
-                <div class="form-group checkbox-group">
+                <div class="form-group checkbox-group aligned-chk">
                   <input type="checkbox" v-model="newPingSensor.ui_alert_latency.enabled" /><label
                     >Latencia Alta</label
                   >
@@ -1022,13 +1095,14 @@ function closeSensorDetails() {
                       />
                     </div>
                     <div class="form-group">
-                      <label>Tolerancia</label>
+                      <span class="small-label">Tolerancia a Fallos:</span>
                       <input
                         type="number"
                         v-model.number="newPingSensor.ui_alert_latency.tolerance_count"
+                        class="tiny-input"
                       />
                     </div>
-                    <div class="form-group checkbox-group">
+                    <div class="form-group checkbox-group aligned-chk">
                       <input
                         type="checkbox"
                         v-model="newPingSensor.ui_alert_latency.notify_recovery"
@@ -1054,7 +1128,7 @@ function closeSensorDetails() {
               <h4>Alertas</h4>
 
               <div class="alert-config-item">
-                <div class="form-group checkbox-group">
+                <div class="form-group checkbox-group aligned-chk">
                   <input
                     type="checkbox"
                     v-model="newEthernetSensor.ui_alert_speed_change.enabled"
@@ -1078,13 +1152,14 @@ function closeSensorDetails() {
                       />
                     </div>
                     <div class="form-group">
-                      <label>Tolerancia</label>
+                      <span class="small-label">Tolerancia a Fallos:</span>
                       <input
                         type="number"
                         v-model.number="newEthernetSensor.ui_alert_speed_change.tolerance_count"
+                        class="tiny-input"
                       />
                     </div>
-                    <div class="form-group checkbox-group">
+                    <div class="form-group checkbox-group aligned-chk">
                       <input
                         type="checkbox"
                         v-model="newEthernetSensor.ui_alert_speed_change.notify_recovery"
@@ -1098,7 +1173,7 @@ function closeSensorDetails() {
               <hr class="separator" />
 
               <div class="alert-config-item">
-                <div class="form-group checkbox-group">
+                <div class="form-group checkbox-group aligned-chk">
                   <input
                     type="checkbox"
                     v-model="newEthernetSensor.ui_alert_traffic.enabled"
@@ -1137,13 +1212,14 @@ function closeSensorDetails() {
                       />
                     </div>
                     <div class="form-group">
-                      <label>Tolerancia</label>
+                      <span class="small-label">Tolerancia a Fallos:</span>
                       <input
                         type="number"
                         v-model.number="newEthernetSensor.ui_alert_traffic.tolerance_count"
+                        class="tiny-input"
                       />
                     </div>
-                    <div class="form-group checkbox-group">
+                    <div class="form-group checkbox-group aligned-chk">
                       <input
                         type="checkbox"
                         v-model="newEthernetSensor.ui_alert_traffic.notify_recovery"
@@ -1674,13 +1750,25 @@ function closeSensorDetails() {
 .checkbox-group {
   display: flex;
   flex-direction: row;
-  align-items: center; /* Alinea verticalmente al centro */
+  align-items: center;
   gap: 0.5rem;
 }
 .checkbox-group input[type='checkbox'] {
   width: auto;
-  margin: 0; /* Quita márgenes extraños */
+  margin: 0;
 }
+/* Nueva clase para el label pequeño */
+.small-label {
+  font-size: 0.8rem;
+  color: #aaa;
+  white-space: nowrap;
+}
+/* Nueva clase para el input pequeño */
+.tiny-input {
+  width: 60px !important;
+  padding: 0.4rem !important;
+}
+
 .text-green {
   color: var(--green);
   font-weight: bold;
