@@ -53,8 +53,14 @@ async function loadGlobalData() {
 
 // --- API CALLS ---
 async function fetchMaestros() {
-  const { data } = await api.get('/devices?is_maestro=true')
-  maestros.value = data || []
+  try {
+    // Obtenemos todos y filtramos localmente para seguridad
+    const { data } = await api.get('/devices')
+    maestros.value = (data || []).filter((d) => d.is_maestro === true)
+  } catch (e) {
+    console.error('Error fetching maestros', e)
+    maestros.value = []
+  }
 }
 
 async function fetchCredentialProfiles() {
