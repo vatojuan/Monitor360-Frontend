@@ -118,29 +118,29 @@
 
         <div v-if="menu" class="m360-pop" role="menu">
           <router-link to="/" class="m360-item" role="menuitem" @click="closeMenu"
-            >Dashboard</router-link
+            >📊 Dashboard</router-link
           >
           <router-link to="/monitor-builder" class="m360-item" role="menuitem" @click="closeMenu"
-            >Añadir monitor</router-link
+            >➕ Añadir monitor</router-link
           >
           <router-link to="/scan" class="m360-item" role="menuitem" @click="closeMenu"
             >📡 Escáner de Red</router-link
           >
           <router-link to="/devices" class="m360-item" role="menuitem" @click="closeMenu"
-            >Gestionar dispositivos</router-link
+            >⚙️ Gestionar dispositivos</router-link
           >
           <router-link to="/credentials" class="m360-item" role="menuitem" @click="closeMenu"
-            >Credenciales</router-link
+            >🔐 Credenciales</router-link
           >
           <router-link to="/channels" class="m360-item" role="menuitem" @click="closeMenu"
-            >Canales</router-link
+            >📢 Canales</router-link
           >
           <router-link to="/vpns" class="m360-item" role="menuitem" @click="closeMenu"
-            >VPNs</router-link
+            >🛡️ VPNs</router-link
           >
 
           <button class="m360-item logout" type="button" role="menuitem" @click="onLogout">
-            Cerrar sesión
+            ⎋ Cerrar sesión
           </button>
         </div>
       </div>
