@@ -33,7 +33,10 @@ const scanConfig = ref({
 
   // Nuevos campos para Auto-Adoptar
   target_group: 'General',
-  sensor_template_type: 'ping', // 'ping' | 'ethernet'
+
+  // Banderas independientes para incluir sensores
+  include_ping_sensor: true,
+  include_ethernet_sensor: false,
 })
 
 // --- COMPUTADA: Dispositivos Sugeridos (Contexto de Red del Maestro) ---
@@ -67,15 +70,15 @@ const bulkPingConfig = ref({
   config: {
     interval_sec: 60,
     latency_threshold_ms: 150,
-    display_mode: 'realtime', // Faltaba
-    average_count: 5, // Faltaba
+    display_mode: 'realtime',
+    average_count: 5,
     ping_type: 'device_to_external',
     target_ip: '8.8.8.8',
   },
   ui_alert_timeout: {
     enabled: false,
     channel_id: null,
-    cooldown_minutes: 5, // Faltaba en UI
+    cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
   },
@@ -83,8 +86,8 @@ const bulkPingConfig = ref({
     enabled: false,
     threshold_ms: 200,
     channel_id: null,
-    cooldown_minutes: 5, // Faltaba en UI
-    tolerance_count: 1, // Faltaba en UI
+    cooldown_minutes: 5,
+    tolerance_count: 1,
     notify_recovery: false,
   },
   is_active: true,
@@ -266,11 +269,21 @@ async function runScan() {
   try {
     const payload = { ...scanConfig.value }
 
-    // Si es Auto-Adoptar, inyectamos la configuración del sensor
+    // Si es Auto-Adoptar, preparamos la lista de sensores a crear
     if (scanConfig.value.is_active && scanConfig.value.scan_mode === 'auto') {
-      const type = scanConfig.value.sensor_template_type
-      const sourceData = type === 'ping' ? bulkPingConfig.value : bulkEthernetConfig.value
-      payload.sensor_config = buildSensorConfigPayload(type, sourceData)
+      const sensorsToCreate = []
+
+      if (scanConfig.value.include_ping_sensor) {
+        sensorsToCreate.push(buildSensorConfigPayload('ping', bulkPingConfig.value))
+      }
+
+      if (scanConfig.value.include_ethernet_sensor) {
+        sensorsToCreate.push(buildSensorConfigPayload('ethernet', bulkEthernetConfig.value))
+      }
+
+      // Enviamos un array de configuraciones en 'sensors_config' en lugar de un objeto único
+      // El backend debe estar preparado para recibir un array en este campo si se envían múltiples
+      payload.sensors_config = sensorsToCreate
     }
 
     await api.post('/discovery/config', payload)
@@ -564,253 +577,273 @@ function getMaestroName(id) {
                   </select>
                 </div>
 
-                <div class="form-group">
-                  <label>Plantilla de Sensor</label>
-                  <div class="sensor-type-selector">
-                    <button
-                      :class="{ active: scanConfig.sensor_template_type === 'ping' }"
-                      @click="scanConfig.sensor_template_type = 'ping'"
-                    >
-                      PING
-                    </button>
-                    <button
-                      :class="{ active: scanConfig.sensor_template_type === 'ethernet' }"
-                      @click="scanConfig.sensor_template_type = 'ethernet'"
-                    >
-                      ETHERNET
-                    </button>
+                <div class="sensor-selection-group">
+                  <div class="checkbox-row">
+                    <input type="checkbox" id="chkPing" v-model="scanConfig.include_ping_sensor" />
+                    <label for="chkPing"><strong>Incluir Sensor PING</strong></label>
                   </div>
-                </div>
 
-                <div v-if="scanConfig.sensor_template_type === 'ping'" class="mini-config">
-                  <div class="form-group">
-                    <label>Destino (IP)</label>
-                    <div style="position: relative">
-                      <input
-                        list="scan-target-list"
-                        type="text"
-                        v-model="bulkPingConfig.config.target_ip"
-                        placeholder="Ej: 8.8.8.8 o selecciona..."
-                        class="search-input"
-                      />
-                      <datalist id="scan-target-list">
-                        <option
-                          v-for="d in suggestedTargetDevices"
-                          :key="d.id"
-                          :value="d.ip_address"
+                  <div v-if="scanConfig.include_ping_sensor" class="mini-config fade-in">
+                    <div class="form-group">
+                      <label>Destino (IP)</label>
+                      <div style="position: relative">
+                        <input
+                          list="scan-target-list"
+                          type="text"
+                          v-model="bulkPingConfig.config.target_ip"
+                          placeholder="Ej: 8.8.8.8 o selecciona..."
+                          class="search-input"
+                        />
+                        <datalist id="scan-target-list">
+                          <option
+                            v-for="d in suggestedTargetDevices"
+                            :key="d.id"
+                            :value="d.ip_address"
+                          >
+                            {{ d.client_name }}
+                          </option>
+                        </datalist>
+                      </div>
+                    </div>
+
+                    <div class="config-grid">
+                      <div class="form-group">
+                        <label>Intervalo (s)</label>
+                        <input
+                          type="number"
+                          v-model.number="bulkPingConfig.config.interval_sec"
+                          class="tiny-input-full"
+                        />
+                      </div>
+                      <div class="form-group">
+                        <label>Visualización</label>
+                        <select
+                          v-model="bulkPingConfig.config.display_mode"
+                          class="tiny-input-full"
                         >
-                          {{ d.client_name }}
+                          <option value="realtime">Tiempo Real</option>
+                          <option value="average">Promedio</option>
+                        </select>
+                      </div>
+                      <div
+                        class="form-group"
+                        v-if="bulkPingConfig.config.display_mode === 'average'"
+                      >
+                        <label>Muestras</label>
+                        <input
+                          type="number"
+                          v-model.number="bulkPingConfig.config.average_count"
+                          class="tiny-input-full"
+                        />
+                      </div>
+                    </div>
+
+                    <hr class="separator-light" />
+
+                    <div class="chk-label">
+                      <input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" />
+                      Timeout
+                    </div>
+                    <div v-if="bulkPingConfig.ui_alert_timeout.enabled" class="alert-details">
+                      <select
+                        v-model="bulkPingConfig.ui_alert_timeout.channel_id"
+                        class="mini-select"
+                      >
+                        <option :value="null">-- Canal --</option>
+                        <option v-for="c in channels" :key="c.id" :value="c.id">
+                          {{ c.name }}
                         </option>
-                      </datalist>
+                      </select>
+                      <input
+                        type="number"
+                        v-model.number="bulkPingConfig.ui_alert_timeout.cooldown_minutes"
+                        placeholder="Cool(m)"
+                        class="tiny-input"
+                        title="Enfriamiento"
+                      />
+                      <input
+                        type="number"
+                        v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
+                        placeholder="Tol."
+                        class="tiny-input"
+                        title="Tolerancia"
+                      />
+                      <label class="tiny-chk"
+                        ><input
+                          type="checkbox"
+                          v-model="bulkPingConfig.ui_alert_timeout.notify_recovery"
+                        />
+                        Recup.</label
+                      >
+                    </div>
+
+                    <div class="chk-label">
+                      <input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.enabled" />
+                      Latencia
+                    </div>
+                    <div v-if="bulkPingConfig.ui_alert_latency.enabled" class="alert-details">
+                      <input
+                        type="number"
+                        v-model.number="bulkPingConfig.ui_alert_latency.threshold_ms"
+                        placeholder="ms"
+                        class="tiny-input"
+                        title="Umbral ms"
+                      />
+                      <select
+                        v-model="bulkPingConfig.ui_alert_latency.channel_id"
+                        class="mini-select"
+                      >
+                        <option :value="null">-- Canal --</option>
+                        <option v-for="c in channels" :key="c.id" :value="c.id">
+                          {{ c.name }}
+                        </option>
+                      </select>
+                      <input
+                        type="number"
+                        v-model.number="bulkPingConfig.ui_alert_latency.cooldown_minutes"
+                        placeholder="Cool(m)"
+                        class="tiny-input"
+                        title="Enfriamiento"
+                      />
+                      <input
+                        type="number"
+                        v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
+                        placeholder="Tol."
+                        class="tiny-input"
+                        title="Tolerancia"
+                      />
+                      <label class="tiny-chk"
+                        ><input
+                          type="checkbox"
+                          v-model="bulkPingConfig.ui_alert_latency.notify_recovery"
+                        />
+                        Recup.</label
+                      >
                     </div>
                   </div>
 
-                  <div class="form-group">
-                    <label>Intervalo (s)</label>
-                    <input
-                      type="number"
-                      v-model.number="bulkPingConfig.config.interval_sec"
-                      class="tiny-input-full"
-                    />
-                  </div>
+                  <hr class="separator" />
 
-                  <div class="form-group">
-                    <label>Visualización</label>
-                    <select v-model="bulkPingConfig.config.display_mode" class="tiny-input-full">
-                      <option value="realtime">Tiempo Real</option>
-                      <option value="average">Promedio</option>
-                    </select>
-                  </div>
-                  <div class="form-group" v-if="bulkPingConfig.config.display_mode === 'average'">
-                    <label>Muestras</label>
-                    <input
-                      type="number"
-                      v-model.number="bulkPingConfig.config.average_count"
-                      class="tiny-input-full"
-                    />
-                  </div>
-
-                  <hr class="separator-light" />
-
-                  <div class="chk-label">
-                    <input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" />
-                    Timeout
-                  </div>
-                  <div v-if="bulkPingConfig.ui_alert_timeout.enabled" class="alert-details">
-                    <select
-                      v-model="bulkPingConfig.ui_alert_timeout.channel_id"
-                      class="mini-select"
-                    >
-                      <option :value="null">-- Canal --</option>
-                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                    </select>
-                    <input
-                      type="number"
-                      v-model.number="bulkPingConfig.ui_alert_timeout.cooldown_minutes"
-                      placeholder="Cool(m)"
-                      class="tiny-input"
-                      title="Enfriamiento"
-                    />
-                    <input
-                      type="number"
-                      v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
-                      placeholder="Tol."
-                      class="tiny-input"
-                      title="Tolerancia"
-                    />
-                    <label class="tiny-chk"
-                      ><input
-                        type="checkbox"
-                        v-model="bulkPingConfig.ui_alert_timeout.notify_recovery"
-                      />
-                      Recup.</label
-                    >
-                  </div>
-
-                  <div class="chk-label">
-                    <input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.enabled" />
-                    Latencia
-                  </div>
-                  <div v-if="bulkPingConfig.ui_alert_latency.enabled" class="alert-details">
-                    <input
-                      type="number"
-                      v-model.number="bulkPingConfig.ui_alert_latency.threshold_ms"
-                      placeholder="ms"
-                      class="tiny-input"
-                      title="Umbral ms"
-                    />
-                    <select
-                      v-model="bulkPingConfig.ui_alert_latency.channel_id"
-                      class="mini-select"
-                    >
-                      <option :value="null">-- Canal --</option>
-                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                    </select>
-                    <input
-                      type="number"
-                      v-model.number="bulkPingConfig.ui_alert_latency.cooldown_minutes"
-                      placeholder="Cool(m)"
-                      class="tiny-input"
-                      title="Enfriamiento"
-                    />
-                    <input
-                      type="number"
-                      v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
-                      placeholder="Tol."
-                      class="tiny-input"
-                      title="Tolerancia"
-                    />
-                    <label class="tiny-chk"
-                      ><input
-                        type="checkbox"
-                        v-model="bulkPingConfig.ui_alert_latency.notify_recovery"
-                      />
-                      Recup.</label
-                    >
-                  </div>
-                </div>
-
-                <div v-if="scanConfig.sensor_template_type === 'ethernet'" class="mini-config">
-                  <div class="form-group">
-                    <label>Interfaz</label>
-                    <input
-                      v-model="bulkEthernetConfig.config.interface_name"
-                      placeholder="ether1"
-                      class="tiny-input-full"
-                    />
-                  </div>
-                  <div class="form-group">
-                    <label>Intervalo (s)</label>
-                    <input
-                      type="number"
-                      v-model.number="bulkEthernetConfig.config.interval_sec"
-                      class="tiny-input-full"
-                    />
-                  </div>
-
-                  <hr class="separator-light" />
-
-                  <div class="chk-label">
+                  <div class="checkbox-row">
                     <input
                       type="checkbox"
-                      v-model="bulkEthernetConfig.ui_alert_speed_change.enabled"
+                      id="chkEther"
+                      v-model="scanConfig.include_ethernet_sensor"
                     />
-                    Cambio Vel.
-                  </div>
-                  <div
-                    v-if="bulkEthernetConfig.ui_alert_speed_change.enabled"
-                    class="alert-details"
-                  >
-                    <select
-                      v-model="bulkEthernetConfig.ui_alert_speed_change.channel_id"
-                      class="mini-select"
-                    >
-                      <option :value="null">-- Canal --</option>
-                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                    </select>
-                    <input
-                      type="number"
-                      v-model.number="bulkEthernetConfig.ui_alert_speed_change.cooldown_minutes"
-                      placeholder="Cool(m)"
-                      class="tiny-input"
-                      title="Enfriamiento"
-                    />
-                    <input
-                      type="number"
-                      v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
-                      placeholder="Tol."
-                      class="tiny-input"
-                      title="Tolerancia"
-                    />
-                    <label class="tiny-chk"
-                      ><input
-                        type="checkbox"
-                        v-model="bulkEthernetConfig.ui_alert_speed_change.notify_recovery"
-                      />
-                      Recup.</label
-                    >
+                    <label for="chkEther"><strong>Incluir Sensor ETHERNET</strong></label>
                   </div>
 
-                  <div class="chk-label">
-                    <input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.enabled" />
-                    Tráfico
-                  </div>
-                  <div v-if="bulkEthernetConfig.ui_alert_traffic.enabled" class="alert-details">
-                    <input
-                      type="number"
-                      v-model.number="bulkEthernetConfig.ui_alert_traffic.threshold_mbps"
-                      placeholder="Mbps"
-                      class="tiny-input"
-                      title="Umbral Mbps"
-                    />
-                    <select
-                      v-model="bulkEthernetConfig.ui_alert_traffic.channel_id"
-                      class="mini-select"
-                    >
-                      <option :value="null">-- Canal --</option>
-                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                    </select>
-                    <input
-                      type="number"
-                      v-model.number="bulkEthernetConfig.ui_alert_traffic.cooldown_minutes"
-                      placeholder="Cool(m)"
-                      class="tiny-input"
-                      title="Enfriamiento"
-                    />
-                    <input
-                      type="number"
-                      v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
-                      placeholder="Tol."
-                      class="tiny-input"
-                      title="Tolerancia"
-                    />
-                    <label class="tiny-chk"
-                      ><input
+                  <div v-if="scanConfig.include_ethernet_sensor" class="mini-config fade-in">
+                    <div class="config-grid">
+                      <div class="form-group">
+                        <label>Interfaz</label>
+                        <input
+                          v-model="bulkEthernetConfig.config.interface_name"
+                          placeholder="ether1"
+                          class="tiny-input-full"
+                        />
+                      </div>
+                      <div class="form-group">
+                        <label>Intervalo (s)</label>
+                        <input
+                          type="number"
+                          v-model.number="bulkEthernetConfig.config.interval_sec"
+                          class="tiny-input-full"
+                        />
+                      </div>
+                    </div>
+
+                    <hr class="separator-light" />
+
+                    <div class="chk-label">
+                      <input
                         type="checkbox"
-                        v-model="bulkEthernetConfig.ui_alert_traffic.notify_recovery"
+                        v-model="bulkEthernetConfig.ui_alert_speed_change.enabled"
                       />
-                      Recup.</label
+                      Cambio Vel.
+                    </div>
+                    <div
+                      v-if="bulkEthernetConfig.ui_alert_speed_change.enabled"
+                      class="alert-details"
                     >
+                      <select
+                        v-model="bulkEthernetConfig.ui_alert_speed_change.channel_id"
+                        class="mini-select"
+                      >
+                        <option :value="null">-- Canal --</option>
+                        <option v-for="c in channels" :key="c.id" :value="c.id">
+                          {{ c.name }}
+                        </option>
+                      </select>
+                      <input
+                        type="number"
+                        v-model.number="bulkEthernetConfig.ui_alert_speed_change.cooldown_minutes"
+                        placeholder="Cool(m)"
+                        class="tiny-input"
+                        title="Enfriamiento"
+                      />
+                      <input
+                        type="number"
+                        v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
+                        placeholder="Tol."
+                        class="tiny-input"
+                        title="Tolerancia"
+                      />
+                      <label class="tiny-chk"
+                        ><input
+                          type="checkbox"
+                          v-model="bulkEthernetConfig.ui_alert_speed_change.notify_recovery"
+                        />
+                        Recup.</label
+                      >
+                    </div>
+
+                    <div class="chk-label">
+                      <input
+                        type="checkbox"
+                        v-model="bulkEthernetConfig.ui_alert_traffic.enabled"
+                      />
+                      Tráfico
+                    </div>
+                    <div v-if="bulkEthernetConfig.ui_alert_traffic.enabled" class="alert-details">
+                      <input
+                        type="number"
+                        v-model.number="bulkEthernetConfig.ui_alert_traffic.threshold_mbps"
+                        placeholder="Mbps"
+                        class="tiny-input"
+                        title="Umbral Mbps"
+                      />
+                      <select
+                        v-model="bulkEthernetConfig.ui_alert_traffic.channel_id"
+                        class="mini-select"
+                      >
+                        <option :value="null">-- Canal --</option>
+                        <option v-for="c in channels" :key="c.id" :value="c.id">
+                          {{ c.name }}
+                        </option>
+                      </select>
+                      <input
+                        type="number"
+                        v-model.number="bulkEthernetConfig.ui_alert_traffic.cooldown_minutes"
+                        placeholder="Cool(m)"
+                        class="tiny-input"
+                        title="Enfriamiento"
+                      />
+                      <input
+                        type="number"
+                        v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
+                        placeholder="Tol."
+                        class="tiny-input"
+                        title="Tolerancia"
+                      />
+                      <label class="tiny-chk"
+                        ><input
+                          type="checkbox"
+                          v-model="bulkEthernetConfig.ui_alert_traffic.notify_recovery"
+                        />
+                        Recup.</label
+                      >
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1174,29 +1207,20 @@ function getMaestroName(id) {
   font-size: 0.9rem;
   margin-bottom: 10px;
 }
-.sensor-type-selector {
-  display: flex;
-  gap: 10px;
-}
-.sensor-type-selector button {
-  flex: 1;
-  padding: 6px;
-  background: var(--surface-color);
-  border: 1px solid var(--primary-color);
-  color: #888;
-  cursor: pointer;
-  border-radius: 4px;
-  font-size: 0.8rem;
-}
-.sensor-type-selector button.active {
-  background: var(--primary-color);
-  color: white;
+.sensor-selection-group {
+  margin-top: 10px;
 }
 .mini-config {
   background: rgba(0, 0, 0, 0.2);
   padding: 10px;
   border-radius: 4px;
-  margin-top: 10px;
+  margin-top: 5px;
+  margin-bottom: 15px;
+}
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 .chk-label {
   display: flex;
