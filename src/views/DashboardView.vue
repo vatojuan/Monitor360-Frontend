@@ -458,10 +458,22 @@ async function deleteSensor(sensor, e) {
   try {
     await api.delete(`/sensors/${sensor.id}`)
 
-    // Actualizar estado local
+    // Actualizar estado local eliminando el sensor de la lista en memoria
     const monitor = allMonitors.value.find((m) => m.monitor_id === sensor.monitor_id)
     if (monitor && monitor.sensors) {
       monitor.sensors = monitor.sensors.filter((s) => s.id !== sensor.id)
+      // Forzar reactividad si es necesario (en Vue 3 con ref suele ser automático al reasignar, pero esto asegura)
+      monitor.sensors = [...monitor.sensors]
+    }
+
+    // También eliminar del agrupado para que se refleje en la UI inmediatamente
+    if (activeGroup.value && groupedMonitors.value[activeGroup.value]) {
+      const groupMonitor = groupedMonitors.value[activeGroup.value].find(
+        (m) => m.monitor_id === sensor.monitor_id,
+      )
+      if (groupMonitor && groupMonitor.sensors) {
+        groupMonitor.sensors = groupMonitor.sensors.filter((s) => s.id !== sensor.id)
+      }
     }
 
     showNotification('Sensor eliminado correctamente.', 'success')
