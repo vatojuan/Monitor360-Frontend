@@ -62,20 +62,20 @@ const suggestedTargetDevices = computed(() => {
   })
 })
 
-// --- ESTADO TEMPLATE SENSORES ---
+// --- ESTADO TEMPLATE SENSORES (COMPLETO) ---
 const bulkPingConfig = ref({
   config: {
     interval_sec: 60,
     latency_threshold_ms: 150,
-    display_mode: 'realtime',
-    average_count: 5,
-    ping_type: 'device_to_external', // Default para auto
+    display_mode: 'realtime', // Faltaba
+    average_count: 5, // Faltaba
+    ping_type: 'device_to_external',
     target_ip: '8.8.8.8',
   },
   ui_alert_timeout: {
     enabled: false,
     channel_id: null,
-    cooldown_minutes: 5,
+    cooldown_minutes: 5, // Faltaba en UI
     tolerance_count: 1,
     notify_recovery: false,
   },
@@ -83,8 +83,8 @@ const bulkPingConfig = ref({
     enabled: false,
     threshold_ms: 200,
     channel_id: null,
-    cooldown_minutes: 5,
-    tolerance_count: 1,
+    cooldown_minutes: 5, // Faltaba en UI
+    tolerance_count: 1, // Faltaba en UI
     notify_recovery: false,
   },
   is_active: true,
@@ -329,7 +329,6 @@ async function deletePending(mac) {
   }
 }
 
-// --- NUEVA FUNCIÓN: ELIMINAR PERFIL DE ESCANEO ---
 async function deleteScanProfile(id) {
   if (!confirm('¿Eliminar esta automatización de escaneo?')) return
   try {
@@ -615,11 +614,29 @@ function getMaestroName(id) {
                     />
                   </div>
 
+                  <div class="form-group">
+                    <label>Visualización</label>
+                    <select v-model="bulkPingConfig.config.display_mode" class="tiny-input-full">
+                      <option value="realtime">Tiempo Real</option>
+                      <option value="average">Promedio</option>
+                    </select>
+                  </div>
+                  <div class="form-group" v-if="bulkPingConfig.config.display_mode === 'average'">
+                    <label>Muestras</label>
+                    <input
+                      type="number"
+                      v-model.number="bulkPingConfig.config.average_count"
+                      class="tiny-input-full"
+                    />
+                  </div>
+
+                  <hr class="separator-light" />
+
                   <div class="chk-label">
                     <input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" />
                     Timeout
                   </div>
-                  <div v-if="bulkPingConfig.ui_alert_timeout.enabled" class="alert-mini-row">
+                  <div v-if="bulkPingConfig.ui_alert_timeout.enabled" class="alert-details">
                     <select
                       v-model="bulkPingConfig.ui_alert_timeout.channel_id"
                       class="mini-select"
@@ -629,9 +646,17 @@ function getMaestroName(id) {
                     </select>
                     <input
                       type="number"
+                      v-model.number="bulkPingConfig.ui_alert_timeout.cooldown_minutes"
+                      placeholder="Cool(m)"
+                      class="tiny-input"
+                      title="Enfriamiento"
+                    />
+                    <input
+                      type="number"
                       v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
                       placeholder="Tol."
                       class="tiny-input"
+                      title="Tolerancia"
                     />
                     <label class="tiny-chk"
                       ><input
@@ -646,7 +671,14 @@ function getMaestroName(id) {
                     <input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.enabled" />
                     Latencia
                   </div>
-                  <div v-if="bulkPingConfig.ui_alert_latency.enabled" class="alert-mini-row">
+                  <div v-if="bulkPingConfig.ui_alert_latency.enabled" class="alert-details">
+                    <input
+                      type="number"
+                      v-model.number="bulkPingConfig.ui_alert_latency.threshold_ms"
+                      placeholder="ms"
+                      class="tiny-input"
+                      title="Umbral ms"
+                    />
                     <select
                       v-model="bulkPingConfig.ui_alert_latency.channel_id"
                       class="mini-select"
@@ -656,9 +688,17 @@ function getMaestroName(id) {
                     </select>
                     <input
                       type="number"
-                      v-model.number="bulkPingConfig.ui_alert_latency.threshold_ms"
-                      placeholder="ms"
+                      v-model.number="bulkPingConfig.ui_alert_latency.cooldown_minutes"
+                      placeholder="Cool(m)"
                       class="tiny-input"
+                      title="Enfriamiento"
+                    />
+                    <input
+                      type="number"
+                      v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
+                      placeholder="Tol."
+                      class="tiny-input"
+                      title="Tolerancia"
                     />
                     <label class="tiny-chk"
                       ><input
@@ -679,6 +719,16 @@ function getMaestroName(id) {
                       class="tiny-input-full"
                     />
                   </div>
+                  <div class="form-group">
+                    <label>Intervalo (s)</label>
+                    <input
+                      type="number"
+                      v-model.number="bulkEthernetConfig.config.interval_sec"
+                      class="tiny-input-full"
+                    />
+                  </div>
+
+                  <hr class="separator-light" />
 
                   <div class="chk-label">
                     <input
@@ -689,7 +739,7 @@ function getMaestroName(id) {
                   </div>
                   <div
                     v-if="bulkEthernetConfig.ui_alert_speed_change.enabled"
-                    class="alert-mini-row"
+                    class="alert-details"
                   >
                     <select
                       v-model="bulkEthernetConfig.ui_alert_speed_change.channel_id"
@@ -698,6 +748,20 @@ function getMaestroName(id) {
                       <option :value="null">-- Canal --</option>
                       <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                     </select>
+                    <input
+                      type="number"
+                      v-model.number="bulkEthernetConfig.ui_alert_speed_change.cooldown_minutes"
+                      placeholder="Cool(m)"
+                      class="tiny-input"
+                      title="Enfriamiento"
+                    />
+                    <input
+                      type="number"
+                      v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
+                      placeholder="Tol."
+                      class="tiny-input"
+                      title="Tolerancia"
+                    />
                     <label class="tiny-chk"
                       ><input
                         type="checkbox"
@@ -711,7 +775,14 @@ function getMaestroName(id) {
                     <input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.enabled" />
                     Tráfico
                   </div>
-                  <div v-if="bulkEthernetConfig.ui_alert_traffic.enabled" class="alert-mini-row">
+                  <div v-if="bulkEthernetConfig.ui_alert_traffic.enabled" class="alert-details">
+                    <input
+                      type="number"
+                      v-model.number="bulkEthernetConfig.ui_alert_traffic.threshold_mbps"
+                      placeholder="Mbps"
+                      class="tiny-input"
+                      title="Umbral Mbps"
+                    />
                     <select
                       v-model="bulkEthernetConfig.ui_alert_traffic.channel_id"
                       class="mini-select"
@@ -721,9 +792,17 @@ function getMaestroName(id) {
                     </select>
                     <input
                       type="number"
-                      v-model.number="bulkEthernetConfig.ui_alert_traffic.threshold_mbps"
-                      placeholder="Mbps"
+                      v-model.number="bulkEthernetConfig.ui_alert_traffic.cooldown_minutes"
+                      placeholder="Cool(m)"
                       class="tiny-input"
+                      title="Enfriamiento"
+                    />
+                    <input
+                      type="number"
+                      v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
+                      placeholder="Tol."
+                      class="tiny-input"
+                      title="Tolerancia"
                     />
                     <label class="tiny-chk"
                       ><input
@@ -1085,6 +1164,11 @@ function getMaestroName(id) {
   margin: 10px 0;
   opacity: 0.5;
 }
+.separator-light {
+  border: 0;
+  border-top: 1px dashed #555;
+  margin: 8px 0;
+}
 .mini-title {
   color: var(--blue);
   font-size: 0.9rem;
@@ -1122,12 +1206,12 @@ function getMaestroName(id) {
   color: #ccc;
   margin-top: 8px;
 }
-.alert-mini-row {
+.alert-details {
   display: flex;
   gap: 5px;
   margin-top: 5px;
-  margin-left: 20px;
-  flex-wrap: wrap; /* Permitir que se ajusten en pantallas pequeñas */
+  margin-left: 10px;
+  flex-wrap: wrap; /* Para que bajen si no caben */
   align-items: center;
 }
 .mini-select {
