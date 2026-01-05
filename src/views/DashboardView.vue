@@ -450,6 +450,27 @@ function goToSensorDetail(id) {
   router.push(`/sensor/${id}`)
 }
 
+// --- NUEVO: ELIMINAR SENSOR INDIVIDUAL ---
+async function deleteSensor(sensor, e) {
+  e?.stopPropagation()
+  if (!confirm(`¿Eliminar sensor "${sensor.name}"?`)) return
+
+  try {
+    await api.delete(`/sensors/${sensor.id}`)
+
+    // Actualizar estado local
+    const monitor = allMonitors.value.find((m) => m.monitor_id === sensor.monitor_id)
+    if (monitor && monitor.sensors) {
+      monitor.sensors = monitor.sensors.filter((s) => s.id !== sensor.id)
+    }
+
+    showNotification('Sensor eliminado correctamente.', 'success')
+  } catch (err) {
+    console.error(err)
+    showNotification('Error al eliminar sensor.', 'error')
+  }
+}
+
 // --- GESTIÓN DE MONITOR (CAMBIO GRUPO + REBOOT) ---
 function openMonitorSettings(monitor) {
   monitorToEdit.value = monitor
@@ -865,12 +886,22 @@ function closeSensorDetails() {
                         }}</template>
                       </div>
 
-                      <button
-                        class="details-btn"
-                        @click="showSensorDetails(sensor, monitor, $event)"
-                      >
-                        ✎
-                      </button>
+                      <div class="sensor-row-actions">
+                        <button
+                          class="details-btn"
+                          @click="showSensorDetails(sensor, monitor, $event)"
+                          title="Editar"
+                        >
+                          ✎
+                        </button>
+                        <button
+                          class="details-btn delete-btn-sensor"
+                          @click="deleteSensor(sensor, $event)"
+                          title="Eliminar Sensor"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -956,7 +987,7 @@ function closeSensorDetails() {
           <div class="sub-section span-3">
             <h4>Configuración General</h4>
             <div class="general-config-grid">
-              <div class="form-group checkbox-group aligned-chk">
+              <div class="form-group checkbox-group">
                 <input
                   type="checkbox"
                   v-model="
@@ -967,7 +998,7 @@ function closeSensorDetails() {
                 />
                 <label for="gAct">Encendido</label>
               </div>
-              <div class="form-group checkbox-group aligned-chk">
+              <div class="form-group checkbox-group">
                 <input
                   type="checkbox"
                   v-model="
@@ -1028,7 +1059,7 @@ function closeSensorDetails() {
               <h4>Alertas</h4>
 
               <div class="alert-config-item">
-                <div class="form-group checkbox-group aligned-chk">
+                <div class="form-group checkbox-group">
                   <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.enabled" /><label
                     >Timeout</label
                   >
@@ -1058,7 +1089,7 @@ function closeSensorDetails() {
                         class="tiny-input"
                       />
                     </div>
-                    <div class="form-group checkbox-group aligned-chk">
+                    <div class="form-group checkbox-group">
                       <input
                         type="checkbox"
                         v-model="newPingSensor.ui_alert_timeout.notify_recovery"
@@ -1072,7 +1103,7 @@ function closeSensorDetails() {
               <hr class="separator" />
 
               <div class="alert-config-item">
-                <div class="form-group checkbox-group aligned-chk">
+                <div class="form-group checkbox-group">
                   <input type="checkbox" v-model="newPingSensor.ui_alert_latency.enabled" /><label
                     >Latencia Alta</label
                   >
@@ -1102,7 +1133,7 @@ function closeSensorDetails() {
                         class="tiny-input"
                       />
                     </div>
-                    <div class="form-group checkbox-group aligned-chk">
+                    <div class="form-group checkbox-group">
                       <input
                         type="checkbox"
                         v-model="newPingSensor.ui_alert_latency.notify_recovery"
@@ -1128,7 +1159,7 @@ function closeSensorDetails() {
               <h4>Alertas</h4>
 
               <div class="alert-config-item">
-                <div class="form-group checkbox-group aligned-chk">
+                <div class="form-group checkbox-group">
                   <input
                     type="checkbox"
                     v-model="newEthernetSensor.ui_alert_speed_change.enabled"
@@ -1159,7 +1190,7 @@ function closeSensorDetails() {
                         class="tiny-input"
                       />
                     </div>
-                    <div class="form-group checkbox-group aligned-chk">
+                    <div class="form-group checkbox-group">
                       <input
                         type="checkbox"
                         v-model="newEthernetSensor.ui_alert_speed_change.notify_recovery"
@@ -1173,7 +1204,7 @@ function closeSensorDetails() {
               <hr class="separator" />
 
               <div class="alert-config-item">
-                <div class="form-group checkbox-group aligned-chk">
+                <div class="form-group checkbox-group">
                   <input
                     type="checkbox"
                     v-model="newEthernetSensor.ui_alert_traffic.enabled"
@@ -1219,7 +1250,7 @@ function closeSensorDetails() {
                         class="tiny-input"
                       />
                     </div>
-                    <div class="form-group checkbox-group aligned-chk">
+                    <div class="form-group checkbox-group">
                       <input
                         type="checkbox"
                         v-model="newEthernetSensor.ui_alert_traffic.notify_recovery"
@@ -1607,6 +1638,13 @@ function closeSensorDetails() {
   color: var(--gray);
 }
 
+/* NUEVOS BOTONES DE ACCIÓN PARA SENSORES */
+.sensor-row-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: 8px;
+}
+
 .details-btn {
   background: none;
   border: none;
@@ -1614,9 +1652,19 @@ function closeSensorDetails() {
   font-size: 1.1rem;
   cursor: pointer;
   padding: 2px;
+  transition: color 0.2s;
 }
 .details-btn:hover {
   color: var(--blue);
+}
+
+.delete-btn-sensor {
+  color: #888;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.delete-btn-sensor:hover {
+  color: var(--secondary-color); /* Rojo */
 }
 
 .collapsed-summary {
@@ -1757,6 +1805,7 @@ function closeSensorDetails() {
   width: auto;
   margin: 0;
 }
+
 /* Nueva clase para el label pequeño */
 .small-label {
   font-size: 0.8rem;
