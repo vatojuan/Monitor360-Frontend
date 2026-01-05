@@ -49,6 +49,9 @@ const channels = ref([]) // Canales para alertas
 const isLoadingDevices = ref(false)
 const deletingId = ref(null)
 
+// --- Nuevo Estado para Selector de IP Destino (Masivo) ---
+const allDevicesList = ref([])
+
 // ===== ESTADO ACCIONES MASIVAS (MEJORADO) =====
 const selectedDevices = ref([]) // IDs seleccionados
 const showBulkModal = ref(false)
@@ -152,12 +155,52 @@ const bulkCompatibility = computed(() => {
   }
 })
 
+// --- COMPUTADO: Dispositivos Sugeridos para Destino (Filtrado Masivo) ---
+const suggestedTargetDevicesForBulk = computed(() => {
+  if (selectedDevices.value.length === 0) return []
+
+  // 1. Obtener los IDs de los dispositivos seleccionados
+  const selectedDevs = allDevicesList.value.filter((d) => selectedDevices.value.includes(d.id))
+
+  // 2. Recolectar todos los VPN IDs involucrados en la selección
+  const involvedVpnIds = new Set()
+
+  selectedDevs.forEach((d) => {
+    let vpnId = d.vpn_profile_id
+    // Si no tiene VPN propia pero tiene maestro, intentar obtener la del maestro
+    if (!vpnId && d.maestro_id) {
+      const m = allDevicesList.value.find((x) => x.id === d.maestro_id)
+      if (m) vpnId = m.vpn_profile_id
+    }
+    if (vpnId) involvedVpnIds.add(vpnId)
+  })
+
+  // 3. Si no hay ninguna VPN detectada, mostramos todos (fallback)
+  if (involvedVpnIds.size === 0) return allDevicesList.value
+
+  // 4. Filtrar dispositivos que pertenezcan a CUALQUIERA de las VPNs involucradas
+  return allDevicesList.value.filter((d) => {
+    // Excluir dispositivos que estén EN la selección actual (no pingearse entre ellos masivamente, aunque es debatible)
+    // Dejamos que se puedan seleccionar por si acaso.
+
+    let dVpnId = d.vpn_profile_id
+    if (!dVpnId && d.maestro_id) {
+      const m = allDevicesList.value.find((x) => x.id === d.maestro_id)
+      if (m) dVpnId = m.vpn_profile_id
+    }
+
+    return dVpnId && involvedVpnIds.has(dVpnId)
+  })
+})
+
 // ===== CARGA DE DATOS =====
 async function fetchAllDevices() {
   isLoadingDevices.value = true
   try {
     const { data } = await api.get('/devices')
     allDevices.value = Array.isArray(data) ? data : []
+    allDevicesList.value = allDevices.value // Guardamos copia para el buscador
+
     // Limpiar selección si ya no existen
     const currentIds = allDevices.value.map((d) => d.id)
     selectedDevices.value = selectedDevices.value.filter((id) => currentIds.includes(id))
@@ -715,7 +758,24 @@ onMounted(async () => {
           <div v-if="bulkSensorType === 'ping'" class="config-grid">
             <div class="form-group">
               <label>Destino (Fallback si no es P2P)</label>
-              <input v-model="bulkPingConfig.config.target_ip" placeholder="8.8.8.8" />
+              <div style="position: relative">
+                <input
+                  list="bulk-target-devices"
+                  type="text"
+                  v-model="bulkPingConfig.config.target_ip"
+                  placeholder="Ej: 8.8.8.8 o selecciona de la lista"
+                  class="search-input"
+                />
+                <datalist id="bulk-target-devices">
+                  <option
+                    v-for="d in suggestedTargetDevicesForBulk"
+                    :key="d.id"
+                    :value="d.ip_address"
+                  >
+                    {{ d.client_name }}
+                  </option>
+                </datalist>
+              </div>
             </div>
             <div class="form-group">
               <label>Intervalo (s)</label>
@@ -740,6 +800,7 @@ onMounted(async () => {
                 <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
+                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
                   class="tiny-input"
                 />
@@ -767,6 +828,7 @@ onMounted(async () => {
                 <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
+                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
                   class="tiny-input"
                 />
@@ -812,6 +874,7 @@ onMounted(async () => {
                 <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
+                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
                   class="tiny-input"
                 />
@@ -839,6 +902,7 @@ onMounted(async () => {
                 <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
+                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
                   class="tiny-input"
                 />
@@ -1018,11 +1082,11 @@ label {
   position: fixed;
   top: 90px;
   right: 20px;
-  z-index: 4000;
   padding: 1rem 1.5rem;
   border-radius: 8px;
-  font-weight: bold;
   color: white;
+  font-weight: bold;
+  z-index: 1000;
 }
 .notification.success {
   background: var(--green);
@@ -1167,8 +1231,8 @@ label {
   position: fixed;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
+  width: 100%;
+  height: 100%;
   background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
