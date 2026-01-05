@@ -739,9 +739,9 @@ onMounted(async () => {
                 </select>
                 <input
                   type="number"
-                  placeholder="Tol."
+                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
-                  title="Tolerancia"
+                  title="Tolerancia a Fallos"
                   class="tiny-input"
                 />
                 <label class="tiny-chk"
@@ -767,7 +767,7 @@ onMounted(async () => {
                 </select>
                 <input
                   type="number"
-                  placeholder="Tol."
+                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
                   class="tiny-input"
                 />
@@ -812,7 +812,7 @@ onMounted(async () => {
                 </select>
                 <input
                   type="number"
-                  placeholder="Tol."
+                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
                   class="tiny-input"
                 />
@@ -839,7 +839,7 @@ onMounted(async () => {
                 </select>
                 <input
                   type="number"
-                  placeholder="Tol."
+                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
                   class="tiny-input"
                 />
@@ -883,7 +883,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* ESTILOS BASE */
+/* ESTILOS BASE (COPIADOS) */
 .page-wrap {
   padding: 1rem;
   max-width: 1400px;
@@ -1266,7 +1266,7 @@ label {
   font-size: 0.9rem;
 }
 .tiny-input {
-  width: 60px !important;
+  width: 140px !important; /* Más ancho para que quepa "Tolerancia a Fallos" si se usara como placeholder */
   padding: 0.4rem !important;
 }
 .tiny-chk {
