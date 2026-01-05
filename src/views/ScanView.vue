@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import api from '@/lib/api'
 
 // --- ESTADO GLOBAL ---
@@ -10,6 +10,7 @@ const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- DATOS ---
 const maestros = ref([])
+const allDevicesList = ref([]) // Inventario completo para el buscador
 const credentialProfiles = ref([])
 const pendingDevices = ref([])
 const scanProfiles = ref([])
@@ -35,7 +36,33 @@ const scanConfig = ref({
   sensor_template_type: 'ping', // 'ping' | 'ethernet'
 })
 
-// --- ESTADO TEMPLATE SENSORES (Igual que Bulk Modal) ---
+// --- COMPUTADA: Dispositivos Sugeridos (Contexto de Red del Maestro) ---
+const suggestedTargetDevices = computed(() => {
+  if (!scanConfig.value.maestro_id) return []
+
+  // Buscamos el maestro seleccionado para ver su VPN
+  const selectedMaestro = allDevicesList.value.find((d) => d.id === scanConfig.value.maestro_id)
+  if (!selectedMaestro) return allDevicesList.value // Fallback
+
+  const currentVpnId = selectedMaestro.vpn_profile_id
+
+  // Filtramos dispositivos que estén en la misma VPN (o cuya VPN de su maestro sea la misma)
+  return allDevicesList.value.filter((d) => {
+    // Si no hay VPN configurada en el maestro, mostramos todos por seguridad/fallback
+    if (!currentVpnId) return true
+
+    if (d.is_maestro) {
+      return d.vpn_profile_id === currentVpnId
+    }
+    if (d.maestro_id) {
+      const dMaestro = allDevicesList.value.find((m) => m.id === d.maestro_id)
+      return dMaestro && dMaestro.vpn_profile_id === currentVpnId
+    }
+    return d.vpn_profile_id === currentVpnId
+  })
+})
+
+// --- ESTADO TEMPLATE SENSORES ---
 const bulkPingConfig = ref({
   config: {
     interval_sec: 60,
@@ -98,7 +125,7 @@ async function loadGlobalData() {
   isLoading.value = true
   try {
     await Promise.all([
-      fetchMaestros(),
+      fetchMaestrosAndDevices(),
       fetchCredentialProfiles(),
       fetchPendingDevices(),
       fetchScanProfiles(),
@@ -114,13 +141,17 @@ async function loadGlobalData() {
 }
 
 // --- API CALLS ---
-async function fetchMaestros() {
+async function fetchMaestrosAndDevices() {
   try {
     const { data } = await api.get('/devices')
+    // Guardamos todos para el buscador de IP
+    allDevicesList.value = data || []
+    // Filtramos solo los maestros para el select de "Router Maestro"
     maestros.value = (data || []).filter((d) => d.is_maestro === true)
   } catch (e) {
-    console.error('Error fetching maestros', e)
+    console.error('Error fetching devices', e)
     maestros.value = []
+    allDevicesList.value = []
   }
 }
 
@@ -298,6 +329,7 @@ async function deletePending(mac) {
   }
 }
 
+// --- NUEVA FUNCIÓN: ELIMINAR PERFIL DE ESCANEO ---
 async function deleteScanProfile(id) {
   if (!confirm('¿Eliminar esta automatización de escaneo?')) return
   try {
@@ -553,6 +585,28 @@ function getMaestroName(id) {
 
                 <div v-if="scanConfig.sensor_template_type === 'ping'" class="mini-config">
                   <div class="form-group">
+                    <label>Destino (IP)</label>
+                    <div style="position: relative">
+                      <input
+                        list="scan-target-list"
+                        type="text"
+                        v-model="bulkPingConfig.config.target_ip"
+                        placeholder="Ej: 8.8.8.8 o selecciona..."
+                        class="search-input"
+                      />
+                      <datalist id="scan-target-list">
+                        <option
+                          v-for="d in suggestedTargetDevices"
+                          :key="d.id"
+                          :value="d.ip_address"
+                        >
+                          {{ d.client_name }}
+                        </option>
+                      </datalist>
+                    </div>
+                  </div>
+
+                  <div class="form-group">
                     <label>Intervalo (s)</label>
                     <input
                       type="number"
@@ -579,6 +633,13 @@ function getMaestroName(id) {
                       placeholder="Tol."
                       class="tiny-input"
                     />
+                    <label class="tiny-chk"
+                      ><input
+                        type="checkbox"
+                        v-model="bulkPingConfig.ui_alert_timeout.notify_recovery"
+                      />
+                      Recup.</label
+                    >
                   </div>
 
                   <div class="chk-label">
@@ -599,6 +660,13 @@ function getMaestroName(id) {
                       placeholder="ms"
                       class="tiny-input"
                     />
+                    <label class="tiny-chk"
+                      ><input
+                        type="checkbox"
+                        v-model="bulkPingConfig.ui_alert_latency.notify_recovery"
+                      />
+                      Recup.</label
+                    >
                   </div>
                 </div>
 
@@ -630,6 +698,13 @@ function getMaestroName(id) {
                       <option :value="null">-- Canal --</option>
                       <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                     </select>
+                    <label class="tiny-chk"
+                      ><input
+                        type="checkbox"
+                        v-model="bulkEthernetConfig.ui_alert_speed_change.notify_recovery"
+                      />
+                      Recup.</label
+                    >
                   </div>
 
                   <div class="chk-label">
@@ -650,6 +725,13 @@ function getMaestroName(id) {
                       placeholder="Mbps"
                       class="tiny-input"
                     />
+                    <label class="tiny-chk"
+                      ><input
+                        type="checkbox"
+                        v-model="bulkEthernetConfig.ui_alert_traffic.notify_recovery"
+                      />
+                      Recup.</label
+                    >
                   </div>
                 </div>
               </div>
@@ -942,6 +1024,17 @@ function getMaestroName(id) {
   color: white;
 }
 
+/* CLASE SEARCH INPUT AÑADIDA PARA EL BUSCADOR DE IP */
+.search-input {
+  width: 100%;
+  padding: 10px;
+  background-color: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  color: white;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
 .form-group small {
   display: block;
   margin-top: 4px;
@@ -1034,6 +1127,8 @@ function getMaestroName(id) {
   gap: 5px;
   margin-top: 5px;
   margin-left: 20px;
+  flex-wrap: wrap; /* Permitir que se ajusten en pantallas pequeñas */
+  align-items: center;
 }
 .mini-select {
   padding: 4px;
@@ -1042,18 +1137,29 @@ function getMaestroName(id) {
   border: 1px solid #555;
   color: white;
   border-radius: 4px;
-  width: 100px;
+  width: 90px;
 }
 .tiny-input {
-  width: 60px !important;
+  width: 50px !important;
   padding: 4px !important;
   font-size: 0.8rem;
   height: 28px;
+  background-color: var(--bg-color);
+  border: 1px solid #555;
+  color: white;
+  border-radius: 4px;
 }
 .tiny-input-full {
   width: 100% !important;
   padding: 6px !important;
   font-size: 0.85rem;
+}
+.tiny-chk {
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: #aaa;
 }
 .auto-tag {
   font-size: 0.75rem;
