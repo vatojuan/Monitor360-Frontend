@@ -737,11 +737,10 @@ onMounted(async () => {
                   <option :value="null">-- Canal --</option>
                   <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
+                <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
-                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
-                  title="Tolerancia a Fallos"
                   class="tiny-input"
                 />
                 <label class="tiny-chk"
@@ -765,9 +764,9 @@ onMounted(async () => {
                   <option :value="null">-- Canal --</option>
                   <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
+                <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
-                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
                   class="tiny-input"
                 />
@@ -810,9 +809,9 @@ onMounted(async () => {
                   <option :value="null">-- Canal --</option>
                   <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
+                <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
-                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
                   class="tiny-input"
                 />
@@ -837,9 +836,9 @@ onMounted(async () => {
                   <option :value="null">-- Canal --</option>
                   <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
+                <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
-                  placeholder="Tolerancia a Fallos"
                   v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
                   class="tiny-input"
                 />
@@ -1265,8 +1264,13 @@ label {
   gap: 0.5rem;
   font-size: 0.9rem;
 }
+.small-label {
+  font-size: 0.8rem;
+  color: #aaa;
+  white-space: nowrap;
+}
 .tiny-input {
-  width: 160px !important; /* Más ancho para que quepa "Tolerancia a Fallos" */
+  width: 60px !important;
   padding: 0.4rem !important;
 }
 .tiny-chk {
