@@ -1670,10 +1670,16 @@ function closeSensorDetails() {
   border-top: 1px solid var(--primary-color);
   margin: 1rem 0;
 }
+/* CORRECCIÓN DE ALINEACIÓN DE CHECKBOXES */
 .checkbox-group {
+  display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: center; /* Alinea verticalmente al centro */
   gap: 0.5rem;
+}
+.checkbox-group input[type='checkbox'] {
+  width: auto;
+  margin: 0; /* Quita márgenes extraños */
 }
 .text-green {
   color: var(--green);
