@@ -13,20 +13,80 @@ const maestros = ref([])
 const credentialProfiles = ref([])
 const pendingDevices = ref([])
 const scanProfiles = ref([])
+const channels = ref([]) // Canales para alertas
+const groups = ref([]) // Grupos del dashboard
 
 // --- ESTADO INBOX ---
 const selectedPending = ref([])
 const adoptCredentialId = ref(null)
 
-// --- ESTADO CONFIGURACIÓN ---
+// --- ESTADO CONFIGURACIÓN (SCAN) ---
 const scanConfig = ref({
   maestro_id: '',
   network_cidr: '192.168.88.0/24',
   interface: '',
   scan_ports: '8728, 80',
-  scan_mode: 'manual',
+  scan_mode: 'manual', // 'manual', 'notify', 'auto'
   credential_profile_id: null,
   is_active: false,
+
+  // Nuevos campos para Auto-Adoptar
+  target_group: 'General',
+  sensor_template_type: 'ping', // 'ping' | 'ethernet'
+})
+
+// --- ESTADO TEMPLATE SENSORES (Igual que Bulk Modal) ---
+const bulkPingConfig = ref({
+  config: {
+    interval_sec: 60,
+    latency_threshold_ms: 150,
+    display_mode: 'realtime',
+    average_count: 5,
+    ping_type: 'device_to_external', // Default para auto
+    target_ip: '8.8.8.8',
+  },
+  ui_alert_timeout: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
+  ui_alert_latency: {
+    enabled: false,
+    threshold_ms: 200,
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
+  is_active: true,
+  alerts_paused: false,
+})
+
+const bulkEthernetConfig = ref({
+  config: {
+    interface_name: 'ether1',
+    interval_sec: 30,
+  },
+  ui_alert_speed_change: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
+  ui_alert_traffic: {
+    enabled: false,
+    threshold_mbps: 100,
+    direction: 'any',
+    channel_id: null,
+    cooldown_minutes: 5,
+    tolerance_count: 1,
+    notify_recovery: false,
+  },
+  is_active: true,
+  alerts_paused: false,
 })
 
 // --- LIFECYCLE ---
@@ -42,6 +102,8 @@ async function loadGlobalData() {
       fetchCredentialProfiles(),
       fetchPendingDevices(),
       fetchScanProfiles(),
+      fetchChannels(),
+      fetchGroups(),
     ])
   } catch (e) {
     console.error(e)
@@ -54,7 +116,6 @@ async function loadGlobalData() {
 // --- API CALLS ---
 async function fetchMaestros() {
   try {
-    // Obtenemos todos y filtramos localmente para seguridad
     const { data } = await api.get('/devices')
     maestros.value = (data || []).filter((d) => d.is_maestro === true)
   } catch (e) {
@@ -82,6 +143,87 @@ async function fetchScanProfiles() {
   }
 }
 
+async function fetchChannels() {
+  try {
+    const { data } = await api.get('/channels')
+    channels.value = data || []
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+async function fetchGroups() {
+  try {
+    const { data } = await api.get('/groups')
+    groups.value = (data || []).map((g) => g.name)
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+// --- HELPER: CONSTRUIR CONFIGURACIÓN DE SENSOR (Igual que Bulk) ---
+function buildSensorConfigPayload(type, data) {
+  const finalConfig = { ...data.config }
+  const alerts = []
+  const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
+
+  if (type === 'ping') {
+    if (data.ui_alert_timeout.enabled && data.ui_alert_timeout.channel_id) {
+      const a = data.ui_alert_timeout
+      alerts.push({
+        type: 'timeout',
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+        tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+        notify_recovery: !!a.notify_recovery,
+      })
+    }
+    if (data.ui_alert_latency.enabled && data.ui_alert_latency.channel_id) {
+      const a = data.ui_alert_latency
+      alerts.push({
+        type: 'high_latency',
+        threshold_ms: onlyNums(a.threshold_ms, 200),
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+        tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+        notify_recovery: !!a.notify_recovery,
+      })
+    }
+  } else if (type === 'ethernet') {
+    if (data.ui_alert_speed_change.enabled && data.ui_alert_speed_change.channel_id) {
+      const a = data.ui_alert_speed_change
+      alerts.push({
+        type: 'speed_change',
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
+        tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+        notify_recovery: !!a.notify_recovery,
+      })
+    }
+    if (data.ui_alert_traffic.enabled && data.ui_alert_traffic.channel_id) {
+      const a = data.ui_alert_traffic
+      alerts.push({
+        type: 'traffic_threshold',
+        threshold_mbps: onlyNums(a.threshold_mbps, 100),
+        direction: a.direction || 'any',
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
+        tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+        notify_recovery: !!a.notify_recovery,
+      })
+    }
+  }
+
+  finalConfig.alerts = alerts
+  return {
+    sensor_type: type,
+    name_template: '{{hostname}} - Sensor', // Fijo para auto-adoptar
+    config: finalConfig,
+    is_active: data.is_active,
+    alerts_paused: data.alerts_paused,
+  }
+}
+
 // --- ACCIONES ---
 async function runScan() {
   if (!scanConfig.value.maestro_id) return showNotification('Selecciona un Router Maestro', 'error')
@@ -92,7 +234,17 @@ async function runScan() {
   isScanning.value = true
   try {
     const payload = { ...scanConfig.value }
+
+    // Si es Auto-Adoptar, inyectamos la configuración del sensor
+    if (scanConfig.value.is_active && scanConfig.value.scan_mode === 'auto') {
+      const type = scanConfig.value.sensor_template_type
+      const sourceData = type === 'ping' ? bulkPingConfig.value : bulkEthernetConfig.value
+      payload.sensor_config = buildSensorConfigPayload(type, sourceData)
+    }
+
     await api.post('/discovery/config', payload)
+
+    // Ejecutar escaneo inmediato
     const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`)
 
     const count = data.length
@@ -146,7 +298,6 @@ async function deletePending(mac) {
   }
 }
 
-// --- NUEVA FUNCIÓN: ELIMINAR PERFIL DE ESCANEO ---
 async function deleteScanProfile(id) {
   if (!confirm('¿Eliminar esta automatización de escaneo?')) return
   try {
@@ -357,21 +508,157 @@ function getMaestroName(id) {
               <input type="checkbox" id="activeTask" v-model="scanConfig.is_active" />
               <label for="activeTask">Guardar como Tarea Recurrente</label>
             </div>
-            <div class="radio-group" v-if="scanConfig.is_active">
-              <label
-                ><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Solo
-                Notificar</label
-              >
-              <label
-                ><input type="radio" v-model="scanConfig.scan_mode" value="auto" />
-                Auto-Adoptar</label
-              >
-            </div>
+
+            <template v-if="scanConfig.is_active">
+              <div class="radio-group">
+                <label
+                  ><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Solo
+                  Notificar</label
+                >
+                <label
+                  ><input type="radio" v-model="scanConfig.scan_mode" value="auto" />
+                  Auto-Adoptar</label
+                >
+              </div>
+
+              <div v-if="scanConfig.scan_mode === 'auto'" class="auto-adopt-panel fade-in">
+                <hr class="separator" />
+                <h4 class="mini-title">🏗️ Receta de Adopción</h4>
+
+                <div class="form-group">
+                  <label>Grupo de Destino</label>
+                  <select v-model="scanConfig.target_group">
+                    <option value="General">General</option>
+                    <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>Plantilla de Sensor</label>
+                  <div class="sensor-type-selector">
+                    <button
+                      :class="{ active: scanConfig.sensor_template_type === 'ping' }"
+                      @click="scanConfig.sensor_template_type = 'ping'"
+                    >
+                      PING
+                    </button>
+                    <button
+                      :class="{ active: scanConfig.sensor_template_type === 'ethernet' }"
+                      @click="scanConfig.sensor_template_type = 'ethernet'"
+                    >
+                      ETHERNET
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="scanConfig.sensor_template_type === 'ping'" class="mini-config">
+                  <div class="form-group">
+                    <label>Intervalo (s)</label>
+                    <input
+                      type="number"
+                      v-model.number="bulkPingConfig.config.interval_sec"
+                      class="tiny-input-full"
+                    />
+                  </div>
+
+                  <div class="chk-label">
+                    <input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" />
+                    Timeout
+                  </div>
+                  <div v-if="bulkPingConfig.ui_alert_timeout.enabled" class="alert-mini-row">
+                    <select
+                      v-model="bulkPingConfig.ui_alert_timeout.channel_id"
+                      class="mini-select"
+                    >
+                      <option :value="null">-- Canal --</option>
+                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                    </select>
+                    <input
+                      type="number"
+                      v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
+                      placeholder="Tol."
+                      class="tiny-input"
+                    />
+                  </div>
+
+                  <div class="chk-label">
+                    <input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.enabled" />
+                    Latencia
+                  </div>
+                  <div v-if="bulkPingConfig.ui_alert_latency.enabled" class="alert-mini-row">
+                    <select
+                      v-model="bulkPingConfig.ui_alert_latency.channel_id"
+                      class="mini-select"
+                    >
+                      <option :value="null">-- Canal --</option>
+                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                    </select>
+                    <input
+                      type="number"
+                      v-model.number="bulkPingConfig.ui_alert_latency.threshold_ms"
+                      placeholder="ms"
+                      class="tiny-input"
+                    />
+                  </div>
+                </div>
+
+                <div v-if="scanConfig.sensor_template_type === 'ethernet'" class="mini-config">
+                  <div class="form-group">
+                    <label>Interfaz</label>
+                    <input
+                      v-model="bulkEthernetConfig.config.interface_name"
+                      placeholder="ether1"
+                      class="tiny-input-full"
+                    />
+                  </div>
+
+                  <div class="chk-label">
+                    <input
+                      type="checkbox"
+                      v-model="bulkEthernetConfig.ui_alert_speed_change.enabled"
+                    />
+                    Cambio Vel.
+                  </div>
+                  <div
+                    v-if="bulkEthernetConfig.ui_alert_speed_change.enabled"
+                    class="alert-mini-row"
+                  >
+                    <select
+                      v-model="bulkEthernetConfig.ui_alert_speed_change.channel_id"
+                      class="mini-select"
+                    >
+                      <option :value="null">-- Canal --</option>
+                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                    </select>
+                  </div>
+
+                  <div class="chk-label">
+                    <input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.enabled" />
+                    Tráfico
+                  </div>
+                  <div v-if="bulkEthernetConfig.ui_alert_traffic.enabled" class="alert-mini-row">
+                    <select
+                      v-model="bulkEthernetConfig.ui_alert_traffic.channel_id"
+                      class="mini-select"
+                    >
+                      <option :value="null">-- Canal --</option>
+                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                    </select>
+                    <input
+                      type="number"
+                      v-model.number="bulkEthernetConfig.ui_alert_traffic.threshold_mbps"
+                      placeholder="Mbps"
+                      class="tiny-input"
+                    />
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
 
           <div class="form-actions">
             <button @click="runScan" class="btn-scan" :disabled="isScanning">
-              {{ isScanning ? '⏳ Escaneando...' : '🔍 Ejecutar Ahora' }}
+              {{ isScanning ? '⏳ Escaneando...' : '🔍 Ejecutar / Guardar' }}
             </button>
           </div>
         </div>
@@ -389,6 +676,9 @@ function getMaestroName(id) {
               <div class="profile-details">
                 <span>🌐 {{ prof.network_cidr }}</span>
                 <span>🔌 {{ prof.interface }}</span>
+              </div>
+              <div v-if="prof.scan_mode === 'auto'" class="auto-tag">
+                🤖 Auto-Adoptar: {{ prof.target_group || 'General' }}
               </div>
             </div>
             <div class="profile-actions">
@@ -612,6 +902,7 @@ function getMaestroName(id) {
   background: var(--surface-color);
   border-radius: 12px;
   overflow: hidden;
+  align-self: start;
 }
 .panel-header {
   background: rgba(255, 255, 255, 0.05);
@@ -664,29 +955,111 @@ function getMaestroName(id) {
 
 .automation-box {
   background: var(--bg-color);
-  padding: 10px;
+  padding: 15px;
   border-radius: 6px;
   margin-bottom: 20px;
   border: 1px dashed var(--primary-color);
 }
 .automation-box h4 {
   margin: 0 0 10px 0;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: var(--gray);
+  border-bottom: 1px solid #333;
+  padding-bottom: 5px;
 }
 .checkbox-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 5px;
+  margin-bottom: 10px;
   color: white;
 }
 .radio-group {
   display: flex;
   gap: 15px;
-  margin-top: 5px;
+  margin-bottom: 10px;
   font-size: 0.9rem;
   color: #ccc;
+}
+/* AUTO ADOPT PANEL STYLES */
+.auto-adopt-panel {
+  margin-top: 15px;
+  padding-top: 10px;
+}
+.separator {
+  border: 0;
+  border-top: 1px solid var(--primary-color);
+  margin: 10px 0;
+  opacity: 0.5;
+}
+.mini-title {
+  color: var(--blue);
+  font-size: 0.9rem;
+  margin-bottom: 10px;
+}
+.sensor-type-selector {
+  display: flex;
+  gap: 10px;
+}
+.sensor-type-selector button {
+  flex: 1;
+  padding: 6px;
+  background: var(--surface-color);
+  border: 1px solid var(--primary-color);
+  color: #888;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+.sensor-type-selector button.active {
+  background: var(--primary-color);
+  color: white;
+}
+.mini-config {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 10px;
+  border-radius: 4px;
+  margin-top: 10px;
+}
+.chk-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #ccc;
+  margin-top: 8px;
+}
+.alert-mini-row {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+  margin-left: 20px;
+}
+.mini-select {
+  padding: 4px;
+  font-size: 0.8rem;
+  background: var(--bg-color);
+  border: 1px solid #555;
+  color: white;
+  border-radius: 4px;
+  width: 100px;
+}
+.tiny-input {
+  width: 60px !important;
+  padding: 4px !important;
+  font-size: 0.8rem;
+  height: 28px;
+}
+.tiny-input-full {
+  width: 100% !important;
+  padding: 6px !important;
+  font-size: 0.85rem;
+}
+.auto-tag {
+  font-size: 0.75rem;
+  color: var(--green);
+  margin-top: 4px;
+  font-weight: bold;
 }
 
 .btn-scan {
