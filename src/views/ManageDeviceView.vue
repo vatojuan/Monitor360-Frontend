@@ -1266,7 +1266,7 @@ label {
   font-size: 0.9rem;
 }
 .tiny-input {
-  width: 140px !important; /* Más ancho para que quepa "Tolerancia a Fallos" si se usara como placeholder */
+  width: 160px !important; /* Más ancho para que quepa "Tolerancia a Fallos" */
   padding: 0.4rem !important;
 }
 .tiny-chk {
