@@ -44,6 +44,13 @@ const isFetching = ref(false)
 let historyAbort = null
 let fetchToken = 0
 
+/* ====== ESTADO BITÁCORA (NUEVO) ====== */
+const showCommentsModal = ref(false)
+const comments = ref([])
+const newComment = ref('')
+const isLoadingComments = ref(false)
+const isSendingComment = ref(false)
+
 /* ====== VISTA / RANGO ====== */
 const timeRange = ref('24h')
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
@@ -448,6 +455,50 @@ function initRealTime() {
   wsUnbind = () => ws.removeEventListener('message', handleRawMessage)
 }
 
+/* ====== FUNCIONES BITÁCORA ====== */
+async function openCommentsModal() {
+  showCommentsModal.value = true
+  newComment.value = ''
+  await loadComments()
+}
+
+async function loadComments() {
+  isLoadingComments.value = true
+  try {
+    const { data } = await api.get(`/sensors/${sensorId}/comments`)
+    comments.value = data
+  } catch (error) {
+    console.error('Error cargando comentarios', error)
+  } finally {
+    isLoadingComments.value = false
+  }
+}
+
+async function submitComment() {
+  if (!newComment.value.trim()) return
+  isSendingComment.value = true
+  try {
+    await api.post(`/sensors/${sensorId}/comments`, { content: newComment.value })
+    newComment.value = ''
+    await loadComments()
+  } catch (error) {
+    console.error('Error enviando comentario', error)
+  } finally {
+    isSendingComment.value = false
+  }
+}
+
+function formatDate(isoStr) {
+  if (!isoStr) return ''
+  return new Date(isoStr).toLocaleString('es-ES', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 /* ====== LIFECYCLE ====== */
 onMounted(async () => {
   try {
@@ -480,11 +531,15 @@ watch(timeRange, async (r) => {
 <template>
   <div class="detail-view">
     <div class="top-bar">
-      <button @click="router.push('/')" class="back-btn">‹ Dashboard</button>
-      <div v-if="sensorInfo" class="info">
-        <h1>{{ sensorInfo.name }}</h1>
-        <small>{{ sensorInfo.client_name }} — {{ sensorInfo.ip_address }}</small>
+      <div class="left-group">
+        <button @click="router.push('/')" class="back-btn">‹ Dashboard</button>
+        <div v-if="sensorInfo" class="info">
+          <h1>{{ sensorInfo.name }}</h1>
+          <small>{{ sensorInfo.client_name }} — {{ sensorInfo.ip_address }}</small>
+        </div>
       </div>
+
+      <button @click="openCommentsModal" class="btn-action">📝 Bitácora</button>
     </div>
 
     <div class="stats-grid" v-if="stats">
@@ -518,6 +573,48 @@ watch(timeRange, async (r) => {
         <v-chart class="chart" :option="chartOption" autoresize />
       </div>
     </div>
+
+    <div v-if="showCommentsModal" class="modal-overlay" @click.self="showCommentsModal = false">
+      <div class="modal-content large-modal">
+        <div class="modal-header">
+          <h3>📖 Bitácora: {{ sensorInfo?.name }}</h3>
+          <button class="btn-close" @click="showCommentsModal = false">X</button>
+        </div>
+
+        <div class="comments-list">
+          <div v-if="isLoadingComments" class="loading-text">Cargando notas...</div>
+          <div v-else-if="comments.length === 0" class="empty-state">
+            <div class="empty-icon">📂</div>
+            <p>No hay registros en la bitácora aún.</p>
+          </div>
+
+          <div v-else class="comments-scroll">
+            <div v-for="c in comments" :key="c.id" class="comment-item">
+              <div class="comment-header">
+                <span class="comment-date">{{ formatDate(c.created_at) }}</span>
+              </div>
+              <div class="comment-body">{{ c.content }}</div>
+            </div>
+          </div>
+        </div>
+
+        <hr class="separator" />
+
+        <div class="comment-form">
+          <label>Nueva Nota</label>
+          <textarea
+            v-model="newComment"
+            rows="3"
+            placeholder="Registrar mantenimiento, alertas falsas, cambios de configuración..."
+          ></textarea>
+          <div class="modal-actions">
+            <button class="btn-primary" @click="submitComment" :disabled="isSendingComment">
+              {{ isSendingComment ? 'Guardando...' : 'Agregar Nota' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -530,9 +627,14 @@ watch(timeRange, async (r) => {
 
 .top-bar {
   display: flex;
+  justify-content: space-between; /* Separar info del botón log */
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+.left-group {
+  display: flex;
   align-items: center;
   gap: 1rem;
-  margin-bottom: 1.5rem;
 }
 
 .back-btn {
@@ -546,6 +648,22 @@ watch(timeRange, async (r) => {
 }
 .back-btn:hover {
   background: var(--primary-color);
+  color: white;
+}
+
+/* Estilo botón Bitácora */
+.btn-action {
+  background: var(--surface-color);
+  border: 1px solid var(--blue);
+  color: var(--blue);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: 0.2s;
+}
+.btn-action:hover {
+  background: var(--blue);
   color: white;
 }
 
@@ -636,5 +754,127 @@ watch(timeRange, async (r) => {
   100% {
     transform: rotate(360deg);
   }
+}
+
+/* --- MODAL STYLES (Consistente con ManageDevice) --- */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+.modal-content {
+  background: var(--surface-color);
+  padding: 2rem;
+  border-radius: 10px;
+  border: 1px solid var(--primary-color);
+  color: white;
+}
+.large-modal {
+  width: 600px;
+  max-width: 95%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+.btn-close {
+  background: transparent;
+  border: 1px solid var(--gray);
+  color: var(--gray);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.comments-list {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  min-height: 200px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.comments-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.comment-item {
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  padding: 0.8rem;
+  border-radius: 6px;
+}
+.comment-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--gray);
+}
+.comment-body {
+  white-space: pre-wrap;
+  color: #eee;
+  font-size: 0.95rem;
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--gray);
+}
+.empty-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
+.separator {
+  border: 0;
+  border-top: 1px solid var(--primary-color);
+  margin: 1rem 0;
+}
+.comment-form textarea {
+  width: 100%;
+  background-color: var(--bg-color);
+  color: white;
+  border: 1px solid var(--primary-color);
+  border-radius: 6px;
+  padding: 0.7rem;
+  margin-top: 0.5rem;
+  outline: none;
+  font-family: inherit;
+  resize: vertical;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+.btn-primary {
+  background: var(--green);
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+}
+.btn-primary:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 </style>

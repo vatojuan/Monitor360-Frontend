@@ -117,6 +117,62 @@ const createNewEthernetSensor = () => ({
 const bulkPingConfig = ref(createNewPingSensor())
 const bulkEthernetConfig = ref(createNewEthernetSensor())
 
+// ===== BITÁCORA (NUEVO) =====
+const showCommentsModal = ref(false)
+const activeDeviceForComments = ref(null)
+const deviceComments = ref([])
+const newComment = ref('')
+const isLoadingComments = ref(false)
+const isSendingComment = ref(false)
+
+async function openCommentsModal(device) {
+  activeDeviceForComments.value = device
+  showCommentsModal.value = true
+  newComment.value = ''
+  await loadComments(device.id)
+}
+
+async function loadComments(deviceId) {
+  isLoadingComments.value = true
+  try {
+    const { data } = await api.get(`/devices/${deviceId}/comments`)
+    deviceComments.value = data
+  } catch (error) {
+    console.error(error)
+    showNotification('Error cargando bitácora', 'error')
+  } finally {
+    isLoadingComments.value = false
+  }
+}
+
+async function submitComment() {
+  if (!newComment.value.trim()) return
+  isSendingComment.value = true
+  try {
+    await api.post(`/devices/${activeDeviceForComments.value.id}/comments`, {
+      content: newComment.value,
+    })
+    newComment.value = ''
+    await loadComments(activeDeviceForComments.value.id) // Recargar lista
+  } catch (error) {
+    console.error(error)
+    showNotification('Error guardando nota', 'error')
+  } finally {
+    isSendingComment.value = false
+  }
+}
+
+function formatDate(isoStr) {
+  if (!isoStr) return ''
+  return new Date(isoStr).toLocaleString('es-ES', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 // ===== COMPUTADAS INTELIGENTES (Segmentación) =====
 const maestros = computed(() => allDevices.value.filter((d) => d.is_maestro))
 
@@ -695,6 +751,13 @@ onMounted(async () => {
               <td>
                 <div class="row-actions">
                   <button
+                    @click="openCommentsModal(device)"
+                    class="btn-sm btn-action"
+                    title="Ver Bitácora / Comentarios"
+                  >
+                    📝
+                  </button>
+                  <button
                     v-if="!device.is_maestro && device.credential_id"
                     @click="promoteToMaestro(device)"
                     class="btn-sm btn-action"
@@ -939,6 +1002,48 @@ onMounted(async () => {
       </div>
     </div>
 
+    <div v-if="showCommentsModal" class="modal-overlay" @click.self="showCommentsModal = false">
+      <div class="modal-content large-modal">
+        <div class="manage-header">
+          <h3>📖 Bitácora: {{ activeDeviceForComments?.client_name }}</h3>
+          <button class="btn-secondary" @click="showCommentsModal = false">X</button>
+        </div>
+
+        <div class="comments-list">
+          <div v-if="isLoadingComments" class="loading-text">Cargando notas...</div>
+          <div v-else-if="deviceComments.length === 0" class="empty-state">
+            <div class="empty-icon">📂</div>
+            <p>No hay registros en la bitácora aún.</p>
+          </div>
+
+          <div v-else class="comments-scroll">
+            <div v-for="c in deviceComments" :key="c.id" class="comment-item">
+              <div class="comment-header">
+                <span class="comment-date">{{ formatDate(c.created_at) }}</span>
+              </div>
+              <div class="comment-body">{{ c.content }}</div>
+            </div>
+          </div>
+        </div>
+
+        <hr class="separator" />
+
+        <div class="comment-form">
+          <label>Nueva Nota</label>
+          <textarea
+            v-model="newComment"
+            rows="3"
+            placeholder="Escribe un comentario sobre mantenimiento, cambios, etc..."
+          ></textarea>
+          <div class="modal-actions">
+            <button class="btn-primary" @click="submitComment" :disabled="isSendingComment">
+              {{ isSendingComment ? 'Guardando...' : 'Agregar Nota' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div v-if="notification.show" class="notification" :class="notification.type">
       {{ notification.message }}
     </div>
@@ -1022,7 +1127,8 @@ onMounted(async () => {
   margin-bottom: 1rem;
 }
 input:not([type='checkbox']),
-select {
+select,
+textarea {
   width: 100%;
   background-color: var(--bg-color);
   color: white;
@@ -1031,6 +1137,7 @@ select {
   padding: 0.7rem;
   margin-top: 0.3rem;
   outline: none;
+  font-family: inherit;
 }
 select option {
   background-color: var(--bg-color);
@@ -1251,6 +1358,8 @@ label {
   max-width: 95%;
   max-height: 90vh;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .compatibility-box {
@@ -1350,5 +1459,51 @@ label {
   justify-content: flex-end;
   gap: 1rem;
   margin-top: 2rem;
+}
+
+/* BITÁCORA STYLES */
+.comments-list {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  min-height: 200px;
+}
+.comments-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.comment-item {
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  padding: 0.8rem;
+  border-radius: 6px;
+}
+.comment-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--gray);
+}
+.comment-body {
+  white-space: pre-wrap;
+  color: #eee;
+  font-size: 0.95rem;
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--gray);
+}
+.empty-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
 }
 </style>
