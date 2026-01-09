@@ -457,7 +457,9 @@ function getMaestroName(id) {
               </th>
               <th>IP Address</th>
               <th>MAC Address</th>
+              <th>Identity</th>
               <th>Fabricante</th>
+              <th>Plataforma</th>
               <th>Hostname</th>
               <th>Origen</th>
               <th>Acciones</th>
@@ -465,7 +467,7 @@ function getMaestroName(id) {
           </thead>
           <tbody>
             <tr v-if="pendingDevices.length === 0">
-              <td colspan="7" class="empty-row">
+              <td colspan="9" class="empty-row">
                 📭 La bandeja está vacía. Ve a "Motores de Escaneo" para buscar.
               </td>
             </tr>
@@ -483,7 +485,11 @@ function getMaestroName(id) {
               </td>
               <td class="font-mono text-highlight">{{ dev.ip_address }}</td>
               <td class="font-mono text-dim">{{ dev.mac_address }}</td>
+
+              <td class="text-highlight font-weight-bold">{{ dev.identity || '-' }}</td>
               <td>{{ dev.vendor || 'Desconocido' }}</td>
+              <td>{{ dev.platform || '-' }}</td>
+
               <td>{{ dev.hostname || '-' }}</td>
               <td>{{ getMaestroName(dev.maestro_id) }}</td>
               <td>
@@ -1057,6 +1063,9 @@ function getMaestroName(id) {
 }
 .text-dim {
   color: #777;
+}
+.font-weight-bold {
+  font-weight: bold;
 }
 .empty-row {
   text-align: center;

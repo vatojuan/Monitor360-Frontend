@@ -8,7 +8,8 @@ const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- ESTADO CREDENCIALES (BÓVEDA) ---
 const savedCredentials = ref([])
-const newCredential = ref({ name: '', username: '', password: '' })
+// NUEVO: Agregamos 'type' por defecto
+const newCredential = ref({ name: '', username: '', password: '', type: 'mikrotik_api' })
 const credentialToDeleteId = ref(null)
 
 // --- ESTADO PERFILES (LLAVEROS) ---
@@ -58,7 +59,8 @@ async function handleAddCredential() {
   try {
     await api.post('/credentials', newCredential.value)
     showNotification(`Credencial '${newCredential.value.name}' guardada.`, 'success')
-    newCredential.value = { name: '', username: '', password: '' }
+    // Resetear formulario con default type
+    newCredential.value = { name: '', username: '', password: '', type: 'mikrotik_api' }
     fetchCredentials()
   } catch (err) {
     showNotification(err.response?.data?.detail || 'Error al guardar.', 'error')
@@ -81,6 +83,22 @@ async function confirmDeleteCredential() {
   } finally {
     credentialToDeleteId.value = null
   }
+}
+
+// Helper visual para tipos
+function getTypeName(type) {
+  const map = {
+    mikrotik_api: 'MikroTik API',
+    ssh: 'SSH / UBNT',
+    snmp: 'SNMP',
+  }
+  return map[type] || 'MikroTik API'
+}
+
+function getTypeClass(type) {
+  if (type === 'ssh') return 'badge-ssh'
+  if (type === 'snmp') return 'badge-snmp'
+  return 'badge-ros'
 }
 
 // ==========================================
@@ -109,6 +127,7 @@ function openProfileModal(profile = null) {
       id: item.credential_id,
       name: item.name,
       username: item.username,
+      type: item.type, // Ahora traemos el tipo también
     }))
     profileForm.value = {
       id: profile.id,
@@ -191,7 +210,6 @@ async function confirmDeleteProfile() {
     showNotification('Perfil eliminado.', 'success')
     fetchProfiles()
   } catch (err) {
-    // CORRECCIÓN: Usamos 'err' para ver el detalle o loguearlo
     console.error(err)
     showNotification(err.response?.data?.detail || 'Error al eliminar perfil.', 'error')
   } finally {
@@ -252,7 +270,12 @@ async function confirmDeleteProfile() {
                 class="list-item available"
                 @click="addToProfile(cred)"
               >
-                <span>{{ cred.name }}</span>
+                <div class="item-text-row">
+                  <span>{{ cred.name }}</span>
+                  <span :class="['mini-badge', getTypeClass(cred.type)]">{{
+                    getTypeName(cred.type)
+                  }}</span>
+                </div>
                 <span class="small-user">({{ cred.username }})</span>
                 <span class="action-icon">➕</span>
               </div>
@@ -277,7 +300,12 @@ async function confirmDeleteProfile() {
                 <div class="item-content">
                   <span class="priority-badge">{{ idx + 1 }}</span>
                   <div class="text-col">
-                    <span>{{ cred.name }}</span>
+                    <div class="item-text-row">
+                      <span>{{ cred.name }}</span>
+                      <span :class="['mini-badge', getTypeClass(cred.type || 'mikrotik_api')]">
+                        {{ getTypeName(cred.type || 'mikrotik_api') }}
+                      </span>
+                    </div>
                     <span class="small-user">{{ cred.username }}</span>
                   </div>
                 </div>
@@ -325,16 +353,29 @@ async function confirmDeleteProfile() {
       <section class="control-section">
         <h2><i class="icon">➕</i> Añadir Credencial</h2>
         <form @submit.prevent="handleAddCredential" class="credential-form">
+          <div class="form-group-no-margin">
+            <label class="label-small">Tipo de Dispositivo / Protocolo</label>
+            <select v-model="newCredential.type" class="type-select">
+              <option value="mikrotik_api">📡 MikroTik (API Port 8728)</option>
+              <option value="ssh">💻 Ubiquiti / Linux (SSH Port 22)</option>
+              <option value="snmp">🌐 SNMP (Solo Monitoreo)</option>
+            </select>
+          </div>
+
           <input
             type="text"
             v-model="newCredential.name"
             placeholder="Nombre (ej: Admin General) *"
           />
-          <input type="text" v-model="newCredential.username" placeholder="Usuario *" />
+          <input
+            type="text"
+            v-model="newCredential.username"
+            placeholder="Usuario (o Community String para SNMP) *"
+          />
           <input
             type="password"
             v-model="newCredential.password"
-            placeholder="Contraseña (opcional)"
+            placeholder="Contraseña (opcional para SNMP)"
           />
           <button type="submit">Guardar en Bóveda</button>
         </form>
@@ -345,7 +386,12 @@ async function confirmDeleteProfile() {
         <ul v-if="savedCredentials.length > 0" class="credentials-list">
           <li v-for="cred in savedCredentials" :key="cred.id">
             <div class="cred-info">
-              <span class="cred-name">{{ cred.name }}</span>
+              <span class="cred-name">
+                {{ cred.name }}
+                <span :class="['badge-pill', getTypeClass(cred.type)]">{{
+                  getTypeName(cred.type)
+                }}</span>
+              </span>
               <span class="cred-user">Usuario: {{ cred.username }}</span>
             </div>
             <button @click="requestDeleteCredential(cred.id)" class="delete-btn">×</button>
@@ -377,7 +423,7 @@ async function confirmDeleteProfile() {
             <span class="preview-label">Secuencia de prueba:</span>
             <ol>
               <li v-for="item in profile.items" :key="item.credential_id">
-                {{ item.name }} <span class="dim">({{ item.username }})</span>
+                <span :class="['dot', getTypeClass(item.type)]"></span> {{ item.name }}
               </li>
             </ol>
             <div v-if="!profile.items || profile.items.length === 0" class="empty-items">
@@ -461,12 +507,22 @@ async function confirmDeleteProfile() {
   flex-direction: column;
   gap: 1rem;
 }
-.credential-form input {
+.credential-form input,
+.credential-form select {
   padding: 0.8rem;
   background-color: var(--bg-color);
   border: 1px solid var(--primary-color);
   border-radius: 6px;
   color: white;
+}
+.type-select {
+  cursor: pointer;
+}
+.label-small {
+  font-size: 0.85rem;
+  color: var(--gray);
+  margin-bottom: 4px;
+  display: block;
 }
 .credential-form button {
   padding: 0.8rem;
@@ -503,7 +559,63 @@ async function confirmDeleteProfile() {
 .cred-name {
   font-weight: bold;
   color: white;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+/* Badges visuales */
+.badge-pill {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.badge-ros {
+  background-color: rgba(58, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid #2563eb;
+}
+.badge-ssh {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid #059669;
+}
+.badge-snmp {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid #d97706;
+}
+
+.mini-badge {
+  font-size: 0.65rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.dot.badge-ros {
+  background-color: #60a5fa;
+  border: none;
+}
+.dot.badge-ssh {
+  background-color: #34d399;
+  border: none;
+}
+.dot.badge-snmp {
+  background-color: #fbbf24;
+  border: none;
+}
+
 .cred-user {
   font-size: 0.9rem;
   color: var(--gray);
@@ -711,6 +823,10 @@ async function confirmDeleteProfile() {
   font-size: 0.8rem;
   color: var(--gray);
   margin-left: 0.5rem;
+}
+.item-text-row {
+  display: flex;
+  align-items: center;
 }
 
 .list-item.selected {

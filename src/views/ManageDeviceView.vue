@@ -27,7 +27,7 @@ async function logout() {
   router.push('/login')
 }
 
-// ===== Alta en un paso (Intacto) =====
+// ===== Alta en un paso (Intacto pero mejorado) =====
 const addForm = ref({
   client_name: '',
   ip_address: '',
@@ -37,6 +37,7 @@ const addForm = ref({
   connection_method: 'vpn',
   vpn_profile_id: null,
   maestro_id: null,
+  vendor: 'Mikrotik', // Default
 })
 const isSubmitting = ref(false)
 const isTesting = ref(false)
@@ -45,24 +46,24 @@ const testResult = ref(null)
 // ===== Listados =====
 const allDevices = ref([])
 const vpnProfiles = ref([])
-const channels = ref([]) // Canales para alertas
+const channels = ref([])
 const isLoadingDevices = ref(false)
 const deletingId = ref(null)
 
 // --- Nuevo Estado para Selector de IP Destino (Masivo) ---
 const allDevicesList = ref([])
 
-// ===== ESTADO ACCIONES MASIVAS (MEJORADO) =====
-const selectedDevices = ref([]) // IDs seleccionados
+// ===== ESTADO ACCIONES MASIVAS =====
+const selectedDevices = ref([])
 const showBulkModal = ref(false)
 const isBulking = ref(false)
 const isDeletingBulk = ref(false)
 
-// Estado del Modal Masivo (Réplica del Builder)
-const bulkSensorType = ref('ping') // 'ping' | 'ethernet'
+// Estado del Modal Masivo
+const bulkSensorType = ref('ping')
 const bulkNameTemplate = ref('{{hostname}} - Sensor')
 
-// Modelos de configuración avanzados
+// Modelos de configuración
 const createNewPingSensor = () => ({
   config: {
     interval_sec: 60,
@@ -117,7 +118,7 @@ const createNewEthernetSensor = () => ({
 const bulkPingConfig = ref(createNewPingSensor())
 const bulkEthernetConfig = ref(createNewEthernetSensor())
 
-// ===== BITÁCORA (NUEVO) =====
+// ===== BITÁCORA =====
 const showCommentsModal = ref(false)
 const activeDeviceForComments = ref(null)
 const deviceComments = ref([])
@@ -153,7 +154,7 @@ async function submitComment() {
       content: newComment.value,
     })
     newComment.value = ''
-    await loadComments(activeDeviceForComments.value.id) // Recargar lista
+    await loadComments(activeDeviceForComments.value.id)
   } catch (error) {
     console.error(error)
     showNotification('Error guardando nota', 'error')
@@ -173,8 +174,25 @@ function formatDate(isoStr) {
   })
 }
 
-// ===== COMPUTADAS INTELIGENTES (Segmentación) =====
+// ===== COMPUTADAS INTELIGENTES =====
 const maestros = computed(() => allDevices.value.filter((d) => d.is_maestro))
+
+// Helper para Label del Puerto Dinámico
+const portLabel = computed(() => {
+  const v = addForm.value.vendor
+  if (v === 'Mikrotik') return 'Puerto API (Winbox)'
+  if (v === 'Ubiquiti' || v === 'Mimosa') return 'Puerto SSH'
+  if (v === 'SNMP') return 'Puerto SNMP'
+  return 'Puerto de Gestión'
+})
+
+// Cambio automático de puerto default al cambiar vendor
+function onVendorChange() {
+  if (addForm.value.vendor === 'Mikrotik') addForm.value.api_port = 8728
+  else if (addForm.value.vendor === 'Ubiquiti') addForm.value.api_port = 22
+  else if (addForm.value.vendor === 'Mimosa') addForm.value.api_port = 22
+  else if (addForm.value.vendor === 'SNMP') addForm.value.api_port = 161
+}
 
 const selectionStats = computed(() => {
   const selected = allDevices.value.filter((d) => selectedDevices.value.includes(d.id))
@@ -183,8 +201,8 @@ const selectionStats = computed(() => {
 
   return {
     total: selected.length,
-    managed: managedCount, // RouterOS/API capable
-    generic: genericCount, // ICMP only
+    managed: managedCount,
+    generic: genericCount,
   }
 })
 
@@ -198,7 +216,6 @@ const bulkCompatibility = computed(() => {
       message: `✅ Compatible con TODOS los ${stats.total} dispositivos.`,
     }
   } else {
-    // Ethernet requiere API
     return {
       compatible: stats.managed,
       skipped: stats.generic,
@@ -211,19 +228,13 @@ const bulkCompatibility = computed(() => {
   }
 })
 
-// --- COMPUTADO: Dispositivos Sugeridos para Destino (Filtrado Masivo) ---
 const suggestedTargetDevicesForBulk = computed(() => {
   if (selectedDevices.value.length === 0) return []
-
-  // 1. Obtener los IDs de los dispositivos seleccionados
   const selectedDevs = allDevicesList.value.filter((d) => selectedDevices.value.includes(d.id))
-
-  // 2. Recolectar todos los VPN IDs involucrados en la selección
   const involvedVpnIds = new Set()
 
   selectedDevs.forEach((d) => {
     let vpnId = d.vpn_profile_id
-    // Si no tiene VPN propia pero tiene maestro, intentar obtener la del maestro
     if (!vpnId && d.maestro_id) {
       const m = allDevicesList.value.find((x) => x.id === d.maestro_id)
       if (m) vpnId = m.vpn_profile_id
@@ -231,20 +242,14 @@ const suggestedTargetDevicesForBulk = computed(() => {
     if (vpnId) involvedVpnIds.add(vpnId)
   })
 
-  // 3. Si no hay ninguna VPN detectada, mostramos todos (fallback)
   if (involvedVpnIds.size === 0) return allDevicesList.value
 
-  // 4. Filtrar dispositivos que pertenezcan a CUALQUIERA de las VPNs involucradas
   return allDevicesList.value.filter((d) => {
-    // Excluir dispositivos que estén EN la selección actual (no pingearse entre ellos masivamente, aunque es debatible)
-    // Dejamos que se puedan seleccionar por si acaso.
-
     let dVpnId = d.vpn_profile_id
     if (!dVpnId && d.maestro_id) {
       const m = allDevicesList.value.find((x) => x.id === d.maestro_id)
       if (m) dVpnId = m.vpn_profile_id
     }
-
     return dVpnId && involvedVpnIds.has(dVpnId)
   })
 })
@@ -255,9 +260,8 @@ async function fetchAllDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevices.value = Array.isArray(data) ? data : []
-    allDevicesList.value = allDevices.value // Guardamos copia para el buscador
+    allDevicesList.value = allDevices.value
 
-    // Limpiar selección si ya no existen
     const currentIds = allDevices.value.map((d) => d.id)
     selectedDevices.value = selectedDevices.value.filter((id) => currentIds.includes(id))
   } catch (error) {
@@ -286,7 +290,7 @@ async function fetchChannels() {
   }
 }
 
-// ===== FUNCIONES ALTA (Intactas) =====
+// ===== FUNCIONES ALTA =====
 async function handleAddDeviceOneStep() {
   if (!addForm.value.client_name?.trim() || !addForm.value.ip_address?.trim()) {
     return showNotification('Completá Cliente e IP.', 'error')
@@ -301,11 +305,12 @@ async function handleAddDeviceOneStep() {
   const payload = {
     client_name: addForm.value.client_name,
     ip_address: addForm.value.ip_address,
-    api_port: Number(addForm.value.api_port) || 8728,
+    api_port: Number(addForm.value.api_port) || 8728, // Puerto flexible
     mac_address: addForm.value.mac_address || '',
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
     vpn_profile_id: addForm.value.connection_method === 'vpn' ? addForm.value.vpn_profile_id : null,
+    vendor: addForm.value.vendor, // Guardamos el fabricante
   }
 
   isSubmitting.value = true
@@ -361,6 +366,7 @@ function resetAddForm() {
     connection_method: 'vpn',
     vpn_profile_id: null,
     maestro_id: null,
+    vendor: 'Mikrotik',
   }
   testResult.value = null
 }
@@ -456,14 +462,13 @@ function openBulkModal() {
   showBulkModal.value = true
 }
 
-// Helper de construcción de payload (Igual que en Builder)
+// Helper de construcción de payload
 function buildSensorConfig(type, data) {
   const finalConfig = { ...data.config }
   const alerts = []
   const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
 
   if (type === 'ping') {
-    // Forzamos device_to_external ya que es genérico
     finalConfig.ping_type = 'device_to_external'
     if (!finalConfig.target_ip) finalConfig.target_ip = '8.8.8.8'
 
@@ -557,7 +562,7 @@ async function submitBulkMonitors() {
   }
 }
 
-// ===== LÓGICA DE ROLES (Visual) =====
+// ===== LÓGICA DE ROLES =====
 function getDeviceRole(device) {
   if (device.is_maestro) return { label: 'Maestro', class: 'maestro' }
   if (device.credential_id) return { label: 'Gestionado', class: 'managed' }
@@ -591,11 +596,20 @@ onMounted(async () => {
     </div>
 
     <section v-if="currentTab === 'add'" class="control-section fade-in">
-      <h2><i class="icon">➕</i> Alta de dispositivo (en un paso)</h2>
+      <h2><i class="icon">➕</i> Alta de dispositivo</h2>
       <form @submit.prevent="handleAddDeviceOneStep" class="form-layout">
         <div class="grid-2">
           <div>
-            <label>Cliente *</label>
+            <label>Fabricante (Vendor)</label>
+            <select v-model="addForm.vendor" @change="onVendorChange">
+              <option value="Mikrotik">MikroTik (RouterOS)</option>
+              <option value="Ubiquiti">Ubiquiti (AirOS/UniFi)</option>
+              <option value="Mimosa">Mimosa</option>
+              <option value="Generic">Genérico (Solo Ping)</option>
+            </select>
+          </div>
+          <div>
+            <label>Cliente / Nombre *</label>
             <input
               type="text"
               v-model="addForm.client_name"
@@ -603,15 +617,27 @@ onMounted(async () => {
               required
             />
           </div>
-          <div class="ip-port-grid">
-            <div style="flex-grow: 3">
-              <label>IP *</label>
-              <input type="text" v-model="addForm.ip_address" placeholder="192.168.88.1" required />
-            </div>
-            <div style="flex-grow: 1">
-              <label>Puerto API</label>
-              <input type="number" v-model="addForm.api_port" placeholder="8728" required />
-            </div>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <label>Dirección IP *</label>
+            <input type="text" v-model="addForm.ip_address" placeholder="192.168.88.1" required />
+          </div>
+          <div>
+            <label>{{ portLabel }}</label>
+            <input
+              type="number"
+              v-model="addForm.api_port"
+              :placeholder="addForm.vendor === 'Ubiquiti' ? '22' : '8728'"
+              required
+            />
+            <small v-if="addForm.vendor === 'Mikrotik'" class="text-dim"
+              >Puerto API (Default 8728)</small
+            >
+            <small v-if="addForm.vendor === 'Ubiquiti'" class="text-dim"
+              >Puerto SSH (Default 22)</small
+            >
           </div>
         </div>
 
@@ -701,6 +727,7 @@ onMounted(async () => {
               </th>
               <th>Nombre</th>
               <th>IP Address</th>
+              <th>Fabricante</th>
               <th>Rol</th>
               <th>Conexión</th>
               <th>Acciones</th>
@@ -721,12 +748,18 @@ onMounted(async () => {
               </td>
               <td>
                 <strong>{{ device.client_name }}</strong>
+                <div class="text-dim small">{{ device.identity || '' }}</div>
               </td>
               <td class="font-mono">
                 {{ device.ip_address
-                }}<span v-if="device.api_port !== 8728" class="text-dim"
+                }}<span
+                  v-if="device.api_port && device.api_port !== 8728 && device.api_port !== 22"
+                  class="text-dim"
                   >:{{ device.api_port }}</span
                 >
+              </td>
+              <td>
+                {{ device.vendor || 'Generico' }}
               </td>
               <td>
                 <span :class="['badge', getDeviceRole(device).class]">{{
@@ -1148,6 +1181,12 @@ label {
   font-weight: bold;
   color: var(--gray);
 }
+.text-dim {
+  color: #777;
+  font-size: 0.8rem;
+  display: block;
+  margin-top: 2px;
+}
 .actions-row {
   display: flex;
   gap: 1rem;
@@ -1315,9 +1354,6 @@ label {
 }
 .font-mono {
   font-family: monospace;
-}
-.text-dim {
-  color: #777;
 }
 .fade-in {
   animation: fadeIn 0.3s ease;
