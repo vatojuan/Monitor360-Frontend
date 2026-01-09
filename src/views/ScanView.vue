@@ -26,7 +26,7 @@ const scanConfig = ref({
   maestro_id: '',
   network_cidr: '192.168.88.0/24',
   interface: '',
-  scan_ports: '8728, 80',
+  scan_ports: '8728, 80, 22', // Default ampliado
   scan_mode: 'manual', // 'manual', 'notify', 'auto'
   credential_profile_id: null,
   is_active: false,
@@ -540,6 +540,12 @@ function getMaestroName(id) {
               placeholder="Ej: ether1, bridge-lan"
             />
             <small>Nombre exacto de la interfaz en el Mikrotik.</small>
+          </div>
+
+          <div class="form-group">
+            <label>Puertos a Escanear <span class="required">*</span></label>
+            <input type="text" v-model="scanConfig.scan_ports" placeholder="8728, 80, 22" />
+            <small>Separados por comas. (Ej: 22 para SSH, 8728 para API)</small>
           </div>
 
           <div class="form-group">

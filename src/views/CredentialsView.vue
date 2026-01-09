@@ -356,8 +356,8 @@ async function confirmDeleteProfile() {
           <div class="form-group-no-margin">
             <label class="label-small">Tipo de Dispositivo / Protocolo</label>
             <select v-model="newCredential.type" class="type-select">
-              <option value="mikrotik_api">📡 MikroTik (API Port 8728)</option>
-              <option value="ssh">💻 Ubiquiti / Linux (SSH Port 22)</option>
+              <option value="mikrotik_api">📡 MikroTik (API)</option>
+              <option value="ssh">💻 Ubiquiti / Linux (SSH)</option>
               <option value="snmp">🌐 SNMP (Solo Monitoreo)</option>
             </select>
           </div>
