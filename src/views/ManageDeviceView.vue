@@ -36,6 +36,7 @@ const addForm = ref({
   node: '',
   connection_method: 'vpn',
   vpn_profile_id: null,
+  credential_id: null, // <--- NUEVO: Perfil de credenciales explícito
   maestro_id: null,
   vendor: 'Mikrotik', // Default
 })
@@ -46,6 +47,7 @@ const testResult = ref(null)
 // ===== Listados =====
 const allDevices = ref([])
 const vpnProfiles = ref([])
+const credentialProfiles = ref([]) // <--- NUEVO: Lista de credenciales
 const channels = ref([])
 const isLoadingDevices = ref(false)
 const deletingId = ref(null)
@@ -281,6 +283,15 @@ async function fetchVpnProfiles() {
   }
 }
 
+async function fetchCredentials() {
+  try {
+    const { data } = await api.get('/credentials')
+    credentialProfiles.value = Array.isArray(data) ? data : []
+  } catch (error) {
+    console.error(error)
+  }
+}
+
 async function fetchChannels() {
   try {
     const { data } = await api.get('/channels')
@@ -298,6 +309,12 @@ async function handleAddDeviceOneStep() {
   if (addForm.value.connection_method === 'vpn' && !addForm.value.vpn_profile_id) {
     return showNotification('Seleccioná un Perfil VPN.', 'error')
   }
+  // Validación de credenciales si se selecciona VPN (para gestión)
+  if (addForm.value.connection_method === 'vpn' && !addForm.value.credential_id) {
+    // Opcional: Podríamos dejar pasar si es genérico, pero es mejor advertir
+    // return showNotification('Seleccioná un Perfil de Credenciales.', 'error')
+  }
+
   if (addForm.value.connection_method === 'maestro' && !addForm.value.maestro_id) {
     return showNotification('Seleccioná un Maestro.', 'error')
   }
@@ -310,6 +327,7 @@ async function handleAddDeviceOneStep() {
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
     vpn_profile_id: addForm.value.connection_method === 'vpn' ? addForm.value.vpn_profile_id : null,
+    credential_id: addForm.value.connection_method === 'vpn' ? addForm.value.credential_id : null, // <--- ENVIAMOS CREDENCIAL
     vendor: addForm.value.vendor, // Guardamos el fabricante
   }
 
@@ -333,7 +351,7 @@ async function handleTestReachability() {
   const payload = {
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
-    vendor: addForm.value.vendor, // <--- FIX: Enviamos vendor para que el backend elija el driver correcto (SSH vs API)
+    vendor: addForm.value.vendor, // FIX: Enviamos vendor para que backend elija driver
   }
   if (addForm.value.connection_method === 'vpn') {
     payload.vpn_profile_id = addForm.value.vpn_profile_id
@@ -366,6 +384,7 @@ function resetAddForm() {
     node: '',
     connection_method: 'vpn',
     vpn_profile_id: null,
+    credential_id: null, // Reset
     maestro_id: null,
     vendor: 'Mikrotik',
   }
@@ -575,6 +594,7 @@ onMounted(async () => {
   await loadUser()
   fetchAllDevices()
   fetchVpnProfiles()
+  fetchCredentials()
   fetchChannels()
 })
 </script>
@@ -658,7 +678,16 @@ onMounted(async () => {
                 {{ vpn.name }}
               </option>
             </select>
+
+            <label style="margin-top: 0.8rem">Perfil de Credenciales</label>
+            <select v-model="addForm.credential_id">
+              <option :value="null">-- Auto-detectar (Lento) --</option>
+              <option v-for="cred in credentialProfiles" :key="cred.id" :value="cred.id">
+                {{ cred.name }} ({{ cred.username }})
+              </option>
+            </select>
           </div>
+
           <div v-if="addForm.connection_method === 'maestro'">
             <label>Maestro</label>
             <select v-model="addForm.maestro_id" required>
