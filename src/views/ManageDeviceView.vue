@@ -10,6 +10,10 @@ const router = useRouter()
 const currentTab = ref('add') // 'add' | 'manage'
 const notification = ref({ show: false, message: '', type: 'success' })
 
+// --- MODAL DE ERROR DE AUTENTICACIÓN (NUEVO) ---
+const showAuthErrorModal = ref(false)
+const authErrorMessage = ref('')
+
 function showNotification(message, type = 'success') {
   notification.value = { show: true, message, type }
   setTimeout(() => (notification.value.show = false), 4000)
@@ -36,7 +40,7 @@ const addForm = ref({
   node: '',
   connection_method: 'vpn',
   vpn_profile_id: null,
-  credential_id: null, // <--- NUEVO: Perfil de credenciales explícito
+  credential_id: null,
   maestro_id: null,
   vendor: 'Mikrotik', // Default
 })
@@ -47,7 +51,7 @@ const testResult = ref(null)
 // ===== Listados =====
 const allDevices = ref([])
 const vpnProfiles = ref([])
-const credentialProfiles = ref([]) // <--- NUEVO: Lista de credenciales
+const credentialProfiles = ref([])
 const channels = ref([])
 const isLoadingDevices = ref(false)
 const deletingId = ref(null)
@@ -302,19 +306,17 @@ async function fetchChannels() {
 }
 
 // ===== FUNCIONES ALTA =====
-async function handleAddDeviceOneStep() {
+// Modificado para aceptar parámetro opcional 'forceGeneric'
+async function handleAddDeviceOneStep(forceGeneric = false) {
+  // Si forceGeneric es el evento del formulario (un objeto), lo forzamos a false
+  const isForced = typeof forceGeneric === 'boolean' ? forceGeneric : false
+
   if (!addForm.value.client_name?.trim() || !addForm.value.ip_address?.trim()) {
     return showNotification('Completá Cliente e IP.', 'error')
   }
   if (addForm.value.connection_method === 'vpn' && !addForm.value.vpn_profile_id) {
     return showNotification('Seleccioná un Perfil VPN.', 'error')
   }
-  // Validación de credenciales si se selecciona VPN (para gestión)
-  if (addForm.value.connection_method === 'vpn' && !addForm.value.credential_id) {
-    // Opcional: Podríamos dejar pasar si es genérico, pero es mejor advertir
-    // return showNotification('Seleccioná un Perfil de Credenciales.', 'error')
-  }
-
   if (addForm.value.connection_method === 'maestro' && !addForm.value.maestro_id) {
     return showNotification('Seleccioná un Maestro.', 'error')
   }
@@ -327,20 +329,40 @@ async function handleAddDeviceOneStep() {
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
     vpn_profile_id: addForm.value.connection_method === 'vpn' ? addForm.value.vpn_profile_id : null,
-    credential_id: addForm.value.connection_method === 'vpn' ? addForm.value.credential_id : null, // <--- ENVIAMOS CREDENCIAL
+    credential_id: addForm.value.connection_method === 'vpn' ? addForm.value.credential_id : null,
     vendor: addForm.value.vendor, // Guardamos el fabricante
+    force_generic_ping: isForced, // <--- NUEVO: Flag para el backend
   }
 
   isSubmitting.value = true
+  // Si estamos reintentando, cerramos el modal
+  if (isForced) showAuthErrorModal.value = false
+
   try {
     const { data } = await api.post('/devices/manual', payload)
-    showNotification(`Dispositivo "${data.client_name}" creado.`, 'success')
+
+    // Si llegamos aquí, fue éxito
+    const successMsg = isForced
+      ? `Dispositivo "${data.client_name}" agregado como Genérico (Solo Ping).`
+      : `Dispositivo "${data.client_name}" gestionado correctamente.`
+
+    showNotification(successMsg, 'success')
     resetAddForm()
     fetchAllDevices()
     currentTab.value = 'manage'
   } catch (error) {
     console.error('Error creando dispositivo:', error)
-    showNotification(error.response?.data?.detail || 'Error al añadir dispositivo.', 'error')
+
+    const detail = error.response?.data?.detail || ''
+
+    // DETECCIÓN DE AUTH_FAILED (Plan B)
+    if (detail.includes('AUTH_FAILED') && !isForced) {
+      authErrorMessage.value = detail.replace('AUTH_FAILED: ', '') // Limpiamos el prefijo técnico
+      showAuthErrorModal.value = true
+    } else {
+      // Error normal
+      showNotification(detail || 'Error al añadir dispositivo.', 'error')
+    }
   } finally {
     isSubmitting.value = false
   }
@@ -618,7 +640,7 @@ onMounted(async () => {
 
     <section v-if="currentTab === 'add'" class="control-section fade-in">
       <h2><i class="icon">➕</i> Alta de dispositivo</h2>
-      <form @submit.prevent="handleAddDeviceOneStep" class="form-layout">
+      <form @submit.prevent="handleAddDeviceOneStep(false)" class="form-layout">
         <div class="grid-2">
           <div>
             <label>Fabricante (Vendor)</label>
@@ -1103,6 +1125,25 @@ onMounted(async () => {
               {{ isSendingComment ? 'Guardando...' : 'Agregar Nota' }}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showAuthErrorModal" class="modal-overlay" style="z-index: 4000">
+      <div class="modal-content">
+        <h3 style="color: #e74c3c">⚠️ Fallo de Autenticación</h3>
+        <p style="margin: 1rem 0">
+          {{ authErrorMessage }}
+        </p>
+        <p class="text-dim">
+          No se pudo gestionar el equipo. ¿Deseas agregarlo como un
+          <strong>Dispositivo Genérico</strong> para monitorear solo su estado con Ping (ICMP)?
+        </p>
+        <div class="modal-actions">
+          <button @click="showAuthErrorModal = false" class="btn-secondary">Cancelar</button>
+          <button @click="handleAddDeviceOneStep(true)" class="btn-primary">
+            Sí, agregar solo Ping
+          </button>
         </div>
       </div>
     </div>
