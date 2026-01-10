@@ -333,6 +333,7 @@ async function handleTestReachability() {
   const payload = {
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
+    vendor: addForm.value.vendor, // <--- FIX: Enviamos vendor para que el backend elija el driver correcto (SSH vs API)
   }
   if (addForm.value.connection_method === 'vpn') {
     payload.vpn_profile_id = addForm.value.vpn_profile_id
