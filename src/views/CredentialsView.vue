@@ -8,8 +8,14 @@ const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- ESTADO CREDENCIALES (BÓVEDA) ---
 const savedCredentials = ref([])
-// NUEVO: Agregamos 'type' por defecto
-const newCredential = ref({ name: '', username: '', password: '', type: 'mikrotik_api' })
+const newCredential = ref({
+  name: '',
+  username: '',
+  password: '',
+  type: 'mikrotik_api',
+  vendor: 'Mikrotik', // Default
+  is_password_only: false,
+})
 const credentialToDeleteId = ref(null)
 
 // --- ESTADO PERFILES (LLAVEROS) ---
@@ -21,7 +27,7 @@ const profileToDeleteId = ref(null)
 const profileForm = ref({
   id: null,
   name: '',
-  selectedCreds: [], // Array de objetos {id, name, username} en orden de prioridad
+  selectedCreds: [], // Array de objetos {id, name, username, type}
 })
 
 // --- LIFECYCLE ---
@@ -51,16 +57,55 @@ async function fetchCredentials() {
   }
 }
 
-async function handleAddCredential() {
-  if (!newCredential.value.name.trim() || !newCredential.value.username.trim()) {
-    showNotification('Nombre y Usuario son obligatorios.', 'error')
-    return
+// Cambio automático de tipo al seleccionar vendor
+function onVendorChange() {
+  const v = newCredential.value.vendor
+  if (v === 'Mikrotik') {
+    newCredential.value.type = 'mikrotik_api'
+    newCredential.value.is_password_only = false
+  } else if (v === 'Ubiquiti') {
+    newCredential.value.type = 'ssh'
+    newCredential.value.is_password_only = false
+  } else if (v === 'Mimosa') {
+    newCredential.value.type = 'ssh' // Mimosa usa SSH usualmente o HTTP digest, pero ssh es lo que tenemos
+    // Mantenemos is_password_only como estaba o false
+  } else if (v === 'SNMP') {
+    newCredential.value.type = 'snmp'
+    newCredential.value.is_password_only = false // Community string va en username usualmente
   }
+}
+
+async function handleAddCredential() {
+  // Validación dinámica
+  if (!newCredential.value.name.trim()) {
+    return showNotification('El nombre es obligatorio.', 'error')
+  }
+  if (!newCredential.value.is_password_only && !newCredential.value.username.trim()) {
+    return showNotification('El usuario es obligatorio.', 'error')
+  }
+  if (!newCredential.value.password.trim() && newCredential.value.vendor !== 'SNMP') {
+    return showNotification('La contraseña es obligatoria.', 'error')
+  }
+
   try {
-    await api.post('/credentials', newCredential.value)
+    const payload = {
+      ...newCredential.value,
+      // Si es password only, enviamos username null o vacío
+      username: newCredential.value.is_password_only ? null : newCredential.value.username,
+    }
+
+    await api.post('/credentials', payload)
     showNotification(`Credencial '${newCredential.value.name}' guardada.`, 'success')
-    // Resetear formulario con default type
-    newCredential.value = { name: '', username: '', password: '', type: 'mikrotik_api' }
+
+    // Resetear formulario
+    newCredential.value = {
+      name: '',
+      username: '',
+      password: '',
+      type: 'mikrotik_api',
+      vendor: 'Mikrotik',
+      is_password_only: false,
+    }
     fetchCredentials()
   } catch (err) {
     showNotification(err.response?.data?.detail || 'Error al guardar.', 'error')
@@ -77,7 +122,7 @@ async function confirmDeleteCredential() {
     await api.delete(`/credentials/${credentialToDeleteId.value}`)
     showNotification('Credencial eliminada.', 'success')
     fetchCredentials()
-    fetchProfiles() // Refrescar perfiles por si se borró una usada
+    fetchProfiles()
   } catch (err) {
     showNotification(err.response?.data?.detail || 'Error al eliminar.', 'error')
   } finally {
@@ -85,20 +130,15 @@ async function confirmDeleteCredential() {
   }
 }
 
-// Helper visual para tipos
-function getTypeName(type) {
-  const map = {
-    mikrotik_api: 'MikroTik API',
-    ssh: 'SSH / UBNT',
-    snmp: 'SNMP',
-  }
-  return map[type] || 'MikroTik API'
-}
-
-function getTypeClass(type) {
-  if (type === 'ssh') return 'badge-ssh'
-  if (type === 'snmp') return 'badge-snmp'
-  return 'badge-ros'
+// Helpers visuales
+function getVendorBadgeClass(vendor) {
+  if (!vendor) return 'badge-gray'
+  const v = vendor.toLowerCase()
+  if (v.includes('mikrotik')) return 'badge-ros'
+  if (v.includes('ubiquiti')) return 'badge-ubnt'
+  if (v.includes('mimosa')) return 'badge-mimosa'
+  if (v.includes('snmp')) return 'badge-snmp'
+  return 'badge-gray'
 }
 
 // ==========================================
@@ -113,7 +153,6 @@ async function fetchProfiles() {
   }
 }
 
-// Computed: Credenciales disponibles (las que NO están ya seleccionadas)
 const availableCredentials = computed(() => {
   const selectedIds = new Set(profileForm.value.selectedCreds.map((c) => c.id))
   return savedCredentials.value.filter((c) => !selectedIds.has(c.id))
@@ -122,12 +161,12 @@ const availableCredentials = computed(() => {
 function openProfileModal(profile = null) {
   if (profile) {
     // Editar
-    // Mapeamos items a formato UI simple
     const mappedSelection = profile.items.map((item) => ({
       id: item.credential_id,
       name: item.name,
       username: item.username,
-      type: item.type, // Ahora traemos el tipo también
+      vendor: item.vendor, // Traemos vendor
+      type: item.type,
     }))
     profileForm.value = {
       id: profile.id,
@@ -145,7 +184,6 @@ function closeProfileModal() {
   isProfileModalOpen.value = false
 }
 
-// -- Manipulación de listas en el Modal --
 function addToProfile(cred) {
   profileForm.value.selectedCreds.push(cred)
 }
@@ -181,7 +219,7 @@ async function saveProfile() {
 
   const payload = {
     name: profileForm.value.name,
-    credential_ids: profileForm.value.selectedCreds.map((c) => c.id), // Enviar solo IDs en orden
+    credential_ids: profileForm.value.selectedCreds.map((c) => c.id),
   }
 
   try {
@@ -227,7 +265,7 @@ async function confirmDeleteProfile() {
     <div v-if="credentialToDeleteId" class="modal-overlay">
       <div class="modal-content">
         <h3>Eliminar Credencial</h3>
-        <p>¿Seguro? Si está en uso por algún perfil o dispositivo, podría fallar.</p>
+        <p>¿Seguro? Si está en uso, podría afectar la gestión.</p>
         <div class="modal-actions">
           <button @click="credentialToDeleteId = null" class="btn-secondary">Cancelar</button>
           <button @click="confirmDeleteCredential" class="btn-danger">Eliminar</button>
@@ -238,7 +276,6 @@ async function confirmDeleteProfile() {
     <div v-if="profileToDeleteId" class="modal-overlay">
       <div class="modal-content">
         <h3>Eliminar Perfil</h3>
-        <p>Las credenciales individuales NO se borrarán.</p>
         <div class="modal-actions">
           <button @click="profileToDeleteId = null" class="btn-secondary">Cancelar</button>
           <button @click="confirmDeleteProfile" class="btn-danger">Eliminar</button>
@@ -272,11 +309,13 @@ async function confirmDeleteProfile() {
               >
                 <div class="item-text-row">
                   <span>{{ cred.name }}</span>
-                  <span :class="['mini-badge', getTypeClass(cred.type)]">{{
-                    getTypeName(cred.type)
-                  }}</span>
+                  <span :class="['mini-badge', getVendorBadgeClass(cred.vendor)]">
+                    {{ cred.vendor || 'Gen' }}
+                  </span>
                 </div>
-                <span class="small-user">({{ cred.username }})</span>
+                <span class="small-user">
+                  {{ cred.username ? `(${cred.username})` : '(Solo Password)' }}
+                </span>
                 <span class="action-icon">➕</span>
               </div>
               <div v-if="availableCredentials.length === 0" class="empty-msg">
@@ -302,11 +341,13 @@ async function confirmDeleteProfile() {
                   <div class="text-col">
                     <div class="item-text-row">
                       <span>{{ cred.name }}</span>
-                      <span :class="['mini-badge', getTypeClass(cred.type || 'mikrotik_api')]">
-                        {{ getTypeName(cred.type || 'mikrotik_api') }}
+                      <span :class="['mini-badge', getVendorBadgeClass(cred.vendor)]">
+                        {{ cred.vendor || 'Gen' }}
                       </span>
                     </div>
-                    <span class="small-user">{{ cred.username }}</span>
+                    <span class="small-user">
+                      {{ cred.username || '***' }}
+                    </span>
                   </div>
                 </div>
                 <div class="item-actions">
@@ -354,29 +395,43 @@ async function confirmDeleteProfile() {
         <h2><i class="icon">➕</i> Añadir Credencial</h2>
         <form @submit.prevent="handleAddCredential" class="credential-form">
           <div class="form-group-no-margin">
-            <label class="label-small">Tipo de Dispositivo / Protocolo</label>
-            <select v-model="newCredential.type" class="type-select">
-              <option value="mikrotik_api">📡 MikroTik (API)</option>
-              <option value="ssh">💻 Ubiquiti / Linux (SSH)</option>
-              <option value="snmp">🌐 SNMP (Solo Monitoreo)</option>
+            <label class="label-small">Fabricante / Tipo</label>
+            <select v-model="newCredential.vendor" @change="onVendorChange" class="type-select">
+              <option value="Mikrotik">📡 MikroTik (RouterOS)</option>
+              <option value="Ubiquiti">💻 Ubiquiti (AirOS / EdgeOS)</option>
+              <option value="Mimosa">📡 Mimosa Networks</option>
+              <option value="SNMP">🌐 SNMP (Solo Lectura)</option>
             </select>
           </div>
 
           <input
             type="text"
             v-model="newCredential.name"
-            placeholder="Nombre (ej: Admin General) *"
+            placeholder="Nombre descriptivo (ej: Torre Norte) *"
           />
+
+          <div v-if="newCredential.vendor === 'Mimosa'" class="checkbox-row">
+            <label>
+              <input type="checkbox" v-model="newCredential.is_password_only" />
+              Solo Contraseña (Sin usuario)
+            </label>
+          </div>
+
           <input
+            v-if="!newCredential.is_password_only"
             type="text"
             v-model="newCredential.username"
-            placeholder="Usuario (o Community String para SNMP) *"
+            :placeholder="newCredential.vendor === 'SNMP' ? 'Community String *' : 'Usuario *'"
           />
+
           <input
             type="password"
             v-model="newCredential.password"
-            placeholder="Contraseña (opcional para SNMP)"
+            :placeholder="
+              newCredential.vendor === 'SNMP' ? 'Contraseña (Opcional)' : 'Contraseña *'
+            "
           />
+
           <button type="submit">Guardar en Bóveda</button>
         </form>
       </section>
@@ -388,11 +443,13 @@ async function confirmDeleteProfile() {
             <div class="cred-info">
               <span class="cred-name">
                 {{ cred.name }}
-                <span :class="['badge-pill', getTypeClass(cred.type)]">{{
-                  getTypeName(cred.type)
-                }}</span>
+                <span :class="['badge-pill', getVendorBadgeClass(cred.vendor)]">
+                  {{ cred.vendor || 'Generico' }}
+                </span>
               </span>
-              <span class="cred-user">Usuario: {{ cred.username }}</span>
+              <span class="cred-user">
+                {{ cred.username ? `Usuario: ${cred.username}` : '🔑 (Solo clave)' }}
+              </span>
             </div>
             <button @click="requestDeleteCredential(cred.id)" class="delete-btn">×</button>
           </li>
@@ -403,9 +460,7 @@ async function confirmDeleteProfile() {
 
     <div v-if="activeTab === 'profiles'" class="profiles-layout fade-in">
       <div class="profiles-header">
-        <p class="helper-text">
-          Crea grupos de credenciales para probar secuencialmente durante el escaneo.
-        </p>
+        <p class="helper-text">Agrupa credenciales para que el escáner las pruebe en orden.</p>
         <button @click="openProfileModal()" class="btn-create-profile">+ Nuevo Perfil</button>
       </div>
 
@@ -420,10 +475,11 @@ async function confirmDeleteProfile() {
           </div>
 
           <div class="profile-items-preview">
-            <span class="preview-label">Secuencia de prueba:</span>
+            <span class="preview-label">Secuencia:</span>
             <ol>
               <li v-for="item in profile.items" :key="item.credential_id">
-                <span :class="['dot', getTypeClass(item.type)]"></span> {{ item.name }}
+                <span :class="['dot', getVendorBadgeClass(item.vendor)]"></span>
+                {{ item.name }}
               </li>
             </ol>
             <div v-if="!profile.items || profile.items.length === 0" class="empty-items">
@@ -518,6 +574,16 @@ async function confirmDeleteProfile() {
 .type-select {
   cursor: pointer;
 }
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  color: var(--gray);
+  font-size: 0.9rem;
+}
+.checkbox-row input {
+  width: auto;
+  margin-right: 8px;
+}
 .label-small {
   font-size: 0.85rem;
   color: var(--gray);
@@ -577,15 +643,24 @@ async function confirmDeleteProfile() {
   color: #60a5fa;
   border: 1px solid #2563eb;
 }
-.badge-ssh {
+.badge-ubnt {
   background-color: rgba(16, 185, 129, 0.2);
   color: #34d399;
   border: 1px solid #059669;
+}
+.badge-mimosa {
+  background-color: rgba(236, 72, 153, 0.2); /* Rosa */
+  color: #f472b6;
+  border: 1px solid #db2777;
 }
 .badge-snmp {
   background-color: rgba(245, 158, 11, 0.2);
   color: #fbbf24;
   border: 1px solid #d97706;
+}
+.badge-gray {
+  background-color: #444;
+  color: #ccc;
 }
 
 .mini-badge {
@@ -605,15 +680,18 @@ async function confirmDeleteProfile() {
 }
 .dot.badge-ros {
   background-color: #60a5fa;
-  border: none;
 }
-.dot.badge-ssh {
+.dot.badge-ubnt {
   background-color: #34d399;
-  border: none;
+}
+.dot.badge-mimosa {
+  background-color: #f472b6;
 }
 .dot.badge-snmp {
   background-color: #fbbf24;
-  border: none;
+}
+.dot.badge-gray {
+  background-color: #888;
 }
 
 .cred-user {
