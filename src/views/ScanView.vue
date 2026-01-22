@@ -164,7 +164,8 @@ async function fetchCredentialProfiles() {
 }
 
 async function fetchPendingDevices() {
-  const { data } = await api.get('/discovery/pending')
+  // Pide explícitamente incluir los manuales en la bandeja de entrada
+  const { data } = await api.get('/discovery/pending', { params: { include_manual: true } })
   pendingDevices.value = data || []
 }
 
