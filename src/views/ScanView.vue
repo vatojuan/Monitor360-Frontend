@@ -269,7 +269,7 @@ async function runScan() {
   try {
     const payload = { ...scanConfig.value }
 
-    // Si es Auto-Adoptar, preparamos la lista de sensores a crear
+    // Si es Auto-Adoptar y está activo, preparamos la lista de sensores a crear
     if (scanConfig.value.is_active && scanConfig.value.scan_mode === 'auto') {
       const sensorsToCreate = []
 
@@ -281,15 +281,20 @@ async function runScan() {
         sensorsToCreate.push(buildSensorConfigPayload('ethernet', bulkEthernetConfig.value))
       }
 
-      // Enviamos un array de configuraciones en 'sensors_config' en lugar de un objeto único
-      // El backend debe estar preparado para recibir un array en este campo si se envían múltiples
       payload.sensors_config = sensorsToCreate
     }
 
-    await api.post('/discovery/config', payload)
+    // --- CORRECCIÓN BUG #1: LÓGICA DE GUARDADO CONDICIONAL ---
+    // Si el usuario marcó "Guardar como Tarea Recurrente", guardamos en DB.
+    // Si no, no llamamos a /config y pasamos directo a /scan (escaneo efímero).
+    if (scanConfig.value.is_active) {
+       await api.post('/discovery/config', payload)
+    } 
 
     // Ejecutar escaneo inmediato
-    const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`)
+    // Enviamos el payload al endpoint de scan. 
+    // El backend ahora acepta este payload para sobrescribir/usar configuración "al vuelo".
+    const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload)
 
     const count = data.length
     if (count > 0) {
@@ -299,7 +304,12 @@ async function runScan() {
     } else {
       showNotification('Escaneo completado. No se encontraron nuevos.', 'info')
     }
-    await fetchScanProfiles()
+    
+    // Solo refrescamos la lista de perfiles si realmente guardamos uno
+    if (scanConfig.value.is_active) {
+        await fetchScanProfiles()
+    }
+    
   } catch (e) {
     console.error(e)
     showNotification(e.response?.data?.detail || 'Error durante el escaneo', 'error')
