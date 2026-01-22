@@ -186,7 +186,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import api from '@/lib/api' // Usamos tu cliente API existente
+import api from '@/lib/api' 
 import logoSvgUrl from '@/assets/logo.svg?url'
 
 const props = defineProps({
@@ -263,32 +263,35 @@ const fetchNotifications = async () => {
     const { data } = await api.get('/discovery/pending')
     notifications.value = Array.isArray(data) ? data : []
   } catch (e) {
-    // Silencioso para no molestar si el endpoint falla o no hay conexión
     console.debug('Error fetching notifications:', e)
   }
 }
 
 const quickAdopt = async (notif) => {
   try {
-    // Usamos el mismo formato que ScanView
+    // --- CORRECCIÓN CRÍTICA ---
+    // NO debemos enviar notif.profile_id como credential_profile_id.
+    // notif.profile_id es el perfil de ESCANEO.
+    // Enviamos null para que el Backend resuelva automáticamente las credenciales
+    // asociadas a ese perfil de escaneo.
+    
     const payload = {
       maestro_id: notif.maestro_id,
-      credential_profile_id: notif.profile_id,
+      credential_profile_id: null, // <--- CAMBIO AQUÍ: Null para activar auto-resolución en backend
       devices: [notif],
     }
     await api.post('/discovery/adopt', payload)
+    
     // Remover de la lista localmente para feedback inmediato
     notifications.value = notifications.value.filter((n) => n.mac_address !== notif.mac_address)
   } catch (e) {
-    console.error(e) // <--- CORRECCIÓN: Usamos 'e' para loguear el error
+    console.error(e) 
     alert('Error al adoptar. Intenta desde el Escáner.')
   }
 }
 
 const quickDismiss = async (notif) => {
   try {
-    // Podríamos tener un endpoint para ignorar, o simplemente borrar de 'pending'
-    // Asumiremos que ignorar es borrar de discovered_devices
     await api.delete(`/discovery/pending/${notif.mac_address}`)
     notifications.value = notifications.value.filter((n) => n.mac_address !== notif.mac_address)
   } catch (e) {
@@ -318,11 +321,9 @@ const onKeydown = (e) => {
 
 /* Click outside (Menú y Notificaciones) */
 const onDocPointerDown = (e) => {
-  // Menu
   if (menu.value && menuRef.value && !menuRef.value.contains(e.target)) {
     menu.value = false
   }
-  // Notificaciones
   if (showNotif.value && notifRef.value && !notifRef.value.contains(e.target)) {
     showNotif.value = false
   }
@@ -332,7 +333,6 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown, true)
 
-  // Iniciar Polling de Notificaciones (30s)
   fetchNotifications()
   notifInterval = setInterval(fetchNotifications, 30000)
 })
