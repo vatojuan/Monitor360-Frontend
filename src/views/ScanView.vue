@@ -23,20 +23,21 @@ const adoptCredentialId = ref(null)
 
 // --- ESTADO CONFIGURACIÓN (SCAN) ---
 const scanConfig = ref({
+  id: null, // ID para edición
   maestro_id: '',
   network_cidr: '192.168.88.0/24',
   interface: '',
-  scan_ports: '8728, 80, 22', // Default ampliado
+  scan_ports: '8728, 80, 22', 
   scan_mode: 'manual', // 'manual', 'notify', 'auto'
   credential_profile_id: null,
   is_active: false,
-  scan_interval_minutes: 60, // <--- NUEVO CAMPO: Default 1 hora (Seguro)
+  scan_interval_minutes: 60, 
 
   // Nuevos campos para Auto-Adoptar
   target_group: 'General',
 
-  // Banderas independientes para incluir sensores
-  include_ping_sensor: true,
+  // Banderas independientes para incluir sensores (UI Helper)
+  include_ping_sensor: false,
   include_ethernet_sensor: false,
 })
 
@@ -260,6 +261,41 @@ function buildSensorConfigPayload(type, data) {
   }
 }
 
+// --- HELPER: RESTAURAR CONFIGURACIÓN DE SENSOR (Para Editar) ---
+function restoreSensorConfig(sensors) {
+    if (!sensors || !Array.isArray(sensors)) {
+        scanConfig.value.include_ping_sensor = false
+        scanConfig.value.include_ethernet_sensor = false
+        return
+    }
+
+    const pingSensor = sensors.find(s => s.sensor_type === 'ping')
+    if (pingSensor) {
+        scanConfig.value.include_ping_sensor = true
+        bulkPingConfig.value.config = { ...pingSensor.config }
+        // Restaurar alertas (simplificado: asume estructura estándar)
+        if (pingSensor.config.alerts) {
+            pingSensor.config.alerts.forEach(a => {
+                if (a.type === 'timeout') bulkPingConfig.value.ui_alert_timeout = { ...bulkPingConfig.value.ui_alert_timeout, ...a, enabled: true }
+                if (a.type === 'high_latency') bulkPingConfig.value.ui_alert_latency = { ...bulkPingConfig.value.ui_alert_latency, ...a, enabled: true }
+            })
+        }
+    }
+
+    const ethSensor = sensors.find(s => s.sensor_type === 'ethernet')
+    if (ethSensor) {
+        scanConfig.value.include_ethernet_sensor = true
+        bulkEthernetConfig.value.config = { ...ethSensor.config }
+        if (ethSensor.config.alerts) {
+            ethSensor.config.alerts.forEach(a => {
+                if (a.type === 'speed_change') bulkEthernetConfig.value.ui_alert_speed_change = { ...bulkEthernetConfig.value.ui_alert_speed_change, ...a, enabled: true }
+                if (a.type === 'traffic_threshold') bulkEthernetConfig.value.ui_alert_traffic = { ...bulkEthernetConfig.value.ui_alert_traffic, ...a, enabled: true }
+            })
+        }
+    }
+}
+
+
 // --- ACCIONES ---
 async function runScan() {
   if (!scanConfig.value.maestro_id) return showNotification('Selecciona un Router Maestro', 'error')
@@ -286,23 +322,25 @@ async function runScan() {
       payload.sensors_config = sensorsToCreate
     }
 
-    // --- CORRECCIÓN BUG #1: LÓGICA DE GUARDADO CONDICIONAL ---
-    // Si el usuario marcó "Guardar como Tarea Recurrente", guardamos en DB.
-    // Si no, no llamamos a /config y pasamos directo a /scan (escaneo efímero).
+    // --- GUARDAR CONFIGURACIÓN ---
     if (scanConfig.value.is_active) {
        await api.post('/discovery/config', payload)
+       showNotification('✅ Tarea guardada correctamente', 'success')
     } 
 
-    // Ejecutar escaneo inmediato
+    // Ejecutar escaneo inmediato (opcional, pero útil para feedback)
     // Enviamos el payload al endpoint de scan. 
-    // El backend ahora acepta este payload para sobrescribir/usar configuración "al vuelo".
     const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload)
 
     const count = data.length
     if (count > 0) {
-      showNotification(`✅ Escaneo completado. ${count} nuevos en Bandeja.`, 'success')
+      if (scanConfig.value.scan_mode === 'auto') {
+          showNotification(`✅ Escaneo completado. ${count} dispositivos procesados (Auto).`, 'success')
+      } else {
+          showNotification(`✅ Escaneo completado. ${count} nuevos en Bandeja.`, 'success')
+          activeTab.value = 'inbox'
+      }
       await fetchPendingDevices()
-      activeTab.value = 'inbox'
     } else {
       showNotification('Escaneo completado. No se encontraron nuevos.', 'info')
     }
@@ -310,6 +348,8 @@ async function runScan() {
     // Solo refrescamos la lista de perfiles si realmente guardamos uno
     if (scanConfig.value.is_active) {
         await fetchScanProfiles()
+        // Reset form ID para que el próximo sea uno nuevo si se quiere
+        // scanConfig.value.id = null 
     }
     
   } catch (e) {
@@ -366,6 +406,34 @@ async function deleteScanProfile(id) {
   }
 }
 
+// --- FUNCIÓN EDITAR ---
+async function editScanProfile(profile) {
+    try {
+        // Cargar detalles completos del perfil (incluyendo sensores)
+        const { data } = await api.get(`/discovery/config/${profile.maestro_id}`)
+        if (data) {
+            scanConfig.value = {
+                ...scanConfig.value, // Mantener defaults
+                ...data, // Sobrescribir con datos de DB
+                id: profile.id, // Asegurar ID para update
+                is_active: true // Si estamos editando, asumimos que es una tarea activa
+            }
+            
+            // Restaurar configuración de sensores si existe
+            if (data.sensors_config) {
+                restoreSensorConfig(data.sensors_config)
+            }
+            
+            // Scroll arriba
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+            showNotification('✏️ Editando tarea...', 'info')
+        }
+    } catch (e) {
+        console.error(e)
+        showNotification('Error cargando perfil para editar', 'error')
+    }
+}
+
 // --- UTILIDADES ---
 function showNotification(msg, type) {
   notification.value = { show: true, message: msg, type }
@@ -393,30 +461,21 @@ function getMaestroName(id) {
   return m ? m.name || m.client_name || m.ip_address : 'Desconocido'
 }
 
-// --- NUEVO HELPER: Obtener nombre de credencial ---
 function getCredentialName(id) {
   if (!id) return 'Sin Credenciales (Ping)';
   const c = credentialProfiles.value.find(p => p.id === id);
   return c ? c.name : 'ID Desconocido';
 }
 
-// --- NUEVA ACCIÓN: Pausar/Reanudar ---
 async function toggleProfileStatus(profile) {
   const newState = !profile.is_active;
   try {
-    // Optimista: actualizamos UI primero
     profile.is_active = newState; 
-    
     await api.patch(`/discovery/profiles/${profile.id}/toggle`, {
       active: newState
     });
-    
-    showNotification(
-      newState ? 'Tarea reanudada' : 'Tarea pausada', 
-      'info'
-    );
+    showNotification(newState ? 'Tarea reanudada' : 'Tarea pausada', 'info');
   } catch (e) {
-    // Revertir si falla
     profile.is_active = !newState;
     console.error(e);
     showNotification('Error actualizando estado', 'error');
@@ -552,7 +611,7 @@ async function toggleProfileStatus(profile) {
     <div v-if="activeTab === 'scanners'" class="content-grid fade-in">
       <aside class="config-panel">
         <div class="panel-header">
-          <h3>🚀 Nuevo Escaneo</h3>
+          <h3>{{ scanConfig.id ? '✏️ Editando Tarea' : '🚀 Nuevo Escaneo' }}</h3>
         </div>
         <div class="form-body">
           <div class="form-group">
@@ -623,12 +682,10 @@ async function toggleProfileStatus(profile) {
 
               <div class="radio-group">
                 <label
-                  ><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Solo
-                  Notificar</label
+                  ><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Solo Notificar</label
                 >
                 <label
-                  ><input type="radio" v-model="scanConfig.scan_mode" value="auto" />
-                  Auto-Adoptar</label
+                  ><input type="radio" v-model="scanConfig.scan_mode" value="auto" /> Auto-Adoptar</label
                 >
               </div>
 
@@ -919,7 +976,7 @@ async function toggleProfileStatus(profile) {
 
           <div class="form-actions">
             <button @click="runScan" class="btn-scan" :disabled="isScanning">
-              {{ isScanning ? '⏳ Escaneando...' : '🔍 Ejecutar / Guardar' }}
+              {{ isScanning ? '⏳ Escaneando...' : (scanConfig.id ? '💾 Guardar Cambios' : '🔍 Ejecutar / Guardar') }}
             </button>
           </div>
         </div>
@@ -950,10 +1007,21 @@ async function toggleProfileStatus(profile) {
                  <span v-else class="notify-tag">
                    🔔 Solo Notificar
                  </span>
+                 <span v-if="prof.sensors_template && prof.sensors_template.length > 0" class="sensors-badge">
+                   📡 {{ prof.sensors_template.length }} Sensores
+                 </span>
               </div>
             </div>
 
             <div class="profile-actions">
+              <button 
+                @click="editScanProfile(prof)" 
+                class="btn-icon-action btn-edit"
+                title="Editar Tarea"
+              >
+                ✏️
+              </button>
+
               <button 
                 @click="toggleProfileStatus(prof)" 
                 class="btn-icon-action"
@@ -1500,6 +1568,13 @@ async function toggleProfileStatus(profile) {
   color: var(--blue);
   font-weight: bold;
 }
+.sensors-badge {
+  background: rgba(100, 200, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #89cff0;
+  border: 1px solid rgba(137, 207, 240, 0.3);
+}
 .btn-icon-action {
   background: none;
   border: 1px solid var(--primary-color);
@@ -1517,5 +1592,9 @@ async function toggleProfileStatus(profile) {
 }
 .btn-icon-action:hover {
   background: rgba(255,255,255,0.1);
+}
+.btn-edit:hover {
+  border-color: var(--blue);
+  color: var(--blue);
 }
 </style>
