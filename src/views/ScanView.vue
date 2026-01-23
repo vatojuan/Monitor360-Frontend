@@ -30,6 +30,7 @@ const scanConfig = ref({
   scan_mode: 'manual', // 'manual', 'notify', 'auto'
   credential_profile_id: null,
   is_active: false,
+  scan_interval_minutes: 60, // <--- NUEVO CAMPO: Default 1 hora (Seguro)
 
   // Nuevos campos para Auto-Adoptar
   target_group: 'General',
@@ -391,6 +392,36 @@ function getMaestroName(id) {
   const m = maestros.value.find((x) => x.id === id)
   return m ? m.name || m.client_name || m.ip_address : 'Desconocido'
 }
+
+// --- NUEVO HELPER: Obtener nombre de credencial ---
+function getCredentialName(id) {
+  if (!id) return 'Sin Credenciales (Ping)';
+  const c = credentialProfiles.value.find(p => p.id === id);
+  return c ? c.name : 'ID Desconocido';
+}
+
+// --- NUEVA ACCIÓN: Pausar/Reanudar ---
+async function toggleProfileStatus(profile) {
+  const newState = !profile.is_active;
+  try {
+    // Optimista: actualizamos UI primero
+    profile.is_active = newState; 
+    
+    await api.patch(`/discovery/profiles/${profile.id}/toggle`, {
+      active: newState
+    });
+    
+    showNotification(
+      newState ? 'Tarea reanudada' : 'Tarea pausada', 
+      'info'
+    );
+  } catch (e) {
+    // Revertir si falla
+    profile.is_active = !newState;
+    console.error(e);
+    showNotification('Error actualizando estado', 'error');
+  }
+}
 </script>
 
 <template>
@@ -577,6 +608,19 @@ function getMaestroName(id) {
             </div>
 
             <template v-if="scanConfig.is_active">
+              <div class="form-group interval-group">
+                <label>Intervalo de Escaneo (Minutos)</label>
+                <div class="input-hint-row">
+                  <input 
+                    type="number" 
+                    v-model.number="scanConfig.scan_interval_minutes" 
+                    min="5" 
+                    placeholder="60"
+                  />
+                  <span class="hint">⚠️ Mínimo recomendado: 15 min para evitar CPU alto.</span>
+                </div>
+              </div>
+
               <div class="radio-group">
                 <label
                   ><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Solo
@@ -888,21 +932,36 @@ function getMaestroName(id) {
         <div class="profiles-list">
           <div v-if="scanProfiles.length === 0" class="empty-list">No hay tareas configuradas.</div>
           <div v-for="prof in scanProfiles" :key="prof.id" class="profile-card">
+            
             <div class="profile-info">
               <strong>{{ getMaestroName(prof.maestro_id) }}</strong>
               <div class="profile-details">
-                <span>🌐 {{ prof.network_cidr }}</span>
-                <span>🔌 {{ prof.interface }}</span>
+                <span title="Red Objetivo">🌐 {{ prof.network_cidr }}</span>
+                <span title="Interfaz">🔌 {{ prof.interface }}</span>
+                <span title="Frecuencia">⏱️ Cada {{ prof.scan_interval_minutes || 60 }} min</span>
               </div>
-              <div v-if="prof.scan_mode === 'auto'" class="auto-tag">
-                🤖 Auto-Adoptar: {{ prof.target_group || 'General' }}
+              <div class="profile-sub-details">
+                 <span class="cred-badge">
+                   🔐 {{ getCredentialName(prof.credential_profile_id) }}
+                 </span>
+                 <span v-if="prof.scan_mode === 'auto'" class="auto-tag">
+                   🤖 Auto-Adoptar: {{ prof.target_group }}
+                 </span>
+                 <span v-else class="notify-tag">
+                   🔔 Solo Notificar
+                 </span>
               </div>
             </div>
+
             <div class="profile-actions">
-              <div class="profile-status">
-                <span v-if="prof.is_active" class="badge-success">ACTIVO</span>
-                <span v-else class="badge-inactive">PAUSADO</span>
-              </div>
+              <button 
+                @click="toggleProfileStatus(prof)" 
+                class="btn-icon-action"
+                :title="prof.is_active ? 'Pausar Tarea' : 'Reanudar Tarea'"
+              >
+                {{ prof.is_active ? '⏸️' : '▶️' }}
+              </button>
+
               <button
                 @click="deleteScanProfile(prof.id)"
                 class="btn-sm btn-del"
@@ -911,6 +970,7 @@ function getMaestroName(id) {
                 🗑️
               </button>
             </div>
+
           </div>
         </div>
       </section>
@@ -1408,5 +1468,54 @@ function getMaestroName(id) {
     opacity: 1;
     transform: 0;
   }
+}
+
+/* --- ESTILOS NUEVOS PARA MEJORAS UI --- */
+.interval-group input {
+  width: 100px;
+}
+.input-hint-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hint {
+  font-size: 0.8rem;
+  color: #ffcc00; /* Amarillo advertencia */
+}
+.profile-sub-details {
+  margin-top: 5px;
+  font-size: 0.8rem;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.cred-badge {
+  background: rgba(255,255,255,0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #ddd;
+}
+.notify-tag {
+  color: var(--blue);
+  font-weight: bold;
+}
+.btn-icon-action {
+  background: none;
+  border: 1px solid var(--primary-color);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  color: white;
+  transition: all 0.2s;
+  margin-right: 5px;
+}
+.btn-icon-action:hover {
+  background: rgba(255,255,255,0.1);
 }
 </style>
