@@ -58,44 +58,64 @@
             <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
             <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
           </svg>
-          <span v-if="notifications.length > 0" class="m360-badge">{{ notifications.length }}</span>
+          <span v-if="totalBadgeCount > 0" class="m360-badge">{{ totalBadgeCount }}</span>
         </button>
 
         <div v-if="showNotif" class="m360-pop notif-pop" role="menu">
-          <div class="notif-header">
-            <span>Dispositivos Nuevos</span>
-            <button @click="fetchNotifications" class="refresh-btn" title="Actualizar">↻</button>
+          
+          <div class="notif-tabs">
+            <button 
+              :class="['notif-tab', activeNotifTab === 'devices' ? 'active' : '']"
+              @click="activeNotifTab = 'devices'"
+            >
+              Dispositivos ({{ notifications.length }})
+            </button>
+            <button 
+              :class="['notif-tab', activeNotifTab === 'system' ? 'active' : '']"
+              @click="activeNotifTab = 'system'"
+            >
+              Avisos ({{ sysNotifications.length }})
+            </button>
           </div>
 
-          <div v-if="notifications.length === 0" class="notif-empty">Sin novedades.</div>
-
-          <div v-else class="notif-list">
-            <div v-for="notif in notifications" :key="notif.mac_address" class="notif-item">
-              <div class="notif-info">
-                <div class="notif-top">
-                  <span class="notif-vendor">{{ notif.vendor || 'Dispositivo' }}</span>
-                  <span class="notif-ip">{{ notif.ip_address }}</span>
+          <div v-if="activeNotifTab === 'devices'">
+             <div v-if="notifications.length === 0" class="notif-empty">No hay dispositivos nuevos.</div>
+             <div v-else class="notif-list">
+                <div v-for="notif in notifications" :key="notif.mac_address" class="notif-item">
+                  <div class="notif-info">
+                    <div class="notif-top">
+                      <span class="notif-vendor">{{ notif.vendor || 'Dispositivo' }}</span>
+                      <span class="notif-ip">{{ notif.ip_address }}</span>
+                    </div>
+                    <span class="notif-mac">{{ notif.mac_address }}</span>
+                  </div>
+                  <div class="notif-actions">
+                    <button @click="quickAdopt(notif)" class="btn-icon-action adopt" title="Adoptar">✔</button>
+                    <button @click="quickDismiss(notif)" class="btn-icon-action dismiss" title="Ignorar">✕</button>
+                  </div>
                 </div>
-                <span class="notif-mac">{{ notif.mac_address }}</span>
-              </div>
-              <div class="notif-actions">
-                <button @click="quickAdopt(notif)" class="btn-icon-action adopt" title="Adoptar">
-                  ✔
-                </button>
-                <button
-                  @click="quickDismiss(notif)"
-                  class="btn-icon-action dismiss"
-                  title="Ignorar"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
+             </div>
+             <router-link to="/scan" class="notif-footer" @click="showNotif = false">
+                Ir al Escáner Avanzado
+             </router-link>
           </div>
 
-          <router-link to="/scan" class="notif-footer" @click="showNotif = false">
-            Ir al Escáner Avanzado
-          </router-link>
+          <div v-if="activeNotifTab === 'system'">
+             <div class="notif-header-actions" v-if="sysNotifications.length > 0">
+                <button @click="markAllRead" class="btn-text-small">Marcar todo leído</button>
+             </div>
+             <div v-if="sysNotifications.length === 0" class="notif-empty">Sin avisos recientes.</div>
+             <div v-else class="notif-list">
+                <div v-for="sys in sysNotifications" :key="sys.id" :class="['sys-item', sys.type]">
+                   <div class="sys-content">
+                      <span class="sys-title">{{ sys.title }}</span>
+                      <span class="sys-msg">{{ sys.message }}</span>
+                      <span class="sys-time">{{ formatTime(sys.created_at) }}</span>
+                   </div>
+                   </div>
+             </div>
+          </div>
+
         </div>
       </div>
 
@@ -248,42 +268,76 @@ const closeMenu = () => {
   menu.value = false
 }
 
-/* Notificaciones (Nuevo) */
+/* Notificaciones (Nuevo Sistema Dual) */
 const showNotif = ref(false)
 const notifRef = ref(null)
-const notifications = ref([])
+const activeNotifTab = ref('devices') // 'devices' | 'system'
+
+const notifications = ref([]) // Dispositivos pendientes (Mode 1)
+const sysNotifications = ref([]) // Avisos de sistema (Mode 2 y 3)
 let notifInterval = null
 
-const toggleNotifications = () => {
+// Badge total
+const totalBadgeCount = computed(() => notifications.value.length + sysNotifications.value.length)
+
+const toggleNotifications = async () => {
   showNotif.value = !showNotif.value
+  if (showNotif.value) {
+      await fetchAllNotifications()
+      // Si hay avisos de sistema y no dispositivos, cambiamos a tab sistema
+      if (notifications.value.length === 0 && sysNotifications.value.length > 0) {
+          activeNotifTab.value = 'system'
+      }
+  }
 }
 
-const fetchNotifications = async () => {
+const fetchAllNotifications = async () => {
+  await Promise.all([fetchPendingDevices(), fetchSystemNotifications()])
+}
+
+// 1. Fetch Dispositivos Pendientes
+const fetchPendingDevices = async () => {
   try {
     const { data } = await api.get('/discovery/pending')
     notifications.value = Array.isArray(data) ? data : []
   } catch (e) {
-    console.debug('Error fetching notifications:', e)
+    console.debug('Error fetching pending devices:', e)
   }
+}
+
+// 2. Fetch Avisos de Sistema (Nuevo)
+const fetchSystemNotifications = async () => {
+  try {
+    const { data } = await api.get('/notifications', { params: { unread_only: true } })
+    sysNotifications.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.debug('Error fetching system notifs:', e)
+  }
+}
+
+// Marcar Avisos como Leídos
+const markAllRead = async () => {
+    try {
+        await api.post('/notifications/read', { ids: [] }) // Empty list = All
+        sysNotifications.value = []
+        // Opcional: mostrar notificación toast "Limpiado"
+    } catch (e) {
+        console.error(e)
+    }
 }
 
 const quickAdopt = async (notif) => {
   try {
-    // --- CORRECCIÓN CRÍTICA ---
-    // NO debemos enviar notif.profile_id como credential_profile_id.
-    // notif.profile_id es el perfil de ESCANEO.
-    // Enviamos null para que el Backend resuelva automáticamente las credenciales
-    // asociadas a ese perfil de escaneo.
-    
     const payload = {
       maestro_id: notif.maestro_id,
-      credential_profile_id: null, // <--- CAMBIO AQUÍ: Null para activar auto-resolución en backend
+      credential_profile_id: null, // Auto-resolve
       devices: [notif],
     }
     await api.post('/discovery/adopt', payload)
     
-    // Remover de la lista localmente para feedback inmediato
+    // Remover localmente y refrescar para ver si generó aviso de sistema
     notifications.value = notifications.value.filter((n) => n.mac_address !== notif.mac_address)
+    setTimeout(fetchSystemNotifications, 1000) // Dar tiempo al backend
   } catch (e) {
     console.error(e) 
     alert('Error al adoptar. Intenta desde el Escáner.')
@@ -297,6 +351,13 @@ const quickDismiss = async (notif) => {
   } catch (e) {
     console.error(e)
   }
+}
+
+// Helpers de formato
+const formatTime = (ts) => {
+    if (!ts) return ''
+    const d = new Date(ts)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 /* Cerrar al cambiar de ruta */
@@ -319,7 +380,7 @@ const onKeydown = (e) => {
   }
 }
 
-/* Click outside (Menú y Notificaciones) */
+/* Click outside */
 const onDocPointerDown = (e) => {
   if (menu.value && menuRef.value && !menuRef.value.contains(e.target)) {
     menu.value = false
@@ -333,8 +394,8 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown, true)
 
-  fetchNotifications()
-  notifInterval = setInterval(fetchNotifications, 30000)
+  fetchAllNotifications()
+  notifInterval = setInterval(fetchAllNotifications, 30000)
 })
 
 onBeforeUnmount(() => {
@@ -509,32 +570,55 @@ const closeFab = () => {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-/* Estilos específicos de Notificaciones */
+/* --- ESTILOS NOTIFICACIONES MEJORADOS --- */
 .notif-pop {
-  width: 300px;
+  width: 320px;
   padding: 0;
   overflow: hidden;
-}
-.notif-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  font-size: 13px;
-  font-weight: bold;
-  color: #b9cdfa;
+  flex-direction: column;
 }
-.refresh-btn {
+
+/* Tabs Header */
+.notif-tabs {
+  display: flex;
+  background: rgba(0,0,0,0.3);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.notif-tab {
+  flex: 1;
   background: none;
   border: none;
-  color: #93a4c7;
+  padding: 10px;
+  color: #8899b0;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 14px;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
 }
-.refresh-btn:hover {
-  color: white;
+.notif-tab:hover {
+  color: #ccd6f6;
+  background: rgba(255,255,255,0.05);
+}
+.notif-tab.active {
+  color: #64ffda;
+  border-bottom-color: #64ffda;
+  background: rgba(100, 255, 218, 0.05);
+}
+
+.notif-header-actions {
+    padding: 8px;
+    text-align: right;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.btn-text-small {
+    background: none;
+    border: none;
+    color: #64ffda;
+    font-size: 11px;
+    cursor: pointer;
+    text-decoration: underline;
 }
 
 .notif-list {
@@ -542,13 +626,14 @@ const closeFab = () => {
   overflow-y: auto;
 }
 .notif-empty {
-  padding: 20px;
+  padding: 30px;
   text-align: center;
   color: #93a4c7;
   font-size: 13px;
   font-style: italic;
 }
 
+/* Items Pendientes */
 .notif-item {
   display: flex;
   justify-content: space-between;
@@ -556,28 +641,11 @@ const closeFab = () => {
   padding: 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
-.notif-item:last-child {
-  border-bottom: none;
-}
-.notif-item:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
+.notif-item:hover { background: rgba(255, 255, 255, 0.03); }
 
-.notif-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.notif-top {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.notif-vendor {
-  font-size: 13px;
-  font-weight: bold;
-  color: #e0e0e0;
-}
+.notif-info { display: flex; flex-direction: column; gap: 2px; }
+.notif-top { display: flex; gap: 6px; align-items: center; }
+.notif-vendor { font-size: 13px; font-weight: bold; color: #e0e0e0; }
 .notif-ip {
   font-size: 11px;
   color: #3ddc84;
@@ -585,16 +653,9 @@ const closeFab = () => {
   padding: 1px 4px;
   border-radius: 4px;
 }
-.notif-mac {
-  font-size: 11px;
-  color: #93a4c7;
-  font-family: monospace;
-}
+.notif-mac { font-size: 11px; color: #93a4c7; font-family: monospace; }
 
-.notif-actions {
-  display: flex;
-  gap: 4px;
-}
+.notif-actions { display: flex; gap: 4px; }
 .btn-icon-action {
   width: 24px;
   height: 24px;
@@ -604,23 +665,39 @@ const closeFab = () => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
 }
-.btn-icon-action.adopt {
-  background: rgba(61, 220, 132, 0.2);
-  color: #3ddc84;
+.btn-icon-action.adopt { background: rgba(61, 220, 132, 0.2); color: #3ddc84; }
+.btn-icon-action.dismiss { background: rgba(233, 69, 96, 0.2); color: #e94560; }
+
+/* Items Sistema (Avisos) */
+.sys-item {
+    padding: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-left: 3px solid transparent;
 }
-.btn-icon-action.adopt:hover {
-  background: #3ddc84;
-  color: black;
+.sys-item.success { border-left-color: #3ddc84; }
+.sys-item.error { border-left-color: #e94560; }
+.sys-item.info { border-left-color: #64ffda; }
+
+.sys-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
-.btn-icon-action.dismiss {
-  background: rgba(233, 69, 96, 0.2);
-  color: #e94560;
+.sys-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: #fff;
 }
-.btn-icon-action.dismiss:hover {
-  background: #e94560;
-  color: white;
+.sys-msg {
+    font-size: 12px;
+    color: #aab6d3;
+    line-height: 1.3;
+}
+.sys-time {
+    font-size: 10px;
+    color: #5f7096;
+    align-self: flex-end;
 }
 
 .notif-footer {
@@ -634,9 +711,7 @@ const closeFab = () => {
   font-weight: bold;
   text-decoration: none;
 }
-.notif-footer:hover {
-  background: rgba(83, 114, 240, 0.1);
-}
+.notif-footer:hover { background: rgba(83, 114, 240, 0.1); }
 
 /* Items menú normal */
 .m360-item {
