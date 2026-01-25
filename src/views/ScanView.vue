@@ -35,6 +35,9 @@ const scanConfig = ref({
 
   // Nuevos campos para Auto-Adoptar
   target_group: 'General',
+  
+  // NUEVO CAMPO: Solo Gestionados
+  adopt_only_managed: false,
 
   // Banderas independientes para incluir sensores (UI Helper)
   include_ping_sensor: false,
@@ -263,36 +266,35 @@ function buildSensorConfigPayload(type, data) {
 
 // --- HELPER: RESTAURAR CONFIGURACIÓN DE SENSOR (Para Editar) ---
 function restoreSensorConfig(sensors) {
-    if (!sensors || !Array.isArray(sensors)) {
-        scanConfig.value.include_ping_sensor = false
-        scanConfig.value.include_ethernet_sensor = false
-        return
-    }
+  if (!sensors || !Array.isArray(sensors)) {
+    scanConfig.value.include_ping_sensor = false
+    scanConfig.value.include_ethernet_sensor = false
+    return
+  }
 
-    const pingSensor = sensors.find(s => s.sensor_type === 'ping')
-    if (pingSensor) {
-        scanConfig.value.include_ping_sensor = true
-        bulkPingConfig.value.config = { ...pingSensor.config }
-        // Restaurar alertas (simplificado: asume estructura estándar)
-        if (pingSensor.config.alerts) {
-            pingSensor.config.alerts.forEach(a => {
-                if (a.type === 'timeout') bulkPingConfig.value.ui_alert_timeout = { ...bulkPingConfig.value.ui_alert_timeout, ...a, enabled: true }
-                if (a.type === 'high_latency') bulkPingConfig.value.ui_alert_latency = { ...bulkPingConfig.value.ui_alert_latency, ...a, enabled: true }
-            })
-        }
+  const pingSensor = sensors.find(s => s.sensor_type === 'ping')
+  if (pingSensor) {
+    scanConfig.value.include_ping_sensor = true
+    bulkPingConfig.value.config = { ...pingSensor.config }
+    if (pingSensor.config.alerts) {
+      pingSensor.config.alerts.forEach(a => {
+        if (a.type === 'timeout') bulkPingConfig.value.ui_alert_timeout = { ...bulkPingConfig.value.ui_alert_timeout, ...a, enabled: true }
+        if (a.type === 'high_latency') bulkPingConfig.value.ui_alert_latency = { ...bulkPingConfig.value.ui_alert_latency, ...a, enabled: true }
+      })
     }
+  }
 
-    const ethSensor = sensors.find(s => s.sensor_type === 'ethernet')
-    if (ethSensor) {
-        scanConfig.value.include_ethernet_sensor = true
-        bulkEthernetConfig.value.config = { ...ethSensor.config }
-        if (ethSensor.config.alerts) {
-            ethSensor.config.alerts.forEach(a => {
-                if (a.type === 'speed_change') bulkEthernetConfig.value.ui_alert_speed_change = { ...bulkEthernetConfig.value.ui_alert_speed_change, ...a, enabled: true }
-                if (a.type === 'traffic_threshold') bulkEthernetConfig.value.ui_alert_traffic = { ...bulkEthernetConfig.value.ui_alert_traffic, ...a, enabled: true }
-            })
-        }
+  const ethSensor = sensors.find(s => s.sensor_type === 'ethernet')
+  if (ethSensor) {
+    scanConfig.value.include_ethernet_sensor = true
+    bulkEthernetConfig.value.config = { ...ethSensor.config }
+    if (ethSensor.config.alerts) {
+      ethSensor.config.alerts.forEach(a => {
+        if (a.type === 'speed_change') bulkEthernetConfig.value.ui_alert_speed_change = { ...bulkEthernetConfig.value.ui_alert_speed_change, ...a, enabled: true }
+        if (a.type === 'traffic_threshold') bulkEthernetConfig.value.ui_alert_traffic = { ...bulkEthernetConfig.value.ui_alert_traffic, ...a, enabled: true }
+      })
     }
+  }
 }
 
 
@@ -328,8 +330,7 @@ async function runScan() {
        showNotification('✅ Tarea guardada correctamente', 'success')
     } 
 
-    // Ejecutar escaneo inmediato (opcional, pero útil para feedback)
-    // Enviamos el payload al endpoint de scan. 
+    // Ejecutar escaneo inmediato
     const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload)
 
     const count = data.length
@@ -348,8 +349,6 @@ async function runScan() {
     // Solo refrescamos la lista de perfiles si realmente guardamos uno
     if (scanConfig.value.is_active) {
         await fetchScanProfiles()
-        // Reset form ID para que el próximo sea uno nuevo si se quiere
-        // scanConfig.value.id = null 
     }
     
   } catch (e) {
@@ -409,22 +408,23 @@ async function deleteScanProfile(id) {
 // --- FUNCIÓN EDITAR ---
 async function editScanProfile(profile) {
     try {
-        // Cargar detalles completos del perfil (incluyendo sensores)
         const { data } = await api.get(`/discovery/config/${profile.maestro_id}`)
         if (data) {
             scanConfig.value = {
-                ...scanConfig.value, // Mantener defaults
-                ...data, // Sobrescribir con datos de DB
-                id: profile.id, // Asegurar ID para update
-                is_active: true // Si estamos editando, asumimos que es una tarea activa
+                ...scanConfig.value, 
+                ...data, 
+                id: profile.id, 
+                is_active: true
             }
             
-            // Restaurar configuración de sensores si existe
             if (data.sensors_config) {
                 restoreSensorConfig(data.sensors_config)
+            } else {
+                // Reset sensores si no tiene
+                scanConfig.value.include_ping_sensor = false
+                scanConfig.value.include_ethernet_sensor = false
             }
             
-            // Scroll arriba
             window.scrollTo({ top: 0, behavior: 'smooth' })
             showNotification('✏️ Editando tarea...', 'info')
         }
@@ -699,6 +699,17 @@ async function toggleProfileStatus(profile) {
                     <option value="General">General</option>
                     <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
                   </select>
+                </div>
+                
+                <div v-if="!scanConfig.include_ping_sensor && !scanConfig.include_ethernet_sensor" 
+                     class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
+                     <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
+                     <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">
+                        Solo adoptar dispositivos gestionados
+                     </label>
+                     <small style="display:block; width:100%; margin-left: 26px; color:#777;">
+                       Si se activa, ignorará dispositivos sin credenciales (impresoras, móviles).
+                     </small>
                 </div>
 
                 <div class="sensor-selection-group">
@@ -1009,6 +1020,9 @@ async function toggleProfileStatus(profile) {
                  </span>
                  <span v-if="prof.sensors_template && prof.sensors_template.length > 0" class="sensors-badge">
                    📡 {{ prof.sensors_template.length }} Sensores
+                 </span>
+                 <span v-if="prof.adopt_only_managed && (!prof.sensors_template || prof.sensors_template.length === 0)" class="managed-badge">
+                   🛡️ Solo Gestionados
                  </span>
               </div>
             </div>
@@ -1574,6 +1588,13 @@ async function toggleProfileStatus(profile) {
   border-radius: 4px;
   color: #89cff0;
   border: 1px solid rgba(137, 207, 240, 0.3);
+}
+.managed-badge {
+  background: rgba(255, 165, 0, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #ffa500;
+  border: 1px solid rgba(255, 165, 0, 0.3);
 }
 .btn-icon-action {
   background: none;
