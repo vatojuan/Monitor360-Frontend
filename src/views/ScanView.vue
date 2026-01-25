@@ -689,6 +689,17 @@ async function toggleProfileStatus(profile) {
                 >
               </div>
 
+              <div v-if="scanConfig.scan_mode === 'notify' || (scanConfig.scan_mode === 'auto' && !scanConfig.include_ping_sensor && !scanConfig.include_ethernet_sensor)" 
+                   class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
+                   <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
+                   <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">
+                      Solo dispositivos gestionados (Con Credenciales)
+                   </label>
+                   <small style="display:block; width:100%; margin-left: 26px; color:#777;">
+                     Ignorar dispositivos sin credenciales (impresoras, móviles).
+                   </small>
+              </div>
+
               <div v-if="scanConfig.scan_mode === 'auto'" class="auto-adopt-panel fade-in">
                 <hr class="separator" />
                 <h4 class="mini-title">🏗️ Receta de Adopción</h4>
@@ -699,17 +710,6 @@ async function toggleProfileStatus(profile) {
                     <option value="General">General</option>
                     <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
                   </select>
-                </div>
-                
-                <div v-if="!scanConfig.include_ping_sensor && !scanConfig.include_ethernet_sensor" 
-                     class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
-                     <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
-                     <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">
-                        Solo adoptar dispositivos gestionados
-                     </label>
-                     <small style="display:block; width:100%; margin-left: 26px; color:#777;">
-                       Si se activa, ignorará dispositivos sin credenciales (impresoras, móviles).
-                     </small>
                 </div>
 
                 <div class="sensor-selection-group">
