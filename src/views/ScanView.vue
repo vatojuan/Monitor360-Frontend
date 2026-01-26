@@ -333,23 +333,29 @@ async function runScan() {
     // Ejecutar escaneo inmediato
     const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload)
 
-    const count = data.length
-    if (count > 0) {
-      if (scanConfig.value.scan_mode === 'auto') {
-          showNotification(`✅ Escaneo completado. ${count} dispositivos procesados (Auto).`, 'success')
-      } else {
-          showNotification(`✅ Escaneo completado. ${count} nuevos en Bandeja.`, 'success')
-          activeTab.value = 'inbox'
-      }
-      await fetchPendingDevices()
+    // CORRECCIÓN CLAVE: Ahora manejamos el status 'started' para tareas en background
+    if (data.status === 'started') {
+        showNotification('✅ Escaneo iniciado en segundo plano. Los resultados aparecerán en breve.', 'info')
+        // No cambiamos de pestaña inmediatamente para que el usuario vea que inició
+        // Opcional: activeTab.value = 'inbox' 
     } else {
-      showNotification('Escaneo completado. No se encontraron nuevos.', 'info')
+        // Fallback para respuesta síncrona antigua (si existiera)
+        const count = data.length
+        if (count > 0) {
+            showNotification(`✅ Escaneo completado. ${count} nuevos en Bandeja.`, 'success')
+            activeTab.value = 'inbox'
+        } else {
+            showNotification('Escaneo completado. No se encontraron nuevos.', 'info')
+        }
     }
     
     // Solo refrescamos la lista de perfiles si realmente guardamos uno
     if (scanConfig.value.is_active) {
         await fetchScanProfiles()
     }
+    
+    // Refrescamos la bandeja por si acaso (aunque los resultados tardarán en llegar)
+    fetchPendingDevices() // Sin await para no bloquear
     
   } catch (e) {
     console.error(e)
@@ -693,7 +699,7 @@ async function toggleProfileStatus(profile) {
                    class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
                    <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
                    <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">
-                      Solo dispositivos gestionados (Con Credenciales)
+                     Solo dispositivos gestionados (Con Credenciales)
                    </label>
                    <small style="display:block; width:100%; margin-left: 26px; color:#777;">
                      Ignorar dispositivos sin credenciales (impresoras, móviles).
