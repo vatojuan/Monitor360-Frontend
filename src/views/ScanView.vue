@@ -333,13 +333,15 @@ async function runScan() {
     // Ejecutar escaneo inmediato
     const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload)
 
-    // CORRECCIÓN CLAVE: Ahora manejamos el status 'started' para tareas en background
+    // CORRECCIÓN CLAVE: Control de notificaciones duplicadas
+    // Si la tarea es recurrente (ya notificamos "Tarea guardada"), NO mostramos "Escaneo iniciado"
+    // para evitar superposición. Si es manual, sí mostramos.
     if (data.status === 'started') {
-        showNotification('✅ Escaneo iniciado en segundo plano. Los resultados aparecerán en breve.', 'info')
-        // No cambiamos de pestaña inmediatamente para que el usuario vea que inició
-        // Opcional: activeTab.value = 'inbox' 
+        if (!scanConfig.value.is_active) {
+            showNotification('✅ Escaneo iniciado en segundo plano. Los resultados aparecerán en breve.', 'info')
+        }
     } else {
-        // Fallback para respuesta síncrona antigua (si existiera)
+        // Fallback (por si acaso el backend no usa background tasks)
         const count = data.length
         if (count > 0) {
             showNotification(`✅ Escaneo completado. ${count} nuevos en Bandeja.`, 'success')
