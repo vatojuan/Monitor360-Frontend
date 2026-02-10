@@ -327,44 +327,49 @@ async function runScan() {
     // --- GUARDAR CONFIGURACIÓN ---
     if (scanConfig.value.is_active) {
        await api.post('/discovery/config', payload)
-       showNotification('✅ Tarea guardada correctamente', 'success')
-    } 
-
-    // Ejecutar escaneo inmediato
-    const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload)
-
-    // CORRECCIÓN CLAVE: Control de notificaciones duplicadas
-    // Si la tarea es recurrente (ya notificamos "Tarea guardada"), NO mostramos "Escaneo iniciado"
-    // para evitar superposición. Si es manual, sí mostramos.
-    if (data.status === 'started') {
-        if (!scanConfig.value.is_active) {
-            showNotification('✅ Escaneo iniciado en segundo plano. Los resultados aparecerán en breve.', 'info')
-        }
+       if (scanConfig.value.id) {
+           showNotification('✅ Tarea actualizada correctamente', 'success')
+           resetConfigForm() // Salir de modo edición al guardar
+       } else {
+           showNotification('✅ Nueva tarea creada', 'success')
+           resetConfigForm()
+       }
     } else {
-        // Fallback (por si acaso el backend no usa background tasks)
-        const count = data.length
-        if (count > 0) {
-            showNotification(`✅ Escaneo completado. ${count} nuevos en Bandeja.`, 'success')
-            activeTab.value = 'inbox'
-        } else {
-            showNotification('Escaneo completado. No se encontraron nuevos.', 'info')
+        // Ejecutar escaneo manual inmediato
+        const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload)
+        if (data.status === 'started') {
+            showNotification('✅ Escaneo iniciado. Resultados en breve.', 'info')
         }
     }
     
-    // Solo refrescamos la lista de perfiles si realmente guardamos uno
-    if (scanConfig.value.is_active) {
-        await fetchScanProfiles()
-    }
-    
-    // Refrescamos la bandeja por si acaso (aunque los resultados tardarán en llegar)
-    fetchPendingDevices() // Sin await para no bloquear
+    // Siempre refrescamos la lista
+    await fetchScanProfiles()
     
   } catch (e) {
     console.error(e)
-    showNotification(e.response?.data?.detail || 'Error durante el escaneo', 'error')
+    const errorMsg = e.response?.data?.detail || 'Error durante la operación'
+    showNotification(errorMsg, 'error')
   } finally {
     isScanning.value = false
   }
+}
+
+function resetConfigForm() {
+    scanConfig.value = {
+      id: null,
+      maestro_id: '',
+      network_cidr: '192.168.88.0/24',
+      interface: '',
+      scan_ports: '8728, 80, 22', 
+      scan_mode: 'manual',
+      credential_profile_id: null,
+      is_active: false,
+      scan_interval_minutes: 60, 
+      target_group: 'General',
+      adopt_only_managed: false,
+      include_ping_sensor: false,
+      include_ethernet_sensor: false,
+    }
 }
 
 async function adoptSelected() {
@@ -413,33 +418,35 @@ async function deleteScanProfile(id) {
   }
 }
 
-// --- FUNCIÓN EDITAR ---
-async function editScanProfile(profile) {
-    try {
-        const { data } = await api.get(`/discovery/config/${profile.maestro_id}`)
-        if (data) {
-            scanConfig.value = {
-                ...scanConfig.value, 
-                ...data, 
-                id: profile.id, 
-                is_active: true
-            }
-            
-            if (data.sensors_config) {
-                restoreSensorConfig(data.sensors_config)
-            } else {
-                // Reset sensores si no tiene
-                scanConfig.value.include_ping_sensor = false
-                scanConfig.value.include_ethernet_sensor = false
-            }
-            
-            window.scrollTo({ top: 0, behavior: 'smooth' })
-            showNotification('✏️ Editando tarea...', 'info')
-        }
-    } catch (e) {
-        console.error(e)
-        showNotification('Error cargando perfil para editar', 'error')
+// --- FUNCIÓN EDITAR (CORREGIDA) ---
+// Ahora carga directamente del objeto 'profile' local, sin ir a la API antigua
+function editScanProfile(profile) {
+    // Copiamos los datos directamente para asegurar que editamos ESTE perfil específico
+    scanConfig.value = {
+        ...scanConfig.value,
+        id: profile.id, // ID crucial para el UPDATE
+        maestro_id: profile.maestro_id,
+        network_cidr: profile.network_cidr,
+        interface: profile.interface,
+        scan_ports: profile.scan_ports,
+        scan_mode: profile.scan_mode,
+        credential_profile_id: profile.credential_profile_id,
+        is_active: profile.is_active,
+        scan_interval_minutes: profile.scan_interval_minutes,
+        target_group: profile.target_group || 'General',
+        adopt_only_managed: profile.adopt_only_managed || false
     }
+    
+    // Restauramos configuración de sensores (viene como 'sensors_template' desde la DB)
+    if (profile.sensors_template) {
+        restoreSensorConfig(profile.sensors_template)
+    } else {
+        scanConfig.value.include_ping_sensor = false
+        scanConfig.value.include_ethernet_sensor = false
+    }
+    
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    showNotification(`✏️ Editando tarea: ${profile.network_cidr}`, 'info')
 }
 
 // --- UTILIDADES ---
@@ -994,6 +1001,14 @@ async function toggleProfileStatus(profile) {
           </div>
 
           <div class="form-actions">
+            <button 
+                v-if="scanConfig.id" 
+                @click="resetConfigForm" 
+                class="btn-cancel" 
+                :disabled="isScanning"
+            >
+                ❌ Cancelar
+            </button>
             <button @click="runScan" class="btn-scan" :disabled="isScanning">
               {{ isScanning ? '⏳ Escaneando...' : (scanConfig.id ? '💾 Guardar Cambios' : '🔍 Ejecutar / Guardar') }}
             </button>
@@ -1453,7 +1468,7 @@ async function toggleProfileStatus(profile) {
 }
 
 .btn-scan {
-  width: 100%;
+  flex: 1;
   padding: 12px;
   background: var(--blue);
   color: white;
@@ -1466,6 +1481,27 @@ async function toggleProfileStatus(profile) {
 .btn-scan:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+.btn-cancel {
+    padding: 12px 15px;
+    background: transparent;
+    border: 1px solid var(--gray);
+    color: var(--gray);
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-right: 10px;
+    transition: all 0.2s;
+}
+.btn-cancel:hover {
+    border-color: white;
+    color: white;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: space-between;
 }
 
 /* Profiles List */
