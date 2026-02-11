@@ -13,6 +13,7 @@ const maestros = ref([])
 const allDevicesList = ref([]) // Inventario completo para el buscador
 const credentialProfiles = ref([])
 const pendingDevices = ref([])
+const ignoredDevices = ref([]) // NUEVO: Lista Negra
 const scanProfiles = ref([])
 const channels = ref([]) // Canales para alertas
 const groups = ref([]) // Grupos del dashboard
@@ -136,6 +137,7 @@ async function loadGlobalData() {
       fetchMaestrosAndDevices(),
       fetchCredentialProfiles(),
       fetchPendingDevices(),
+      fetchIgnoredDevices(), // NUEVO
       fetchScanProfiles(),
       fetchChannels(),
       fetchGroups(),
@@ -172,6 +174,16 @@ async function fetchPendingDevices() {
   // Pide explícitamente incluir los manuales en la bandeja de entrada
   const { data } = await api.get('/discovery/pending', { params: { include_manual: true } })
   pendingDevices.value = data || []
+}
+
+async function fetchIgnoredDevices() {
+  // Cargar lista negra
+  try {
+    const { data } = await api.get('/discovery/ignored')
+    ignoredDevices.value = data || []
+  } catch (e) {
+    console.warn('Error fetching ignored devices', e)
+  }
 }
 
 async function fetchScanProfiles() {
@@ -394,16 +406,45 @@ async function adoptSelected() {
   }
 }
 
+// --- MANEJO DE BLACKLIST Y DESCARTES ---
+
 async function deletePending(mac) {
-  if (!confirm('¿Descartar este dispositivo?')) return
+  // AHORA ESTO ES "IGNORAR"
+  if (!confirm('¿Descartar e Ignorar este dispositivo?\n\nSe moverá a la lista negra y NO aparecerá en futuros escaneos.')) return
   try {
     await api.delete(`/discovery/pending/${mac}`)
     await fetchPendingDevices()
-    showNotification('Dispositivo descartado', 'success')
+    await fetchIgnoredDevices() // Actualizar la otra lista
+    showNotification('Dispositivo movido a Ignorados', 'success')
   } catch (e) {
     console.error(e)
-    showNotification('Error al eliminar', 'error')
+    showNotification('Error al ignorar dispositivo', 'error')
   }
+}
+
+async function restoreDevice(mac) {
+    if(!confirm('¿Restaurar este dispositivo a la Bandeja de Entrada?')) return
+    try {
+        await api.post(`/discovery/restore/${mac}`)
+        await fetchIgnoredDevices()
+        await fetchPendingDevices()
+        showNotification('Dispositivo restaurado a Pendientes', 'success')
+    } catch(e) {
+        console.error(e)
+        showNotification('Error al restaurar', 'error')
+    }
+}
+
+async function hardDeleteDevice(mac) {
+    if(!confirm('¿Eliminar DEFINITIVAMENTE?\n\nSi el escáner lo encuentra de nuevo, volverá a aparecer como Pendiente.')) return
+    try {
+        await api.delete(`/discovery/ignored/${mac}`)
+        await fetchIgnoredDevices()
+        showNotification('Dispositivo eliminado del sistema', 'info')
+    } catch(e) {
+        console.error(e)
+        showNotification('Error al eliminar', 'error')
+    }
 }
 
 async function deleteScanProfile(id) {
@@ -518,6 +559,13 @@ async function toggleProfileStatus(profile) {
           <span class="badge" v-if="pendingDevices.length">{{ pendingDevices.length }}</span>
         </button>
         <button
+          :class="['tab-btn', { active: activeTab === 'ignored' }]"
+          @click="activeTab = 'ignored'"
+        >
+          🚫 Ignorados
+          <span class="badge badge-gray" v-if="ignoredDevices.length">{{ ignoredDevices.length }}</span>
+        </button>
+        <button
           :class="['tab-btn', { active: activeTab === 'scanners' }]"
           @click="activeTab = 'scanners'"
         >
@@ -612,15 +660,76 @@ async function toggleProfileStatus(profile) {
                 <button
                   @click="deletePending(dev.mac_address)"
                   class="btn-sm btn-del"
-                  title="Descartar"
+                  title="Ignorar (Mover a Blacklist)"
                 >
-                  🗑️
+                  🚫
                 </button>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div v-if="activeTab === 'ignored'" class="content-panel fade-in">
+        <div class="toolbar" style="background: rgba(255,50,50,0.1); border-color: var(--error-red);">
+            <div class="toolbar-left">
+                <span class="selection-count" style="color: #ffaaaa;">
+                    🚫 Lista Negra (Ignorados por el Escáner)
+                </span>
+            </div>
+            <div class="toolbar-right">
+                <button @click="fetchIgnoredDevices" class="btn-icon" title="Recargar Lista">🔄</button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table class="devices-table">
+                <thead>
+                    <tr>
+                        <th>IP Address</th>
+                        <th>MAC Address</th>
+                        <th>Identity</th>
+                        <th>Fabricante</th>
+                        <th>Plataforma</th>
+                        <th>Hostname</th>
+                        <th style="text-align: right;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-if="ignoredDevices.length === 0">
+                        <td colspan="7" class="empty-row">
+                            ✅ No hay dispositivos ignorados.
+                        </td>
+                    </tr>
+                    <tr v-for="dev in ignoredDevices" :key="dev.mac_address" class="ignored-row">
+                        <td class="font-mono text-dim">{{ dev.ip_address }}</td>
+                        <td class="font-mono text-dim">{{ dev.mac_address }}</td>
+                        <td class="text-dim">{{ dev.identity || '-' }}</td>
+                        <td class="text-dim">{{ dev.vendor || 'Desconocido' }}</td>
+                        <td class="text-dim">{{ dev.platform || '-' }}</td>
+                        <td class="text-dim">{{ dev.hostname || '-' }}</td>
+                        <td style="text-align: right;">
+                            <button 
+                                @click="restoreDevice(dev.mac_address)" 
+                                class="btn-sm btn-restore" 
+                                title="Restaurar a Pendientes"
+                                style="margin-right: 10px;"
+                            >
+                                ♻️ Restaurar
+                            </button>
+                            <button 
+                                @click="hardDeleteDevice(dev.mac_address)" 
+                                class="btn-sm btn-del" 
+                                title="Eliminar Definitivamente (Permite Redescubrir)"
+                            >
+                                💀 Olvidar
+                            </button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <div v-if="activeTab === 'scanners'" class="content-grid fade-in">
@@ -1145,6 +1254,16 @@ async function toggleProfileStatus(profile) {
   top: 5px;
   right: 5px;
 }
+.badge-gray {
+  background: #555;
+  color: #ccc;
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 10px;
+  position: absolute;
+  top: 5px;
+  right: 5px;
+}
 
 /* Inbox Toolbar */
 .toolbar {
@@ -1154,6 +1273,7 @@ async function toggleProfileStatus(profile) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 .selection-count {
   color: #aaa;
@@ -1236,6 +1356,10 @@ async function toggleProfileStatus(profile) {
 .devices-table tr.selected {
   background: rgba(106, 180, 255, 0.1);
 }
+/* Estilo para las filas ignoradas (más oscuro) */
+.ignored-row td {
+    color: #888;
+}
 
 .font-mono {
   font-family: monospace;
@@ -1273,6 +1397,16 @@ async function toggleProfileStatus(profile) {
 .btn-del:hover {
   background-color: var(--error-red);
   color: white;
+}
+
+.btn-restore {
+    background: transparent;
+    border: 1px solid var(--green);
+    color: var(--green);
+}
+.btn-restore:hover {
+    background-color: var(--green);
+    color: white;
 }
 
 /* Scanners Grid */
