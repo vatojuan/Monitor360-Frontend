@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+import SmartTerminalModal from '@/components/SmartTerminalModal.vue' // <--- IMPORT NUEVO
 
 const router = useRouter()
 
@@ -178,6 +179,20 @@ function formatDate(isoStr) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+// ===== ESTADO TERMINAL (NUEVO) =====
+const showTerminalModal = ref(false)
+const activeTerminalDevice = ref(null)
+
+function openTerminal(device) {
+  activeTerminalDevice.value = device
+  showTerminalModal.value = true
+}
+
+function closeTerminal() {
+  showTerminalModal.value = false
+  activeTerminalDevice.value = null
 }
 
 // ===== COMPUTADAS INTELIGENTES =====
@@ -850,6 +865,15 @@ onMounted(async () => {
                   >
                     ⬆️
                   </button>
+                  
+                  <button 
+                    @click="openTerminal(device)" 
+                    class="btn-sm btn-terminal" 
+                    title="Abrir Smart Terminal"
+                  >
+                    💻
+                  </button>
+
                   <button
                     @click="deleteDevice(device)"
                     class="btn-sm btn-del"
@@ -1148,6 +1172,13 @@ onMounted(async () => {
       </div>
     </div>
 
+    <SmartTerminalModal
+      v-if="showTerminalModal"
+      :device="activeTerminalDevice"
+      protocol="ssh"
+      @close="closeTerminal"
+    />
+
     <div v-if="notification.show" class="notification" :class="notification.type">
       {{ notification.message }}
     </div>
@@ -1423,6 +1454,18 @@ label {
   background-color: var(--error-red);
   color: white;
 }
+
+/* BOTÓN TERMINAL STYLE */
+.btn-terminal {
+  background: #000;
+  border: 1px solid #444;
+  color: #0f0; /* Verde matrix */
+}
+.btn-terminal:hover {
+  background: #222;
+  border-color: #0f0;
+}
+
 .font-mono {
   font-family: monospace;
 }
