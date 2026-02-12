@@ -1,12 +1,12 @@
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { WebLinksAddon } from 'xterm-addon-web-links'
 import 'xterm/css/xterm.css'
-import { marked } from 'marked' // Para renderizar MD de la IA
-import api from '@/lib/api' // Tu cliente Axios
-import { supabase } from '@/lib/supabase' // Para obtener el token JWT actual
+import { marked } from 'marked'
+import api from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 
 // PROPS
 const props = defineProps({
@@ -16,7 +16,7 @@ const props = defineProps({
   },
   protocol: {
     type: String,
-    default: 'ssh' // 'ssh' o 'telnet'
+    default: 'ssh'
   }
 })
 
@@ -30,9 +30,9 @@ const messages = ref([
 ])
 const isAiLoading = ref(false)
 const aiContextStatus = ref({ loaded: false, lines: 0 })
-const connectionStatus = ref('connecting') // connecting, connected, disconnected, error
+const connectionStatus = ref('connecting')
 
-// VARIABLES GLOBALES DEL COMPONENTE
+// VARIABLES GLOBALES
 let term = null
 let socket = null
 let fitAddon = null
@@ -46,12 +46,12 @@ async function initTerminal() {
     fontSize: 14,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: {
-      background: '#1e1e1e',
-      foreground: '#ffffff',
-      cursor: '#00ff00',
-      selectionBackground: 'rgba(255, 255, 255, 0.3)'
+      background: '#1e1e1e', // Coincide con el tema de la app (Surface Color)
+      foreground: '#d4d4d4', // Texto gris suave (VS Code Style)
+      cursor: '#cccccc',     // Cursor profesional (no verde matrix)
+      selectionBackground: 'rgba(255, 255, 255, 0.2)'
     },
-    convertEol: true, // Útil para saltos de línea crudos
+    convertEol: true,
   })
 
   fitAddon = new FitAddon()
@@ -61,21 +61,18 @@ async function initTerminal() {
   term.open(terminalContainer.value)
   fitAddon.fit()
 
-  // Hook de escritura: Lo que el usuario escribe en xterm se manda al WS
   term.onData(data => {
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'input', data: data }))
     }
   })
 
-  // Hook de resize: Si cambia el tamaño del div, avisamos al backend
   term.onResize(size => {
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'resize', rows: size.rows, cols: size.cols }))
     }
   })
 
-  // Observer para reajuste visual automático
   resizeObserver = new ResizeObserver(() => {
     fitAddon.fit()
   })
@@ -86,27 +83,21 @@ async function initTerminal() {
 
 async function connectWebSocket() {
   try {
-    // Obtenemos token actual para autenticar el WebSocket
     const { data: { session } } = await supabase.auth.getSession()
     const token = session?.access_token
 
     if (!token) throw new Error("No hay sesión activa")
 
-    // Construcción de URL (Asumiendo que backend está en mismo host o configurado en ENV)
-    // NOTA: Ajusta la URL base si tu backend está en otro puerto/dominio
     const protocolPrefix = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.hostname
-    // Asumimos puerto 8000 para backend o el mismo si es proxy
     const port = window.location.port ? window.location.port : '' 
-    // FIX: Usamos la URL base de tu API si está definida, o construimos una
-    const wsUrl = `${protocolPrefix}//${host}:${port}/ws/terminal/${props.device.id}?token=${token}`
+    const wsUrl = `${protocolPrefix}//${host}:${port}/ws/terminal/${props.device.id}?token=${token}&protocol=${props.protocol}`
 
     socket = new WebSocket(wsUrl)
 
     socket.onopen = () => {
       connectionStatus.value = 'connected'
-      term.writeln(`\x1b[32m[SYSTEM] Conectado a ${props.device.ip_address} vía ${props.protocol.toUpperCase()}...\x1b[0m\r\n`)
-      // Forzar un primer resize
+      term.writeln(`\x1b[32m[SYSTEM] Conectado a ${props.device.ip_address}...\x1b[0m\r\n`)
       setTimeout(() => fitAddon.fit(), 500)
     }
 
@@ -114,17 +105,14 @@ async function connectWebSocket() {
       const msg = JSON.parse(event.data)
       
       if (msg.type === 'output') {
-        // Datos crudos de la terminal (SSH/Telnet)
         term.write(msg.data)
       } 
       else if (msg.type === 'ai_status') {
-        // Actualización de estado del "Side-Channel" de IA
         if (msg.status === 'ready') {
             aiContextStatus.value = { loaded: true, lines: msg.context_len }
-            addSystemMessage(`✅ Contexto de configuración cargado (${msg.context_len} líneas). La IA ahora conoce tus interfaces y rutas.`)
+            addSystemMessage(`✅ Contexto cargado (${msg.context_len} líneas).`)
         } else if (msg.status === 'loading') {
-            // Silencioso o log debug
-            console.log("AI Loading context...")
+            // Silencioso
         } else {
             addSystemMessage(`⚠️ ${msg.msg}`)
         }
@@ -142,7 +130,7 @@ async function connectWebSocket() {
     }
 
   } catch (e) {
-    term.writeln(`\r\n\x1b[31m[SYSTEM] Error fatal de conexión: ${e.message}\x1b[0m`)
+    term.writeln(`\r\n\x1b[31m[SYSTEM] Error fatal: ${e.message}\x1b[0m`)
   }
 }
 
@@ -160,7 +148,6 @@ function scrollToBottom() {
     })
 }
 
-// Función que renderiza Markdown a HTML seguro
 function renderMarkdown(text) {
     return marked(text)
 }
@@ -169,42 +156,32 @@ async function sendAiPrompt() {
     const text = chatInput.value.trim()
     if (!text) return
 
-    // 1. Añadir mensaje usuario
     messages.value.push({ role: 'user', content: text })
     chatInput.value = ''
     scrollToBottom()
     isAiLoading.value = true
 
     try {
-        // LLAMADA AL BACKEND (Endpoint que crearemos en el paso siguiente)
         const { data } = await api.post(`/terminal/${props.device.id}/ask`, {
             question: text,
             vendor: props.device.vendor || 'Generic'
         })
-
-        // 2. Añadir respuesta IA
         messages.value.push({ role: 'assistant', content: data.answer })
-
     } catch (error) {
-        messages.value.push({ role: 'system', content: '❌ Error consultando a la IA. Verifica el backend.' })
-        console.error(error)
+        messages.value.push({ role: 'system', content: '❌ Error consultando a la IA.' })
     } finally {
         isAiLoading.value = false
         scrollToBottom()
     }
 }
 
-// Función mágica: Extrae bloques de código y los pega en la terminal
 function pasteCodeToTerminal(content) {
-    // Buscamos contenido dentro de ``` ... ``` o usamos todo el texto si es corto
-    // Simple heurística: Si hay bloques de código, los pegamos.
     const codeBlockRegex = /```[\s\S]*?\n([\s\S]*?)```/g
     let match
     let codeFound = false
 
     while ((match = codeBlockRegex.exec(content)) !== null) {
         if (match[1]) {
-            // Pegar en terminal via WebSocket (como si el usuario escribiera)
             if (socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ type: 'input', data: match[1] }))
                 codeFound = true
@@ -213,17 +190,10 @@ function pasteCodeToTerminal(content) {
     }
 
     if (!codeFound) {
-        // Si no hay bloques, quizás es un comando de una línea sin formato
-        // Preguntamos confirmación visual o pegamos directo si es corto?
-        // Por seguridad, solo pegamos si el usuario hace clic en un botón específico generado por el v-html
-        // (Ver implementación en template: detectamos clics en elementos 'code'?)
-        // Por ahora, pegamos el contenido RAW si el usuario hace clic en el botón "Pegar Respuesta"
         if (socket && socket.readyState === WebSocket.OPEN) {
              socket.send(JSON.stringify({ type: 'input', data: content }))
         }
     }
-    
-    // Devolvemos el foco a la terminal
     term.focus()
 }
 
@@ -261,12 +231,11 @@ onUnmounted(() => {
 
       <div class="terminal-body">
         
-        <div class="terminal-pane" ref="terminalContainer">
-            </div>
+        <div class="terminal-pane" ref="terminalContainer"></div>
 
         <div class="ai-pane">
             <div class="ai-header">
-                Copiloto {{ device.vendor || 'Net' }}
+                ASISTENCIA EN TERMINAL
             </div>
             
             <div class="chat-messages">
@@ -282,10 +251,9 @@ onUnmounted(() => {
                     
                     <div v-else class="msg-bubble assistant">
                         <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
-                        
                         <div class="msg-actions">
                             <button class="action-btn" @click="pasteCodeToTerminal(msg.content)">
-                                ▶ Pegar en Terminal
+                                ▶ Pegar
                             </button>
                         </div>
                     </div>
@@ -300,7 +268,7 @@ onUnmounted(() => {
             <div class="chat-input-area">
                 <textarea 
                     v-model="chatInput" 
-                    placeholder="Ej: Bloquear Youtube para 192.168.1.50..."
+                    placeholder="Escribe tu consulta..."
                     @keydown.enter.prevent="sendAiPrompt"
                 ></textarea>
                 <button @click="sendAiPrompt" :disabled="isAiLoading || !chatInput.trim()">
@@ -315,7 +283,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* VARIABLES (Heredadas del sistema o definidas localmente para consistencia) */
+/* VARIABLES */
 .terminal-modal-overlay {
   position: fixed;
   top: 0; left: 0; width: 100vw; height: 100vh;
@@ -399,18 +367,18 @@ onUnmounted(() => {
 
 /* LEFT PANE: TERMINAL */
 .terminal-pane {
-  flex: 2; /* 66% width */
-  background: #000;
+  flex: 2;
+  background: #1e1e1e; /* CORREGIDO: Gris oscuro integrado */
   padding: 5px;
   overflow: hidden;
 }
 
 /* RIGHT PANE: AI */
 .ai-pane {
-  flex: 1; /* 33% width */
+  flex: 1;
   min-width: 350px;
   max-width: 500px;
-  background: #1e1e1e; /* VS Code Sidebar Color */
+  background: #1e1e1e;
   border-left: 1px solid #333;
   display: flex;
   flex-direction: column;
@@ -451,7 +419,7 @@ onUnmounted(() => {
     width: 100%;
 }
 .msg-bubble.user {
-    background: #0e639c; /* VS Code Blue */
+    background: #0e639c;
     color: white;
     align-self: flex-end;
 }
@@ -464,7 +432,7 @@ onUnmounted(() => {
 
 /* Markdown Styles inside Chat */
 .markdown-content :deep(pre) {
-    background: #000;
+    background: #252526; /* CORREGIDO: Gris oscuro suave */
     padding: 8px;
     border-radius: 4px;
     overflow-x: auto;
