@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { supabase } from '@/lib/supabase'
-import SmartTerminalModal from '@/components/SmartTerminalModal.vue' // <--- IMPORT NUEVO
+import SmartTerminalModal from '@/components/SmartTerminalModal.vue'
 
 const router = useRouter()
 
@@ -11,7 +11,7 @@ const router = useRouter()
 const currentTab = ref('add') // 'add' | 'manage'
 const notification = ref({ show: false, message: '', type: 'success' })
 
-// --- MODAL DE ERROR DE AUTENTICACIÓN (NUEVO) ---
+// --- MODAL DE ERROR DE AUTENTICACIÓN ---
 const showAuthErrorModal = ref(false)
 const authErrorMessage = ref('')
 
@@ -32,7 +32,7 @@ async function logout() {
   router.push('/login')
 }
 
-// ===== Alta en un paso (Intacto pero mejorado) =====
+// ===== Alta en un paso =====
 const addForm = ref({
   client_name: '',
   ip_address: '',
@@ -321,9 +321,7 @@ async function fetchChannels() {
 }
 
 // ===== FUNCIONES ALTA =====
-// Modificado para aceptar parámetro opcional 'forceGeneric'
 async function handleAddDeviceOneStep(forceGeneric = false) {
-  // Si forceGeneric es el evento del formulario (un objeto), lo forzamos a false
   const isForced = typeof forceGeneric === 'boolean' ? forceGeneric : false
 
   if (!addForm.value.client_name?.trim() || !addForm.value.ip_address?.trim()) {
@@ -339,24 +337,22 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
   const payload = {
     client_name: addForm.value.client_name,
     ip_address: addForm.value.ip_address,
-    api_port: Number(addForm.value.api_port) || 8728, // Puerto flexible
+    api_port: Number(addForm.value.api_port) || 8728,
     mac_address: addForm.value.mac_address || '',
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
     vpn_profile_id: addForm.value.connection_method === 'vpn' ? addForm.value.vpn_profile_id : null,
     credential_id: addForm.value.connection_method === 'vpn' ? addForm.value.credential_id : null,
-    vendor: addForm.value.vendor, // Guardamos el fabricante
-    force_generic_ping: isForced, // <--- NUEVO: Flag para el backend
+    vendor: addForm.value.vendor,
+    force_generic_ping: isForced,
   }
 
   isSubmitting.value = true
-  // Si estamos reintentando, cerramos el modal
   if (isForced) showAuthErrorModal.value = false
 
   try {
     const { data } = await api.post('/devices/manual', payload)
 
-    // Si llegamos aquí, fue éxito
     const successMsg = isForced
       ? `Dispositivo "${data.client_name}" agregado como Genérico (Solo Ping).`
       : `Dispositivo "${data.client_name}" gestionado correctamente.`
@@ -367,15 +363,12 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
     currentTab.value = 'manage'
   } catch (error) {
     console.error('Error creando dispositivo:', error)
-
     const detail = error.response?.data?.detail || ''
 
-    // DETECCIÓN DE AUTH_FAILED (Plan B)
     if (detail.includes('AUTH_FAILED') && !isForced) {
-      authErrorMessage.value = detail.replace('AUTH_FAILED: ', '') // Limpiamos el prefijo técnico
+      authErrorMessage.value = detail.replace('AUTH_FAILED: ', '')
       showAuthErrorModal.value = true
     } else {
-      // Error normal
       showNotification(detail || 'Error al añadir dispositivo.', 'error')
     }
   } finally {
@@ -388,7 +381,7 @@ async function handleTestReachability() {
   const payload = {
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
-    vendor: addForm.value.vendor, // FIX: Enviamos vendor para que backend elija driver
+    vendor: addForm.value.vendor,
   }
   if (addForm.value.connection_method === 'vpn') {
     payload.vpn_profile_id = addForm.value.vpn_profile_id
@@ -421,7 +414,7 @@ function resetAddForm() {
     node: '',
     connection_method: 'vpn',
     vpn_profile_id: null,
-    credential_id: null, // Reset
+    credential_id: null,
     maestro_id: null,
     vendor: 'Mikrotik',
   }
@@ -512,7 +505,6 @@ async function handleBulkDelete() {
 // ---- Modal Creación Masiva ----
 function openBulkModal() {
   if (selectedDevices.value.length === 0) return
-  // Reset configs
   bulkPingConfig.value = createNewPingSensor()
   bulkEthernetConfig.value = createNewEthernetSensor()
   bulkNameTemplate.value = '{{hostname}} - Sensor'
@@ -868,7 +860,7 @@ onMounted(async () => {
                   
                   <button 
                     @click="openTerminal(device)" 
-                    class="btn-sm btn-terminal" 
+                    class="btn-sm btn-action" 
                     title="Abrir Smart Terminal"
                   >
                     💻
@@ -1454,18 +1446,6 @@ label {
   background-color: var(--error-red);
   color: white;
 }
-
-/* BOTÓN TERMINAL STYLE */
-.btn-terminal {
-  background: #000;
-  border: 1px solid #444;
-  color: #0f0; /* Verde matrix */
-}
-.btn-terminal:hover {
-  background: #222;
-  border-color: #0f0;
-}
-
 .font-mono {
   font-family: monospace;
 }
