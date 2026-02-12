@@ -96,10 +96,23 @@ async function connectWebSocket() {
 
     if (!token) throw new Error("No hay sesión activa")
 
-    const protocolPrefix = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.hostname
-    const port = window.location.port ? window.location.port : '' 
-    const wsUrl = `${protocolPrefix}//${host}:${port}/ws/terminal/${props.device.id}?token=${token}&protocol=${props.protocol}`
+    // --- CORRECCIÓN CRÍTICA DE URL ---
+    // NO usar window.location (navegador), usar la API real.
+    // Buscamos la variable de entorno o usamos el dominio hardcodeado de tu API.
+    let apiUrl = import.meta.env.VITE_API_URL || 'https://api.conecta360.site'
+    
+    // Transformar http -> ws, https -> wss
+    let wsBaseUrl = apiUrl.replace('https://', 'wss://').replace('http://', 'ws://')
+    
+    // Limpieza de slash final si existe
+    if (wsBaseUrl.endsWith('/')) {
+        wsBaseUrl = wsBaseUrl.slice(0, -1)
+    }
+
+    // Construcción de la URL final
+    const wsUrl = `${wsBaseUrl}/ws/terminal/${props.device.id}?token=${token}&protocol=${props.protocol}`
+    
+    console.log('[TERMINAL] Conectando a:', wsUrl) // Log para verificar en consola F12
 
     socket = new WebSocket(wsUrl)
 
@@ -127,8 +140,9 @@ async function connectWebSocket() {
       }
     }
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       connectionStatus.value = 'disconnected'
+      console.warn('[TERMINAL] Desconectado:', event.reason)
       term.writeln('\r\n\x1b[31m[SYSTEM] Conexión cerrada.\x1b[0m')
     }
 
