@@ -167,7 +167,7 @@ async function fetchChannels() { try { const { data } = await api.get('/channels
 async function fetchGroups() { try { const { data } = await api.get('/groups'); groups.value = (data || []).map((g) => g.name) } catch (e) {} }
 
 // --- ACTIONS CONFIG ---
-function buildSensorConfigPayload(type, data) { /* ... (Mismo código helper anterior) ... */
+function buildSensorConfigPayload(type, data) { 
   const finalConfig = { ...data.config }
   const alerts = []
   const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
@@ -181,7 +181,7 @@ function buildSensorConfigPayload(type, data) { /* ... (Mismo código helper ant
   return { sensor_type: type, name_template: '{{hostname}} - Sensor', config: finalConfig, is_active: data.is_active, alerts_paused: data.alerts_paused }
 }
 
-function restoreSensorConfig(sensors) { /* ... (Mismo código helper anterior) ... */
+function restoreSensorConfig(sensors) { 
   if (!sensors || !Array.isArray(sensors)) { scanConfig.value.include_ping_sensor = false; scanConfig.value.include_ethernet_sensor = false; return }
   const pingSensor = sensors.find(s => s.sensor_type === 'ping')
   if (pingSensor) {
@@ -197,7 +197,9 @@ function restoreSensorConfig(sensors) { /* ... (Mismo código helper anterior) .
 
 async function runScan() {
   if (!scanConfig.value.maestro_id) return showNotification('Selecciona un Router Maestro', 'error')
-  if (!scanConfig.value.interface || scanConfig.value.interface.trim() === '') return showNotification('⚠️ La Interfaz es OBLIGATORIA', 'error')
+  // Validación de interfaz opcional: Comentada/Eliminada para permitir Auto-Detección
+  // if (!scanConfig.value.interface || scanConfig.value.interface.trim() === '') return showNotification('⚠️ La Interfaz es OBLIGATORIA', 'error')
+  
   isScanning.value = true
   try {
     const payload = { ...scanConfig.value }
@@ -518,8 +520,8 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
             <input type="text" v-model="scanConfig.network_cidr" placeholder="Ej: 192.168.88.0/24" />
           </div>
           <div class="form-group">
-            <label>Interfaz <span class="required">*</span></label>
-            <input type="text" v-model="scanConfig.interface" placeholder="Ej: ether1, bridge-lan" />
+            <label>Interfaz</label>
+            <input type="text" v-model="scanConfig.interface" placeholder="Auto-detectar (Recomendado)" />
           </div>
           <div class="form-group">
             <label>Puertos</label>
@@ -591,7 +593,9 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
           </div>
           <div class="form-actions">
             <button v-if="scanConfig.id" @click="resetConfigForm" class="btn-cancel" :disabled="isScanning">❌ Cancelar</button>
-            <button @click="runScan" class="btn-scan" :disabled="isScanning">{{ isScanning ? '⏳...' : '💾 Guardar' }}</button>
+            <button @click="runScan" class="btn-scan" :disabled="isScanning">
+               {{ isScanning ? '⏳...' : (scanConfig.id ? '💾 Guardar Cambios' : (scanConfig.is_active ? '💾 Guardar Tarea' : '🚀 Escanear Ahora')) }}
+            </button>
           </div>
         </div>
       </aside>
@@ -603,7 +607,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
           <div v-for="prof in scanProfiles" :key="prof.id" class="profile-card">
             <div class="profile-info">
               <strong>{{ getMaestroName(prof.maestro_id) }}</strong>
-              <div class="profile-details"><span>🌐 {{ prof.network_cidr }}</span><span>🔌 {{ prof.interface }}</span></div>
+              <div class="profile-details"><span>🌐 {{ prof.network_cidr }}</span><span>🔌 {{ prof.interface || 'Auto-detectada' }}</span></div>
               <div class="profile-sub-details">
                  <span class="cred-badge">🔐 {{ getCredentialName(prof.credential_profile_id) }}</span>
                  <span v-if="prof.scan_mode === 'auto'" class="auto-tag">🤖 Auto</span>
