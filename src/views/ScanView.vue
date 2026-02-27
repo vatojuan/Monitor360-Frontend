@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import api from '@/lib/api'
 
 // --- ESTADO GLOBAL ---
@@ -140,7 +140,24 @@ const ignoredVendors = computed(() => [...new Set(ignoredDevices.value.map(d => 
 // =============================================================================
 // LIFECYCLE & API
 // =============================================================================
-onMounted(async () => { await loadGlobalData() })
+
+// MANEJADOR GLOBAL DE EVENTOS (Para escuchar al WebSocket)
+const handleDiscoveryRefresh = async () => {
+  console.log("WebSocket dice: ¡Refrescar Bandeja de Descubrimiento!");
+  isScanning.value = false; // Detiene el spinner si estaba escaneando
+  await fetchPendingDevices();
+  await fetchIgnoredDevices();
+};
+
+onMounted(async () => { 
+  await loadGlobalData();
+  // Escuchar el evento que dispara el WebSocket (Layout)
+  window.addEventListener('discovery-refresh', handleDiscoveryRefresh);
+})
+
+onUnmounted(() => {
+  window.removeEventListener('discovery-refresh', handleDiscoveryRefresh);
+})
 
 async function loadGlobalData() {
   isLoading.value = true
@@ -196,10 +213,11 @@ function restoreSensorConfig(sensors) {
   }
 }
 
+// [MODIFICADO] Escaneo Asíncrono con Polling y Bloqueo
 async function runScan() {
   if (!scanConfig.value.maestro_id) return showNotification('Selecciona un Router Maestro', 'error')
   
-  isScanning.value = true
+  isScanning.value = true // Activa el botón "⏳ Escaneando red..." y lo bloquea
   try {
     const payload = { ...scanConfig.value }
     if (scanConfig.value.is_active && scanConfig.value.scan_mode === 'auto') {
@@ -208,13 +226,35 @@ async function runScan() {
       if (scanConfig.value.include_ethernet_sensor) sensorsToCreate.push(buildSensorConfigPayload('ethernet', bulkEthernetConfig.value))
       payload.sensors_config = sensorsToCreate
     }
+
     if (scanConfig.value.is_active) {
-       await api.post('/discovery/config', payload); showNotification(scanConfig.value.id ? '✅ Tarea actualizada' : '✅ Nueva tarea creada', 'success'); resetConfigForm()
+       await api.post('/discovery/config', payload); 
+       showNotification(scanConfig.value.id ? '✅ Tarea actualizada' : '✅ Nueva tarea creada', 'success'); 
+       resetConfigForm();
+       isScanning.value = false; // Tarea guardada, liberamos botón
     } else {
-        const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload); if (data.status === 'started') showNotification('✅ Escaneo iniciado.', 'info')
+        // Escaneo Manual Asíncrono
+        const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload); 
+        if (data.status === 'started') {
+          showNotification('🚀 Escaneo iniciado en segundo plano.', 'info');
+          
+          // Polling de Respaldo: 
+          // Si el WebSocket falla o se desconecta, recargamos la tabla a los 6s y 12s para asegurar que aparezcan
+          [6000, 12000].forEach(delay => {
+            setTimeout(async () => {
+              if (isScanning.value) { // Si el WS ya lo apagó, no hacemos nada
+                await fetchPendingDevices();
+                if (delay === 12000) isScanning.value = false; // Liberar por timeout (Fallback)
+              }
+            }, delay);
+          });
+        }
     }
     await fetchScanProfiles()
-  } catch (e) { showNotification(e.response?.data?.detail || 'Error', 'error') } finally { isScanning.value = false }
+  } catch (e) { 
+    showNotification(e.response?.data?.detail || 'Error', 'error'); 
+    isScanning.value = false;
+  }
 }
 
 function resetConfigForm() {
@@ -235,7 +275,7 @@ function selectAll() {
   }
 }
 
-// [MODIFICADO] Lógica de adopción para arquitectura asíncrona (Opción B)
+// Lógica de adopción asíncrona
 async function adoptSelected() {
   if (selectedPending.value.length === 0) return
   isAdopting.value = true // Activa estado de carga
@@ -246,29 +286,22 @@ async function adoptSelected() {
     
     const { data } = await api.post('/discovery/adopt', payload); 
     
-    // 1. Manejo del estado "processing" del Worker
     if (data.status === 'processing') {
       showNotification('⏳ ' + data.message, 'info');
       
-      // 2. ACTUALIZACIÓN OPTIMISTA: 
-      // Los ocultamos de la UI inmediatamente para que el usuario sienta respuesta instantánea.
+      // ACTUALIZACIÓN OPTIMISTA
       pendingDevices.value = pendingDevices.value.filter(d => !selectedPending.value.includes(d.mac_address));
       selectedPending.value = [];
 
-      // 3. POLLING SECUENCIAL
-      // Verificamos la base de datos a los 4 y 10 segundos para consolidar 
-      // la eliminación real y refrescar la campanita de notificaciones.
+      // Polling Secuencial
       [4000, 10000].forEach(delay => {
         setTimeout(async () => {
           await fetchPendingDevices();
-          // Disparamos un evento global que el Layout/Campanita puede escuchar 
-          // para actualizar su contador de notificaciones no leídas
           window.dispatchEvent(new Event('refresh-notifications'));
         }, delay);
       });
 
     } else if (data.adopted !== undefined) {
-      // (Fallback) Si por alguna razón el endpoint responde de forma síncrona
       if (data.adopted > 0) showNotification(`¡${data.adopted} adoptados!`, 'success');
       selectedPending.value = [];
       await fetchPendingDevices();
@@ -629,7 +662,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
           <div class="form-actions">
             <button v-if="scanConfig.id" @click="resetConfigForm" class="btn-cancel" :disabled="isScanning">❌ Cancelar</button>
             <button @click="runScan" class="btn-scan" :disabled="isScanning">
-               {{ isScanning ? '⏳...' : (scanConfig.id ? '💾 Guardar Cambios' : (scanConfig.is_active ? '💾 Guardar Tarea' : '🚀 Escanear Ahora')) }}
+               {{ isScanning ? '⏳ Escaneando red...' : (scanConfig.id ? '💾 Guardar Cambios' : (scanConfig.is_active ? '💾 Guardar Tarea' : '🚀 Escanear Ahora')) }}
             </button>
           </div>
         </div>
