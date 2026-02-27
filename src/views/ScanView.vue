@@ -6,6 +6,7 @@ import api from '@/lib/api'
 const activeTab = ref('inbox')
 const isLoading = ref(false)
 const isScanning = ref(false)
+const isAdopting = ref(false) // [NUEVO] Estado de carga para la adopción asíncrona
 const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- DATOS ---
@@ -197,8 +198,6 @@ function restoreSensorConfig(sensors) {
 
 async function runScan() {
   if (!scanConfig.value.maestro_id) return showNotification('Selecciona un Router Maestro', 'error')
-  // Validación de interfaz opcional: Comentada/Eliminada para permitir Auto-Detección
-  // if (!scanConfig.value.interface || scanConfig.value.interface.trim() === '') return showNotification('⚠️ La Interfaz es OBLIGATORIA', 'error')
   
   isScanning.value = true
   try {
@@ -224,9 +223,8 @@ function resetConfigForm() {
 
 // --- ACTIONS INBOX ---
 function toggleSelection(mac) { selectedPending.value.includes(mac) ? selectedPending.value = selectedPending.value.filter(m => m !== mac) : selectedPending.value.push(mac) }
-// MODIFICADO: Select All ahora usa la lista FILTRADA
+
 function selectAll() {
-  // Si todos los visibles están seleccionados, deseleccionar todo. Si no, seleccionar todos los visibles.
   const visibleMacs = filteredPendingDevices.value.map(d => d.mac_address);
   const allVisibleSelected = visibleMacs.every(mac => selectedPending.value.includes(mac));
   
@@ -237,13 +235,50 @@ function selectAll() {
   }
 }
 
+// [MODIFICADO] Lógica de adopción para arquitectura asíncrona (Opción B)
 async function adoptSelected() {
   if (selectedPending.value.length === 0) return
+  isAdopting.value = true // Activa estado de carga
+
   try {
     const devicesToAdopt = pendingDevices.value.filter((d) => selectedPending.value.includes(d.mac_address))
     const payload = { maestro_id: devicesToAdopt[0].maestro_id, credential_profile_id: adoptCredentialId.value, devices: devicesToAdopt, naming_strategy: 'hostname' }
-    const { data } = await api.post('/discovery/adopt', payload); if (data.adopted > 0) showNotification(`¡${data.adopted} adoptados!`, 'success'); selectedPending.value = []; await fetchPendingDevices()
-  } catch (e) { showNotification('Error al adoptar', 'error') }
+    
+    const { data } = await api.post('/discovery/adopt', payload); 
+    
+    // 1. Manejo del estado "processing" del Worker
+    if (data.status === 'processing') {
+      showNotification('⏳ ' + data.message, 'info');
+      
+      // 2. ACTUALIZACIÓN OPTIMISTA: 
+      // Los ocultamos de la UI inmediatamente para que el usuario sienta respuesta instantánea.
+      pendingDevices.value = pendingDevices.value.filter(d => !selectedPending.value.includes(d.mac_address));
+      selectedPending.value = [];
+
+      // 3. POLLING SECUENCIAL
+      // Verificamos la base de datos a los 4 y 10 segundos para consolidar 
+      // la eliminación real y refrescar la campanita de notificaciones.
+      [4000, 10000].forEach(delay => {
+        setTimeout(async () => {
+          await fetchPendingDevices();
+          // Disparamos un evento global que el Layout/Campanita puede escuchar 
+          // para actualizar su contador de notificaciones no leídas
+          window.dispatchEvent(new Event('refresh-notifications'));
+        }, delay);
+      });
+
+    } else if (data.adopted !== undefined) {
+      // (Fallback) Si por alguna razón el endpoint responde de forma síncrona
+      if (data.adopted > 0) showNotification(`¡${data.adopted} adoptados!`, 'success');
+      selectedPending.value = [];
+      await fetchPendingDevices();
+    }
+
+  } catch (e) { 
+    showNotification('Error al enviar orden de adopción', 'error') 
+  } finally {
+    isAdopting.value = false
+  }
 }
 
 async function ignoreSelected() {
@@ -263,7 +298,7 @@ async function deletePending(mac) {
 
 // --- ACTIONS IGNORED ---
 function toggleIgnoredSelection(mac) { selectedIgnored.value.includes(mac) ? selectedIgnored.value = selectedIgnored.value.filter(m => m !== mac) : selectedIgnored.value.push(mac) }
-// MODIFICADO: Select All Ignored usa lista FILTRADA
+
 function selectAllIgnored() {
     const visibleMacs = filteredIgnoredDevices.value.map(d => d.mac_address);
     const allVisibleSelected = visibleMacs.every(mac => selectedIgnored.value.includes(mac));
@@ -363,12 +398,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
             </button>
 
             <div class="adopt-control">
-                <select v-model="adoptCredentialId" class="credential-select" :disabled="selectedPending.length === 0">
+                <select v-model="adoptCredentialId" class="credential-select" :disabled="selectedPending.length === 0 || isAdopting">
                 <option :value="null">Sin Credenciales</option>
                 <option v-for="p in credentialProfiles" :key="p.id" :value="p.id">🔐 {{ p.name }}</option>
                 </select>
-                <button @click="adoptSelected" class="btn-adopt" :disabled="selectedPending.length === 0">
-                ✅ Adoptar
+                <button @click="adoptSelected" class="btn-adopt" :disabled="selectedPending.length === 0 || isAdopting">
+                {{ isAdopting ? '⏳ Adoptando...' : '✅ Adoptar' }}
                 </button>
             </div>
             <button @click="loadGlobalData" class="btn-icon" title="Recargar Lista">🔄</button>
@@ -554,7 +589,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 <label><input type="radio" v-model="scanConfig.scan_mode" value="auto" /> Auto-Adoptar</label>
               </div>
                <div v-if="scanConfig.scan_mode === 'notify' || (scanConfig.scan_mode === 'auto' && !scanConfig.include_ping_sensor && !scanConfig.include_ethernet_sensor)" 
-                   class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
+                    class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
                    <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
                    <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">Solo Gestionados (Credenciales)</label>
               </div>
