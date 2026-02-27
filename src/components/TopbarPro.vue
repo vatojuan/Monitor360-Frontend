@@ -390,9 +390,19 @@ const onDocPointerDown = (e) => {
   }
 }
 
+// --- EVENTOS GLOBALES DE WEBSOCKET Y POLLING ---
+const handleGlobalNotificationEvent = () => {
+    console.log("Topbar: Escuchando evento para refrescar notificaciones");
+    fetchAllNotifications();
+};
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown, true)
+  
+  // Escuchar eventos globales disparados desde ScanView o AppLayout
+  window.addEventListener('refresh-notifications', handleGlobalNotificationEvent);
+  window.addEventListener('new_notification', handleGlobalNotificationEvent);
 
   fetchAllNotifications()
   notifInterval = setInterval(fetchAllNotifications, 30000)
@@ -401,6 +411,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('pointerdown', onDocPointerDown, true)
+  
+  window.removeEventListener('refresh-notifications', handleGlobalNotificationEvent);
+  window.removeEventListener('new_notification', handleGlobalNotificationEvent);
+
   if (notifInterval) clearInterval(notifInterval)
 })
 
