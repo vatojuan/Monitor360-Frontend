@@ -17,6 +17,11 @@ const props = defineProps({
   protocol: {
     type: String,
     default: 'ssh'
+  },
+  // NUEVO PROPS: Recibimos el puerto del padre
+  port: {
+    type: [Number, String],
+    default: null
   }
 })
 
@@ -112,8 +117,13 @@ async function connectWebSocket() {
     // Transformar protocolo http -> ws, https -> wss
     let wsBaseUrl = apiUrl.replace('https://', 'wss://').replace('http://', 'ws://')
 
-    // Construcción de la URL final
-    const wsUrl = `${wsBaseUrl}/ws/terminal/${props.device.id}?token=${token}&protocol=${props.protocol}`
+    // Construcción de la URL final con el puerto
+    let wsUrl = `${wsBaseUrl}/ws/terminal/${props.device.id}?token=${token}&protocol=${props.protocol}`
+    
+    // Inyectamos el puerto si el componente padre lo proporcionó
+    if (props.port) {
+        wsUrl += `&port=${props.port}`
+    }
     
     console.log('[TERMINAL] Conectando a:', wsUrl) // Log para verificar en consola F12
 
