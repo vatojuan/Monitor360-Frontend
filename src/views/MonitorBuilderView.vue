@@ -90,7 +90,7 @@ const suggestedTargetDevices = computed(() => {
 })
 
 //
-// --- Plantillas de Formularios (ACTUALIZADO: notify_recovery) ---
+// --- Plantillas de Formularios (ACTUALIZADO: notify_recovery y Wireless) ---
 const createNewPingSensor = () => ({
   name: '',
   config: {
@@ -142,8 +142,29 @@ const createNewEthernetSensor = () => ({
   },
 })
 
+// NUEVO: Plantilla para el Sensor Wireless con el Motor Anti-Spam
+const createNewWirelessSensor = () => ({
+  name: '',
+  config: {
+    interface_name: 'wlan1',
+    thresholds: {
+      min_signal_dbm: -80,
+      min_ccq_percent: 75,
+      min_client_count: 0,
+    },
+    tolerance_checks: 3, // Tolerancia Anti-Spam gestionada por Redis
+  },
+  ui_alert_status: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    notify_recovery: true,
+  },
+})
+
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
+const newWirelessSensor = ref(createNewWirelessSensor())
 
 //
 // --- Ciclo de Vida ---
@@ -208,16 +229,16 @@ function safeJsonParse(v, fallback = null) {
 }
 
 //
-// --- Lógica Sensores (ACTUALIZADO: notify_recovery en payload) ---
+// --- Lógica Sensores (ACTUALIZADO: Wireless y Payload) ---
 function buildSensorPayload(sensorType, sensorData) {
   const finalConfig = { ...sensorData.config }
-  if (sensorType === 'ping' && !hasParentMaestro.value) {
-    finalConfig.ping_type = 'device_to_external'
-  }
   finalConfig.alerts = []
   const onlyNums = (v, fallback = undefined) => (typeof v === 'number' && !isNaN(v) ? v : fallback)
 
   if (sensorType === 'ping') {
+    if (!hasParentMaestro.value) {
+      finalConfig.ping_type = 'device_to_external'
+    }
     if (sensorData.ui_alert_timeout.enabled) {
       const a = sensorData.ui_alert_timeout
       if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Timeout.')
@@ -226,7 +247,7 @@ function buildSensorPayload(sensorType, sensorData) {
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
         tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
-        notify_recovery: !!a.notify_recovery, // <--- Payload
+        notify_recovery: !!a.notify_recovery,
       })
     }
     if (sensorData.ui_alert_latency.enabled) {
@@ -238,7 +259,7 @@ function buildSensorPayload(sensorType, sensorData) {
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
         tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
-        notify_recovery: !!a.notify_recovery, // <--- Payload
+        notify_recovery: !!a.notify_recovery,
       })
     }
   } else if (sensorType === 'ethernet') {
@@ -251,7 +272,7 @@ function buildSensorPayload(sensorType, sensorData) {
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
         tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
-        notify_recovery: !!a.notify_recovery, // <--- Payload
+        notify_recovery: !!a.notify_recovery,
       })
     }
     if (sensorData.ui_alert_traffic.enabled) {
@@ -264,7 +285,26 @@ function buildSensorPayload(sensorType, sensorData) {
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
         tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
-        notify_recovery: !!a.notify_recovery, // <--- Payload
+        notify_recovery: !!a.notify_recovery,
+      })
+    }
+  } else if (sensorType === 'wireless') {
+    // Normalizar umbrales
+    finalConfig.thresholds = {
+      min_signal_dbm: onlyNums(sensorData.config.thresholds.min_signal_dbm, -80),
+      min_ccq_percent: onlyNums(sensorData.config.thresholds.min_ccq_percent, 75),
+      min_client_count: onlyNums(sensorData.config.thresholds.min_client_count, 0)
+    }
+    finalConfig.tolerance_checks = Math.max(1, onlyNums(sensorData.config.tolerance_checks, 3))
+
+    if (sensorData.ui_alert_status?.enabled) {
+      const a = sensorData.ui_alert_status
+      if (!a.channel_id) throw new Error('Selecciona un canal para la alerta Inalámbrica.')
+      finalConfig.alerts.push({
+        type: 'wireless_status',
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
+        notify_recovery: !!a.notify_recovery,
       })
     }
   }
@@ -273,7 +313,13 @@ function buildSensorPayload(sensorType, sensorData) {
 
 async function handleSaveSensor() {
   if (!formToShow.value) return
-  const sensorData = formToShow.value === 'ping' ? newPingSensor.value : newEthernetSensor.value
+  
+  const sensorData = formToShow.value === 'ping' 
+    ? newPingSensor.value 
+    : formToShow.value === 'ethernet' 
+      ? newEthernetSensor.value 
+      : newWirelessSensor.value
+
   try {
     const payload = buildSensorPayload(formToShow.value, sensorData)
     if (isEditMode.value && sensorToEdit.value) {
@@ -316,8 +362,11 @@ function openFormForCreate(type) {
   sensorToEdit.value = null
   newPingSensor.value = createNewPingSensor()
   newEthernetSensor.value = createNewEthernetSensor()
-  if (type === 'ping' && !hasParentMaestro.value)
+  newWirelessSensor.value = createNewWirelessSensor()
+  
+  if (type === 'ping' && !hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
+  }
   formToShow.value = type
 }
 
@@ -328,6 +377,7 @@ function openFormForEdit(sensor) {
 
   // Helper para mapear alerta
   const mapAlert = (alerts, type) => alerts.find((a) => a.type === type) || {}
+  const alerts = cfg?.alerts || []
 
   if (sensor.sensor_type === 'ping') {
     const uiData = createNewPingSensor()
@@ -335,9 +385,6 @@ function openFormForEdit(sensor) {
     uiData.config = { ...uiData.config, ...cfg }
     if (!hasParentMaestro.value) uiData.config.ping_type = 'device_to_external'
 
-    const alerts = cfg?.alerts || []
-
-    // Timeout Mapping
     const tOut = mapAlert(alerts, 'timeout')
     if (tOut.type) {
       uiData.ui_alert_timeout = {
@@ -348,7 +395,6 @@ function openFormForEdit(sensor) {
       }
     }
 
-    // Latency Mapping
     const tLat = mapAlert(alerts, 'high_latency')
     if (tLat.type) {
       uiData.ui_alert_latency = {
@@ -358,8 +404,8 @@ function openFormForEdit(sensor) {
         notify_recovery: tLat.notify_recovery ?? false,
       }
     }
-
     newPingSensor.value = uiData
+
   } else if (sensor.sensor_type === 'ethernet') {
     const uiData = createNewEthernetSensor()
     uiData.name = sensor.name
@@ -368,9 +414,6 @@ function openFormForEdit(sensor) {
       interval_sec: cfg.interval_sec || 30,
     }
 
-    const alerts = cfg?.alerts || []
-
-    // Speed Change Mapping
     const tSpd = mapAlert(alerts, 'speed_change')
     if (tSpd.type) {
       uiData.ui_alert_speed_change = {
@@ -381,7 +424,6 @@ function openFormForEdit(sensor) {
       }
     }
 
-    // Traffic Mapping
     const tTrf = mapAlert(alerts, 'traffic_threshold')
     if (tTrf.type) {
       uiData.ui_alert_traffic = {
@@ -391,9 +433,33 @@ function openFormForEdit(sensor) {
         notify_recovery: tTrf.notify_recovery ?? false,
       }
     }
-
     newEthernetSensor.value = uiData
+
+  } else if (sensor.sensor_type === 'wireless') {
+    const uiData = createNewWirelessSensor()
+    uiData.name = sensor.name
+    uiData.config = {
+      interface_name: cfg.interface_name || 'wlan1',
+      tolerance_checks: cfg.tolerance_checks ?? 3,
+      thresholds: {
+        min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
+        min_ccq_percent: cfg.thresholds?.min_ccq_percent ?? 75,
+        min_client_count: cfg.thresholds?.min_client_count ?? 0,
+      }
+    }
+
+    const tWir = mapAlert(alerts, 'wireless_status')
+    if (tWir.type) {
+      uiData.ui_alert_status = {
+        enabled: true,
+        ...tWir,
+        channel_id: tWir.channel_id ?? null,
+        notify_recovery: tWir.notify_recovery ?? true,
+      }
+    }
+    newWirelessSensor.value = uiData
   }
+  
   formToShow.value = sensor.sensor_type
 }
 
@@ -595,6 +661,7 @@ watch(searchQuery, (newQuery) => {
             <div class="sensor-type-selector">
               <button @click="openFormForCreate('ping')">Añadir Ping</button>
               <button @click="openFormForCreate('ethernet')">Añadir Ethernet</button>
+              <button @click="openFormForCreate('wireless')">Añadir Wireless 📡</button>
             </div>
           </div>
         </div>
@@ -603,7 +670,7 @@ watch(searchQuery, (newQuery) => {
 
     <div v-if="formToShow" class="modal-overlay" @click.self="closeForm">
       <div class="modal-content">
-        <h3>{{ isEditMode ? 'Editar' : 'Añadir' }} Sensor {{ formToShow }}</h3>
+        <h3>{{ isEditMode ? 'Editar' : 'Añadir' }} Sensor {{ formToShow.toUpperCase() }}</h3>
 
         <form v-if="formToShow === 'ping'" @submit.prevent="handleSaveSensor" class="config-form">
           <div class="form-group span-3">
@@ -628,7 +695,7 @@ watch(searchQuery, (newQuery) => {
                 list="target-devices"
                 type="text"
                 v-model="newPingSensor.config.target_ip"
-                placeholder="Ej: 8.8.8.8 o selecciona de la lista"
+                placeholder="Ej: 8.8.8.8"
                 class="search-input"
               />
               <datalist id="target-devices">
@@ -884,6 +951,95 @@ watch(searchQuery, (newQuery) => {
             <button type="submit" class="btn-add">Guardar</button>
           </div>
         </form>
+
+        <form
+          v-if="formToShow === 'wireless'"
+          @submit.prevent="handleSaveSensor"
+          class="config-form"
+        >
+          <div class="form-group span-2">
+            <label>Nombre del Sensor</label>
+            <input type="text" v-model="newWirelessSensor.name" required />
+          </div>
+          <div class="form-group">
+            <label>Interfaz Inalámbrica</label>
+            <input
+              type="text"
+              v-model="newWirelessSensor.config.interface_name"
+              required
+              placeholder="wlan1 / ath0"
+            />
+          </div>
+
+          <div class="sub-section span-3">
+            <h4>Umbrales y Calidad de Enlace</h4>
+            <div class="form-group">
+              <label>Señal Mínima (dBm)</label>
+              <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_signal_dbm" placeholder="-80" />
+              <span class="form-hint">Alerta si empeora (ej: -85)</span>
+            </div>
+            <div class="form-group">
+              <label>CCQ Mínimo (%)</label>
+              <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_ccq_percent" placeholder="75" />
+              <span class="form-hint">Calidad aceptable (0 a 100)</span>
+            </div>
+            <div class="form-group">
+              <label>Clientes Mínimos (Solo APs)</label>
+              <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_client_count" placeholder="0" min="0" />
+              <span class="form-hint">Alerta caída masiva de clientes</span>
+            </div>
+            <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem;">
+              <label>Tolerancia Anti-Spam (Redis)</label>
+              <input type="number" v-model.number="newWirelessSensor.config.tolerance_checks" placeholder="3" min="1" />
+              <span class="form-hint">Cantidad de fallos o caídas consecutivas necesarias para confirmar que no es una interferencia pasajera.</span>
+            </div>
+          </div>
+
+          <div class="sub-section span-3">
+            <h4>Notificaciones Inalámbricas</h4>
+
+            <div class="alert-config-item span-3">
+              <div class="form-group checkbox-group">
+                <input
+                  type="checkbox"
+                  v-model="newWirelessSensor.ui_alert_status.enabled"
+                  id="wStat"
+                />
+                <label for="wStat">Alertar por Degradación / Desconexión</label>
+              </div>
+              <template v-if="newWirelessSensor.ui_alert_status.enabled">
+                <div class="form-group">
+                  <label>Canal de Alerta</label>
+                  <select v-model="newWirelessSensor.ui_alert_status.channel_id">
+                    <option :value="null">-- Seleccionar --</option>
+                    <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Enfriamiento (min)</label>
+                  <input
+                    type="number"
+                    v-model.number="newWirelessSensor.ui_alert_status.cooldown_minutes"
+                  />
+                </div>
+                <div class="form-group checkbox-group" style="grid-column: span 1;">
+                  <input
+                    type="checkbox"
+                    v-model="newWirelessSensor.ui_alert_status.notify_recovery"
+                    id="wRec"
+                  />
+                  <label for="wRec">Notificar Reanudación 🟢</label>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="modal-actions span-3">
+            <button type="button" @click="closeForm" class="btn-secondary">Cancelar</button>
+            <button type="submit" class="btn-add">Guardar</button>
+          </div>
+        </form>
+
       </div>
     </div>
   </div>
@@ -1038,6 +1194,10 @@ h4 {
 .sensor-type-badge.ethernet {
   background-color: var(--green);
   color: var(--bg-color);
+}
+.sensor-type-badge.wireless {
+  background-color: #8b5cf6; /* Púrpura para distinguir Wireless */
+  color: white;
 }
 .empty-list {
   color: var(--gray);

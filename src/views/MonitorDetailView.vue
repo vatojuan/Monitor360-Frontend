@@ -159,6 +159,25 @@ const stats = computed(() => {
         color: last.status === 'link_up' || last.status === 'ok' ? '#4caf50' : '#e94560',
       },
     ]
+  } else if (sensorInfo.value?.sensor_type === 'wireless') {
+    const last = data[data.length - 1]
+    const sig = last.signal_strength || 0
+    const ccq = last.tx_ccq || 0
+    const role = last.wireless_role || 'unknown'
+
+    const kpis = [
+      { label: 'Señal', value: `${sig} dBm`, color: sig <= -80 ? '#e94560' : '#36a2eb' },
+      { label: 'CCQ TX', value: `${ccq}%`, color: ccq < 75 ? '#facc15' : '#4caf50' },
+    ]
+
+    if (role === 'AP') {
+      kpis.push({ label: 'Clientes Activos', value: `${last.client_count || 0}`, color: '#9c27b0' })
+    } else {
+      const st = (last.status || 'pending').toUpperCase()
+      const stColor = ['CONNECTED', 'OPTIMAL', 'LINK_UP'].includes(st) ? '#4caf50' : '#e94560'
+      kpis.push({ label: 'Estado', value: st, color: stColor })
+    }
+    return kpis
   }
   return []
 })
@@ -332,6 +351,88 @@ const chartOption = computed(() => {
           },
         },
       ],
+    }
+  }
+
+  // --- Lógica WIRELESS (NUEVO) ---
+  if (type === 'wireless') {
+    const signals = data.map((d) => Number(d.signal_strength || 0))
+    const ccqs = data.map((d) => Number(d.tx_ccq || 0))
+    const clients = data.map((d) => Number(d.client_count || 0))
+    const isAP = data.some((d) => d.wireless_role === 'AP')
+
+    const series = [
+      {
+        name: 'Señal (dBm)',
+        type: 'line',
+        data: signals,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 0,
+        itemStyle: { color: '#36a2eb' },
+        lineStyle: { width: 2 }
+      },
+      {
+        name: 'CCQ TX (%)',
+        type: 'line',
+        data: ccqs,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 1,
+        itemStyle: { color: '#4caf50' },
+        lineStyle: { width: 2 }
+      }
+    ]
+
+    const legendData = ['Señal (dBm)', 'CCQ TX (%)']
+    const yAxes = [
+      {
+        type: 'value',
+        name: 'dBm',
+        position: 'left',
+        splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
+        axisLabel: { color: '#888' },
+      },
+      {
+        type: 'value',
+        name: 'CCQ %',
+        position: 'right',
+        splitLine: { show: false },
+        axisLabel: { color: '#888' },
+        min: 0,
+        max: 100
+      }
+    ]
+
+    if (isAP) {
+      series.push({
+        name: 'Clientes',
+        type: 'line',
+        data: clients,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 2,
+        itemStyle: { color: '#9c27b0' },
+        lineStyle: { width: 2, type: 'dashed' }
+      })
+      legendData.push('Clientes')
+      yAxes.push({
+        type: 'value',
+        name: 'Clientes',
+        position: 'right',
+        offset: 50,
+        splitLine: { show: false },
+        axisLabel: { color: '#888' },
+        minInterval: 1
+      })
+    }
+
+    return {
+      ...baseOption,
+      legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
+      grid: { left: '2%', right: isAP ? '10%' : '3%', bottom: '15%', top: '15%', containLabel: true },
+      yAxis: yAxes,
+      series: series
     }
   }
 

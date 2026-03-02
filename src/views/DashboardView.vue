@@ -114,6 +114,7 @@ const createNewPingSensor = () => ({
     notify_recovery: false,
   },
 })
+
 const createNewEthernetSensor = () => ({
   name: '',
   is_active: true,
@@ -136,8 +137,32 @@ const createNewEthernetSensor = () => ({
     notify_recovery: false,
   },
 })
+
+// NUEVO: Plantilla para Edición de Sensor Wireless
+const createNewWirelessSensor = () => ({
+  name: '',
+  is_active: true,
+  alerts_paused: false,
+  config: {
+    interface_name: 'wlan1',
+    thresholds: {
+      min_signal_dbm: -80,
+      min_ccq_percent: 75,
+      min_client_count: 0,
+    },
+    tolerance_checks: 3,
+  },
+  ui_alert_status: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    notify_recovery: true,
+  },
+})
+
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
+const newWirelessSensor = ref(createNewWirelessSensor())
 
 // --- API FETCHERS ---
 async function fetchGroups() {
@@ -270,9 +295,10 @@ function formatLatency(ms) {
   return Number.isFinite(n) ? Math.round(n) : ms
 }
 function getStatusClass(status) {
-  if (['timeout', 'error', 'link_down'].includes(status)) return 'status-timeout'
-  if (status === 'high_latency') return 'status-high-latency'
-  if (['ok', 'link_up'].includes(status)) return 'status-ok'
+  // ACTUALIZADO: Integración de los nuevos estados Wireless
+  if (['timeout', 'error', 'link_down', 'critical'].includes(status)) return 'status-timeout'
+  if (['high_latency', 'degraded', 'searching'].includes(status)) return 'status-high-latency'
+  if (['ok', 'link_up', 'connected', 'optimal'].includes(status)) return 'status-ok'
   return 'status-pending'
 }
 function showNotification(m, t = 'success') {
@@ -426,7 +452,8 @@ function getOverallCardStatus(monitor) {
   if (!monitor.sensors || !monitor.sensors.length) return false
   return monitor.sensors.some((s) => {
     const st = liveSensorStatus.value[String(s.id)]?.status
-    return ['timeout', 'error', 'high_latency', 'link_down'].includes(st)
+    // ACTUALIZADO: Considerar degraded y critical para iluminar la tarjeta
+    return ['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(st)
   })
 }
 async function confirmDeleteMonitor() {
@@ -573,7 +600,7 @@ async function showSensorDetails(s, m, e) {
       }
     })
     newPingSensor.value = d
-  } else {
+  } else if (s.sensor_type === 'ethernet') {
     const d = createNewEthernetSensor()
     d.name = s.name
     d.is_active = s.is_active !== false
@@ -602,6 +629,31 @@ async function showSensorDetails(s, m, e) {
       }
     })
     newEthernetSensor.value = d
+  } else if (s.sensor_type === 'wireless') {
+    const d = createNewWirelessSensor()
+    d.name = s.name
+    d.is_active = s.is_active !== false
+    d.alerts_paused = s.alerts_paused === true
+    d.config = {
+      interface_name: cfg.interface_name || 'wlan1',
+      tolerance_checks: cfg.tolerance_checks ?? 3,
+      thresholds: {
+        min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
+        min_ccq_percent: cfg.thresholds?.min_ccq_percent ?? 75,
+        min_client_count: cfg.thresholds?.min_client_count ?? 0,
+      }
+    }
+    ;(cfg.alerts || []).forEach((a) => {
+      if (a.type === 'wireless_status') {
+        d.ui_alert_status = {
+          enabled: true,
+          channel_id: a.channel_id,
+          cooldown_minutes: a.cooldown_minutes ?? 10,
+          notify_recovery: a.notify_recovery ?? true,
+        }
+      }
+    })
+    newWirelessSensor.value = d
   }
 }
 
@@ -609,7 +661,12 @@ async function handleUpdateSensor() {
   if (!sensorDetailsToShow.value) return
 
   const type = sensorDetailsToShow.value.sensor_type
-  const uiData = type === 'ping' ? newPingSensor.value : newEthernetSensor.value
+  const uiData = type === 'ping' 
+    ? newPingSensor.value 
+    : type === 'ethernet' 
+      ? newEthernetSensor.value 
+      : newWirelessSensor.value
+
   const config = { ...uiData.config }
   config.alerts = []
   const num = (v, d) => (typeof v === 'number' && !isNaN(v) ? v : d)
@@ -634,7 +691,7 @@ async function handleUpdateSensor() {
         tolerance_count: num(l.tolerance_count, 1),
         notify_recovery: !!l.notify_recovery,
       })
-  } else {
+  } else if (type === 'ethernet') {
     const s = uiData.ui_alert_speed_change
     if (s.enabled && s.channel_id)
       config.alerts.push({
@@ -655,6 +712,24 @@ async function handleUpdateSensor() {
         tolerance_count: num(tr.tolerance_count, 1),
         notify_recovery: !!tr.notify_recovery,
       })
+  } else if (type === 'wireless') {
+    // Normalizar umbrales
+    config.thresholds = {
+      min_signal_dbm: num(uiData.config.thresholds.min_signal_dbm, -80),
+      min_ccq_percent: num(uiData.config.thresholds.min_ccq_percent, 75),
+      min_client_count: num(uiData.config.thresholds.min_client_count, 0)
+    }
+    config.tolerance_checks = Math.max(1, num(uiData.config.tolerance_checks, 3))
+
+    const w = uiData.ui_alert_status
+    if (w.enabled && w.channel_id) {
+      config.alerts.push({
+        type: 'wireless_status',
+        channel_id: w.channel_id,
+        cooldown_minutes: num(w.cooldown_minutes, 10),
+        notify_recovery: !!w.notify_recovery
+      })
+    }
   }
 
   try {
@@ -893,6 +968,28 @@ function closeSensorDetails() {
                           </div>
                         </template>
 
+                        <template v-else-if="sensor.sensor_type === 'wireless'">
+                          <div class="wireless-data-flex">
+                            <span class="wireless-main-status">
+                              <span v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Punto de Acceso">📡 AP</span>
+                              <span v-else-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'CPE'" title="Estación / Cliente">📶 CPE</span>
+                              <span v-else>📡</span>
+                              {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
+                            </span>
+                            <span class="wireless-metrics-row" v-if="liveSensorStatus[String(sensor.id)]?.status !== 'pending'">
+                              <span class="metric-item" title="Señal">
+                                📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} dBm
+                              </span>
+                              <span class="metric-item" title="CCQ (TX)">
+                                📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }}%
+                              </span>
+                              <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">
+                                👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}
+                              </span>
+                            </span>
+                          </div>
+                        </template>
+
                         <template v-else>{{
                           liveSensorStatus[String(sensor.id)]?.status || 'pending'
                         }}</template>
@@ -1002,10 +1099,7 @@ function closeSensorDetails() {
               <div class="form-group checkbox-group">
                 <input
                   type="checkbox"
-                  v-model="
-                    (sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : newEthernetSensor)
-                      .is_active
-                  "
+                  v-model="(sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : sensorDetailsToShow.sensor_type === 'ethernet' ? newEthernetSensor : newWirelessSensor).is_active"
                   id="gAct"
                 />
                 <label for="gAct">Encendido</label>
@@ -1013,10 +1107,7 @@ function closeSensorDetails() {
               <div class="form-group checkbox-group">
                 <input
                   type="checkbox"
-                  v-model="
-                    (sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : newEthernetSensor)
-                      .alerts_paused
-                  "
+                  v-model="(sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : sensorDetailsToShow.sensor_type === 'ethernet' ? newEthernetSensor : newWirelessSensor).alerts_paused"
                   id="gPau"
                 />
                 <label for="gPau">Pausar Alertas</label>
@@ -1268,6 +1359,64 @@ function closeSensorDetails() {
                         v-model="newEthernetSensor.ui_alert_traffic.notify_recovery"
                       />
                       <label>Recuperación 🟢</label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template v-if="sensorDetailsToShow.sensor_type === 'wireless'">
+            <div class="form-group span-2">
+              <label>Nombre</label><input type="text" v-model="newWirelessSensor.name" required />
+            </div>
+            <div class="form-group">
+              <label>Interfaz Inalámbrica</label>
+              <input type="text" v-model="newWirelessSensor.config.interface_name" required placeholder="wlan1" />
+            </div>
+
+            <div class="sub-section span-3">
+              <h4>Umbrales y Calidad de Enlace</h4>
+              <div class="form-group">
+                <label>Señal Mínima (dBm)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_signal_dbm" />
+              </div>
+              <div class="form-group">
+                <label>CCQ Mínimo (%)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_ccq_percent" />
+              </div>
+              <div class="form-group">
+                <label>Clientes Mínimos (APs)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_client_count" />
+              </div>
+              <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem;">
+                <label>Tolerancia Anti-Spam (Redis)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.tolerance_checks" />
+              </div>
+            </div>
+
+            <div class="sub-section span-3">
+              <h4>Notificaciones Inalámbricas</h4>
+              <div class="alert-config-item">
+                <div class="form-group checkbox-group">
+                  <input type="checkbox" v-model="newWirelessSensor.ui_alert_status.enabled" id="wStatEdit" />
+                  <label for="wStatEdit">Alertar por Degradación</label>
+                </div>
+                <div v-if="newWirelessSensor.ui_alert_status.enabled">
+                  <div class="config-grid">
+                    <div class="form-group">
+                      <label>Canal</label>
+                      <select v-model="newWirelessSensor.ui_alert_status.channel_id">
+                        <option v-for="c in channelsList" :key="c.id" :value="c.id">{{ c.name }}</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Enfriamiento (min)</label>
+                      <input type="number" v-model.number="newWirelessSensor.ui_alert_status.cooldown_minutes" />
+                    </div>
+                    <div class="form-group checkbox-group" style="grid-column: span 2;">
+                      <input type="checkbox" v-model="newWirelessSensor.ui_alert_status.notify_recovery" />
+                      <label>Notificar Reanudación 🟢</label>
                     </div>
                   </div>
                 </div>
@@ -1634,6 +1783,31 @@ function closeSensorDetails() {
   gap: 8px;
 }
 .traf-item {
+  white-space: nowrap;
+}
+
+/* NUEVO: WIRELESS DATA STYLES */
+.wireless-data-flex {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.2;
+}
+.wireless-main-status {
+  font-weight: bold;
+  font-size: 0.85rem;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.wireless-metrics-row {
+  font-size: 0.75rem;
+  color: #aaa;
+  display: flex;
+  gap: 10px;
+  margin-top: 3px;
+}
+.metric-item {
   white-space: nowrap;
 }
 
