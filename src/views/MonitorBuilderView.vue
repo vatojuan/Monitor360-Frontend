@@ -90,7 +90,7 @@ const suggestedTargetDevices = computed(() => {
 })
 
 //
-// --- Plantillas de Formularios (ACTUALIZADO: notify_recovery y Wireless) ---
+// --- Plantillas de Formularios (ACTUALIZADO: notify_recovery y Wireless con TX/RX Rate) ---
 const createNewPingSensor = () => ({
   name: '',
   config: {
@@ -142,7 +142,7 @@ const createNewEthernetSensor = () => ({
   },
 })
 
-// NUEVO: Plantilla para el Sensor Wireless con el Motor Anti-Spam
+// NUEVO: Plantilla para el Sensor Wireless con el Motor Anti-Spam y Modulación
 const createNewWirelessSensor = () => ({
   name: '',
   config: {
@@ -151,6 +151,8 @@ const createNewWirelessSensor = () => ({
       min_signal_dbm: -80,
       min_ccq_percent: 75,
       min_client_count: 0,
+      min_tx_rate_mbps: 0, // Nuevo: Umbral TX
+      min_rx_rate_mbps: 0, // Nuevo: Umbral RX
     },
     tolerance_checks: 3, // Tolerancia Anti-Spam gestionada por Redis
   },
@@ -229,7 +231,7 @@ function safeJsonParse(v, fallback = null) {
 }
 
 //
-// --- Lógica Sensores (ACTUALIZADO: Wireless y Payload) ---
+// --- Lógica Sensores (ACTUALIZADO: Wireless y Payload con TX/RX Rate) ---
 function buildSensorPayload(sensorType, sensorData) {
   const finalConfig = { ...sensorData.config }
   finalConfig.alerts = []
@@ -289,11 +291,13 @@ function buildSensorPayload(sensorType, sensorData) {
       })
     }
   } else if (sensorType === 'wireless') {
-    // Normalizar umbrales
+    // Normalizar umbrales incluyendo TX y RX
     finalConfig.thresholds = {
       min_signal_dbm: onlyNums(sensorData.config.thresholds.min_signal_dbm, -80),
       min_ccq_percent: onlyNums(sensorData.config.thresholds.min_ccq_percent, 75),
-      min_client_count: onlyNums(sensorData.config.thresholds.min_client_count, 0)
+      min_client_count: onlyNums(sensorData.config.thresholds.min_client_count, 0),
+      min_tx_rate_mbps: onlyNums(sensorData.config.thresholds.min_tx_rate_mbps, 0),
+      min_rx_rate_mbps: onlyNums(sensorData.config.thresholds.min_rx_rate_mbps, 0),
     }
     finalConfig.tolerance_checks = Math.max(1, onlyNums(sensorData.config.tolerance_checks, 3))
 
@@ -445,6 +449,8 @@ function openFormForEdit(sensor) {
         min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
         min_ccq_percent: cfg.thresholds?.min_ccq_percent ?? 75,
         min_client_count: cfg.thresholds?.min_client_count ?? 0,
+        min_tx_rate_mbps: cfg.thresholds?.min_tx_rate_mbps ?? 0,
+        min_rx_rate_mbps: cfg.thresholds?.min_rx_rate_mbps ?? 0,
       }
     }
 
@@ -973,22 +979,36 @@ watch(searchQuery, (newQuery) => {
 
           <div class="sub-section span-3">
             <h4>Umbrales y Calidad de Enlace</h4>
-            <div class="form-group">
-              <label>Señal Mínima (dBm)</label>
-              <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_signal_dbm" placeholder="-80" />
-              <span class="form-hint">Alerta si empeora (ej: -85)</span>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
+              <div class="form-group">
+                <label>Señal Mínima (dBm)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_signal_dbm" placeholder="-80" />
+                <span class="form-hint">Alerta si empeora (ej: -85)</span>
+              </div>
+              <div class="form-group">
+                <label>CCQ Mínimo (%)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_ccq_percent" placeholder="75" />
+                <span class="form-hint">Calidad aceptable (0 a 100)</span>
+              </div>
+              <div class="form-group">
+                <label>Clientes Mínimos (Solo APs)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_client_count" placeholder="0" min="0" />
+                <span class="form-hint">Alerta caída masiva de clientes</span>
+              </div>
+              
+              <div class="form-group">
+                <label>TX Rate Mínimo (Mbps)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_tx_rate_mbps" placeholder="0" min="0" />
+                <span class="form-hint">0 para desactivar (Opcional)</span>
+              </div>
+              <div class="form-group">
+                <label>RX Rate Mínimo (Mbps)</label>
+                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_rx_rate_mbps" placeholder="0" min="0" />
+                <span class="form-hint">0 para desactivar (Opcional)</span>
+              </div>
             </div>
-            <div class="form-group">
-              <label>CCQ Mínimo (%)</label>
-              <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_ccq_percent" placeholder="75" />
-              <span class="form-hint">Calidad aceptable (0 a 100)</span>
-            </div>
-            <div class="form-group">
-              <label>Clientes Mínimos (Solo APs)</label>
-              <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_client_count" placeholder="0" min="0" />
-              <span class="form-hint">Alerta caída masiva de clientes</span>
-            </div>
-            <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem;">
+            
+            <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem; margin-top: 0.5rem;">
               <label>Tolerancia Anti-Spam (Redis)</label>
               <input type="number" v-model.number="newWirelessSensor.config.tolerance_checks" placeholder="3" min="1" />
               <span class="form-hint">Cantidad de fallos o caídas consecutivas necesarias para confirmar que no es una interferencia pasajera.</span>

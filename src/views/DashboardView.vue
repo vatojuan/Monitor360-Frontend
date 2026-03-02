@@ -149,6 +149,8 @@ const createNewWirelessSensor = () => ({
       min_signal_dbm: -80,
       min_ccq_percent: 75,
       min_client_count: 0,
+      min_tx_rate_mbps: 0, // Nuevo
+      min_rx_rate_mbps: 0, // Nuevo
     },
     tolerance_checks: 3,
   },
@@ -293,6 +295,10 @@ function formatLatency(ms) {
   if (ms == null || ms === '') return '—'
   const n = Number(ms)
   return Number.isFinite(n) ? Math.round(n) : ms
+}
+function formatRateString(rate) {
+  if (!rate || rate === 'N/A') return 'N/A'
+  return String(rate).replace(/mbps/ig, '').trim()
 }
 function getStatusClass(status) {
   // ACTUALIZADO: Integración de los nuevos estados Wireless
@@ -641,6 +647,8 @@ async function showSensorDetails(s, m, e) {
         min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
         min_ccq_percent: cfg.thresholds?.min_ccq_percent ?? 75,
         min_client_count: cfg.thresholds?.min_client_count ?? 0,
+        min_tx_rate_mbps: cfg.thresholds?.min_tx_rate_mbps ?? 0,
+        min_rx_rate_mbps: cfg.thresholds?.min_rx_rate_mbps ?? 0,
       }
     }
     ;(cfg.alerts || []).forEach((a) => {
@@ -717,7 +725,9 @@ async function handleUpdateSensor() {
     config.thresholds = {
       min_signal_dbm: num(uiData.config.thresholds.min_signal_dbm, -80),
       min_ccq_percent: num(uiData.config.thresholds.min_ccq_percent, 75),
-      min_client_count: num(uiData.config.thresholds.min_client_count, 0)
+      min_client_count: num(uiData.config.thresholds.min_client_count, 0),
+      min_tx_rate_mbps: num(uiData.config.thresholds.min_tx_rate_mbps, 0),
+      min_rx_rate_mbps: num(uiData.config.thresholds.min_rx_rate_mbps, 0)
     }
     config.tolerance_checks = Math.max(1, num(uiData.config.tolerance_checks, 3))
 
@@ -985,6 +995,9 @@ function closeSensorDetails() {
                               </span>
                               <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">
                                 👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}
+                              </span>
+                              <span class="metric-item" title="TX / RX Rate (Mbps)">
+                                🚀 {{ formatRateString(liveSensorStatus[String(sensor.id)]?.tx_rate) }} / {{ formatRateString(liveSensorStatus[String(sensor.id)]?.rx_rate) }} Mbps
                               </span>
                             </span>
                           </div>
@@ -1377,19 +1390,29 @@ function closeSensorDetails() {
 
             <div class="sub-section span-3">
               <h4>Umbrales y Calidad de Enlace</h4>
-              <div class="form-group">
-                <label>Señal Mínima (dBm)</label>
-                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_signal_dbm" />
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
+                <div class="form-group">
+                  <label>Señal Mínima (dBm)</label>
+                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_signal_dbm" />
+                </div>
+                <div class="form-group">
+                  <label>CCQ Mínimo (%)</label>
+                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_ccq_percent" />
+                </div>
+                <div class="form-group">
+                  <label>Clientes Mínimos (APs)</label>
+                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_client_count" />
+                </div>
+                <div class="form-group">
+                  <label>TX Rate Mín. (Mbps)</label>
+                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_tx_rate_mbps" />
+                </div>
+                <div class="form-group">
+                  <label>RX Rate Mín. (Mbps)</label>
+                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_rx_rate_mbps" />
+                </div>
               </div>
-              <div class="form-group">
-                <label>CCQ Mínimo (%)</label>
-                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_ccq_percent" />
-              </div>
-              <div class="form-group">
-                <label>Clientes Mínimos (APs)</label>
-                <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_client_count" />
-              </div>
-              <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem;">
+              <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem; margin-top: 0.5rem;">
                 <label>Tolerancia Anti-Spam (Redis)</label>
                 <input type="number" v-model.number="newWirelessSensor.config.tolerance_checks" />
               </div>

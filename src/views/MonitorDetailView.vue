@@ -30,7 +30,7 @@ use([
   MarkAreaComponent,
 ])
 
-// Proveer tema oscuro (o default si prefieres claro)
+// Proveer tema oscuro
 provide(THEME_KEY, 'dark')
 
 /* ====== ESTADO BASE ====== */
@@ -44,7 +44,7 @@ const isFetching = ref(false)
 let historyAbort = null
 let fetchToken = 0
 
-/* ====== ESTADO BITÁCORA (NUEVO) ====== */
+/* ====== ESTADO BITÁCORA ====== */
 const showCommentsModal = ref(false)
 const comments = ref([])
 const newComment = ref('')
@@ -64,7 +64,6 @@ const store = reactive({
 
 /* ====== HELPERS DE DATOS ====== */
 function normalizePoint(p) {
-  // Asegurar timestamp numérico
   const ts = new Date(p.timestamp || p.ts || p.time).getTime()
   return { ...p, _ms: ts }
 }
@@ -112,6 +111,12 @@ function decideMode(startMs, endMs) {
   return hours < 24 ? 'raw' : 'auto'
 }
 
+function parseMbps(val) {
+  if (!val || val === 'N/A') return 0
+  const m = String(val).match(/(\d+(?:\.\d+)?)/)
+  return m ? parseFloat(m[1]) : 0
+}
+
 /* ====== DATA VISIBLE ====== */
 const visibleData = computed(() => {
   if (!currentWindow.value) return []
@@ -125,14 +130,10 @@ const stats = computed(() => {
   if (!data.length) return null
 
   if (sensorInfo.value?.sensor_type === 'ping') {
-    let sum = 0,
-      max = 0,
-      count = 0,
-      timeouts = 0
+    let sum = 0, max = 0, count = 0, timeouts = 0
     for (const p of data) {
-      if (p.status === 'timeout') {
-        timeouts++
-      } else {
+      if (p.status === 'timeout') { timeouts++ } 
+      else {
         const val = Number(p.latency_ms || 0)
         sum += val
         if (val > max) max = val
@@ -161,23 +162,12 @@ const stats = computed(() => {
     ]
   } else if (sensorInfo.value?.sensor_type === 'wireless') {
     const last = data[data.length - 1]
-    const sig = last.signal_strength || 0
-    const ccq = last.tx_ccq || 0
-    const role = last.wireless_role || 'unknown'
-
-    const kpis = [
-      { label: 'Señal', value: `${sig} dBm`, color: sig <= -80 ? '#e94560' : '#36a2eb' },
-      { label: 'CCQ TX', value: `${ccq}%`, color: ccq < 75 ? '#facc15' : '#4caf50' },
+    return [
+      { label: 'Señal', value: `${last.signal_strength || 0} dBm`, color: '#36a2eb' },
+      { label: 'CCQ TX', value: `${last.tx_ccq || 0}%`, color: '#4caf50' },
+      { label: 'TX Rate', value: `${last.tx_rate || 'N/A'}`, color: '#facc15' },
+      { label: 'RX Rate', value: `${last.rx_rate || 'N/A'}`, color: '#ff9800' }
     ]
-
-    if (role === 'AP') {
-      kpis.push({ label: 'Clientes Activos', value: `${last.client_count || 0}`, color: '#9c27b0' })
-    } else {
-      const st = (last.status || 'pending').toUpperCase()
-      const stColor = ['CONNECTED', 'OPTIMAL', 'LINK_UP'].includes(st) ? '#4caf50' : '#e94560'
-      kpis.push({ label: 'Estado', value: st, color: stColor })
-    }
-    return kpis
   }
   return []
 })
@@ -188,11 +178,8 @@ const chartOption = computed(() => {
 
   const type = sensorInfo.value.sensor_type
   const data = visibleData.value
-
-  // Extraer timestamps y valores
   const timestamps = data.map((d) => d._ms)
 
-  // Configuración base (Tema oscuro manual para coincidir con CSS)
   const baseOption = {
     backgroundColor: 'transparent',
     tooltip: {
@@ -203,28 +190,23 @@ const chartOption = computed(() => {
       textStyle: { color: '#fff' },
       confine: true,
     },
-    grid: { left: '2%', right: '3%', bottom: '15%', top: '10%', containLabel: true },
+    grid: { left: '2%', right: '3%', bottom: '15%', top: '12%', containLabel: true },
     dataZoom: [
-      { type: 'inside', start: 0, end: 100 }, // Zoom con rueda
+      { type: 'inside', start: 0, end: 100 },
       {
         type: 'slider',
         start: 0,
         end: 100,
         bottom: 0,
         height: 20,
-        handleSize: '100%',
-        showDetail: false,
         fillerColor: 'rgba(83, 114, 240, 0.2)',
-      }, // Barra inferior
+      },
     ],
     xAxis: {
       type: 'category',
       data: timestamps.map((ts) =>
         new Date(ts).toLocaleString('es-AR', {
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
+          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
         }),
       ),
       boundaryGap: false,
@@ -238,204 +220,57 @@ const chartOption = computed(() => {
     },
   }
 
-  // --- Lógica PING ---
   if (type === 'ping') {
     const latencies = data.map((d) => (d.status === 'timeout' ? null : Number(d.latency_ms)))
-
-    // Generar áreas rojas para Timeouts
-    const markAreas = []
-    let startIdx = null
-    data.forEach((d, i) => {
-      if (d.status === 'timeout') {
-        if (startIdx === null) startIdx = i
-      } else {
-        if (startIdx !== null) {
-          markAreas.push([{ xAxis: startIdx }, { xAxis: i - 1 }])
-          startIdx = null
-        }
-      }
-    })
-    if (startIdx !== null) markAreas.push([{ xAxis: startIdx }, { xAxis: data.length - 1 }])
-
     const threshold = Number(sensorInfo.value.config?.latency_threshold_ms || 150)
-
     return {
       ...baseOption,
-      yAxis: { ...baseOption.yAxis, name: 'ms', nameTextStyle: { padding: [0, 0, 0, 10] } },
-      series: [
-        {
-          name: 'Latencia',
-          type: 'line',
-          data: latencies,
-          smooth: true,
-          showSymbol: false,
-          lineStyle: { width: 2, color: '#5372f0' },
-          areaStyle: {
-            color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: 'rgba(83, 114, 240, 0.5)' },
-                { offset: 1, color: 'rgba(83, 114, 240, 0.0)' },
-              ],
-            },
-          },
-          markLine: {
-            symbol: 'none',
-            label: { formatter: '{c} ms', color: '#ff4d4f', position: 'insideEndTop' },
-            lineStyle: { color: '#ff4d4f', type: 'dashed', width: 1 },
-            data: [{ yAxis: threshold }],
-          },
-          markArea: {
-            itemStyle: { color: 'rgba(255, 77, 79, 0.15)' },
-            data: markAreas,
-          },
-        },
-      ],
+      series: [{
+        name: 'Latencia', type: 'line', data: latencies, smooth: true, showSymbol: false,
+        lineStyle: { width: 2, color: '#5372f0' },
+        markLine: {
+          symbol: 'none',
+          data: [{ yAxis: threshold }],
+          lineStyle: { color: '#ff4d4f', type: 'dashed' }
+        }
+      }]
     }
   }
 
-  // --- Lógica ETHERNET ---
   if (type === 'ethernet') {
-    const rx = data.map((d) => (Number(d.rx_bitrate || 0) / 1_000_000).toFixed(2)) // Mbps
-    const tx = data.map((d) => (Number(d.tx_bitrate || 0) / 1_000_000).toFixed(2)) // Mbps
-
     return {
       ...baseOption,
       legend: { data: ['Descarga', 'Subida'], textStyle: { color: '#ccc' }, top: 0 },
-      yAxis: { ...baseOption.yAxis, name: 'Mbps' },
       series: [
-        {
-          name: 'Descarga',
-          type: 'line',
-          data: rx,
-          smooth: true,
-          showSymbol: false,
-          itemStyle: { color: '#36a2eb' },
-          areaStyle: {
-            color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: 'rgba(54, 162, 235, 0.5)' },
-                { offset: 1, color: 'rgba(54, 162, 235, 0)' },
-              ],
-            },
-          },
-        },
-        {
-          name: 'Subida',
-          type: 'line',
-          data: tx,
-          smooth: true,
-          showSymbol: false,
-          itemStyle: { color: '#4bc0c0' },
-          areaStyle: {
-            color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: 'rgba(75, 192, 192, 0.5)' },
-                { offset: 1, color: 'rgba(75, 192, 192, 0)' },
-              ],
-            },
-          },
-        },
-      ],
+        { name: 'Descarga', type: 'line', data: data.map(d => (Number(d.rx_bitrate)/1e6).toFixed(2)), smooth: true, showSymbol: false, itemStyle: { color: '#36a2eb' } },
+        { name: 'Subida', type: 'line', data: data.map(d => (Number(d.tx_bitrate)/1e6).toFixed(2)), smooth: true, showSymbol: false, itemStyle: { color: '#4bc0c0' } }
+      ]
     }
   }
 
-  // --- Lógica WIRELESS (NUEVO) ---
   if (type === 'wireless') {
-    const signals = data.map((d) => Number(d.signal_strength || 0))
-    const ccqs = data.map((d) => Number(d.tx_ccq || 0))
-    const clients = data.map((d) => Number(d.client_count || 0))
-    const isAP = data.some((d) => d.wireless_role === 'AP')
-
-    const series = [
-      {
-        name: 'Señal (dBm)',
-        type: 'line',
-        data: signals,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 0,
-        itemStyle: { color: '#36a2eb' },
-        lineStyle: { width: 2 }
-      },
-      {
-        name: 'CCQ TX (%)',
-        type: 'line',
-        data: ccqs,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 1,
-        itemStyle: { color: '#4caf50' },
-        lineStyle: { width: 2 }
-      }
-    ]
-
-    const legendData = ['Señal (dBm)', 'CCQ TX (%)']
-    const yAxes = [
-      {
-        type: 'value',
-        name: 'dBm',
-        position: 'left',
-        splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
-        axisLabel: { color: '#888' },
-      },
-      {
-        type: 'value',
-        name: 'CCQ %',
-        position: 'right',
-        splitLine: { show: false },
-        axisLabel: { color: '#888' },
-        min: 0,
-        max: 100
-      }
-    ]
-
-    if (isAP) {
-      series.push({
-        name: 'Clientes',
-        type: 'line',
-        data: clients,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 2,
-        itemStyle: { color: '#9c27b0' },
-        lineStyle: { width: 2, type: 'dashed' }
-      })
-      legendData.push('Clientes')
-      yAxes.push({
-        type: 'value',
-        name: 'Clientes',
-        position: 'right',
-        offset: 50,
-        splitLine: { show: false },
-        axisLabel: { color: '#888' },
-        minInterval: 1
-      })
-    }
+    const legendData = ['Señal (dBm)', 'CCQ TX (%)', 'TX Rate (Mbps)', 'RX Rate (Mbps)']
+    const isAP = data.some(d => d.wireless_role === 'AP')
+    if (isAP) legendData.push('Clientes')
 
     return {
       ...baseOption,
       legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
-      grid: { left: '2%', right: isAP ? '10%' : '3%', bottom: '15%', top: '15%', containLabel: true },
-      yAxis: yAxes,
-      series: series
+      grid: { ...baseOption.grid, right: '8%' },
+      yAxis: [
+        { type: 'value', name: 'dBm', position: 'left', axisLabel: { color: '#888' }, splitLine: { lineStyle: { color: '#333' } } },
+        { type: 'value', name: '%', position: 'right', min: 0, max: 100, axisLabel: { color: '#888' }, splitLine: { show: false } },
+        { type: 'value', name: 'Mbps', position: 'right', offset: 40, axisLabel: { color: '#888' }, splitLine: { show: false } }
+      ],
+      series: [
+        { name: 'Señal (dBm)', type: 'line', yAxisIndex: 0, data: data.map(d => d.signal_strength), smooth: true, showSymbol: false, itemStyle: { color: '#36a2eb' } },
+        { name: 'CCQ TX (%)', type: 'line', yAxisIndex: 1, data: data.map(d => d.tx_ccq), smooth: true, showSymbol: false, itemStyle: { color: '#4caf50' } },
+        { name: 'TX Rate (Mbps)', type: 'line', yAxisIndex: 2, data: data.map(d => parseMbps(d.tx_rate)), smooth: true, showSymbol: false, itemStyle: { color: '#facc15' } },
+        { name: 'RX Rate (Mbps)', type: 'line', yAxisIndex: 2, data: data.map(d => parseMbps(d.rx_rate)), smooth: true, showSymbol: false, itemStyle: { color: '#ff9800' } },
+        ...(isAP ? [{ name: 'Clientes', type: 'line', yAxisIndex: 1, data: data.map(d => d.client_count), smooth: true, itemStyle: { color: '#9c27b0' } }] : [])
+      ]
     }
   }
-
   return baseOption
 })
 
@@ -456,148 +291,76 @@ async function ensureCoverage(mode, startMs, endMs) {
         params: {
           start: new Date(seg.s).toISOString(),
           end: new Date(seg.e).toISOString(),
-          max_points: mode === 'raw' ? 1800 : 2000,
           mode,
         },
-        timeout: 30000,
         signal: historyAbort.signal,
       })
       if (myToken !== fetchToken) return
-      const items = Array.isArray(data?.items) ? data.items : []
-      mergeItems(mode, items)
+      mergeItems(mode, data?.items || [])
       extendRange(mode, seg.s, seg.e)
     }
   } catch (err) {
-    if (err?.code !== 'ERR_CANCELED') console.error('ensureCoverage error:', err)
+    if (err?.code !== 'ERR_CANCELED') console.error(err)
   } finally {
     if (myToken === fetchToken) isFetching.value = false
   }
-}
-
-async function setView(startMs, endMs) {
-  const mode = decideMode(startMs, endMs)
-  await ensureCoverage(mode, startMs, endMs)
-  currentWindow.value = { startMs, endMs, mode }
 }
 
 async function setRange(range) {
   timeRange.value = range
   const endMs = Date.now()
   const startMs = endMs - (hoursMap[range] ?? 24) * 3600 * 1000
-  await setView(startMs, endMs)
+  const mode = decideMode(startMs, endMs)
+  await ensureCoverage(mode, startMs, endMs)
+  currentWindow.value = { startMs, endMs, mode }
 }
 
-/* ====== WEBSOCKET REAL-TIME FIX ====== */
+/* ====== WEBSOCKET ====== */
 let wsUnbind = null
-
-// Función normalizadora simplificada
-function normalizeWsPayload(raw) {
-  if (typeof raw === 'string') {
-    try {
-      return normalizeWsPayload(JSON.parse(raw))
-    } catch {
-      return []
-    }
-  }
-  if (raw && typeof raw === 'object') {
-    // Caso de update directo o sensor-status
-    if (['sensor_update', 'sensor-status'].includes(raw.type)) {
-      return [raw.data || raw.payload || raw]
-    }
-  }
-  return []
-}
-
-// Handler directo (igual que Dashboard)
 function handleRawMessage(event) {
   try {
-    const msg = event.data
-    if (msg.includes('pong')) return
-    const parsed = JSON.parse(msg)
-    const updates = normalizeWsPayload(parsed)
-
+    const parsed = JSON.parse(event.data)
+    const updates = parsed.type === 'sensor_update' ? [parsed] : []
     const relevant = updates.filter((u) => String(u.sensor_id) === String(sensorId))
-
     if (relevant.length > 0) {
       const points = relevant.map(normalizePoint)
       mergeItems('raw', points)
       mergeItems('auto', points)
-
-      // Si estamos en modo "LIVE" (cerca de ahora), forzar reactividad
-      const now = Date.now()
-      if (currentWindow.value && now - currentWindow.value.endMs < 60000) {
-        // Pequeño truco para forzar re-render de ECharts si no detecta el cambio en Map
-        store.raw = { ...store.raw }
-      }
+      store.raw = { ...store.raw }
     }
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }
 
 function initRealTime() {
   const ws = getCurrentWebSocket()
-  if (!ws) {
-    setTimeout(initRealTime, 1000)
-    return
-  }
-
-  // Suscripción
-  try {
-    ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
-  } catch {
-    /* ignore */
-  }
-
-  // Listener nativo (bypass lib)
-  ws.removeEventListener('message', handleRawMessage)
+  if (!ws) return setTimeout(initRealTime, 1000)
+  ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
   ws.addEventListener('message', handleRawMessage)
-
   wsUnbind = () => ws.removeEventListener('message', handleRawMessage)
 }
 
-/* ====== FUNCIONES BITÁCORA ====== */
+/* ====== BITÁCORA ====== */
 async function openCommentsModal() {
   showCommentsModal.value = true
-  newComment.value = ''
   await loadComments()
 }
-
 async function loadComments() {
   isLoadingComments.value = true
   try {
     const { data } = await api.get(`/sensors/${sensorId}/comments`)
     comments.value = data
-  } catch (error) {
-    console.error('Error cargando comentarios', error)
-  } finally {
-    isLoadingComments.value = false
-  }
+  } finally { isLoadingComments.value = false }
 }
-
 async function submitComment() {
   if (!newComment.value.trim()) return
   isSendingComment.value = true
   try {
     await api.post(`/sensors/${sensorId}/comments`, { content: newComment.value })
-    newComment.value = ''
-    await loadComments()
-  } catch (error) {
-    console.error('Error enviando comentario', error)
-  } finally {
-    isSendingComment.value = false
-  }
+    newComment.value = ''; await loadComments()
+  } finally { isSendingComment.value = false }
 }
-
 function formatDate(isoStr) {
-  if (!isoStr) return ''
-  return new Date(isoStr).toLocaleString('es-ES', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return isoStr ? new Date(isoStr).toLocaleString('es-ES') : ''
 }
 
 /* ====== LIFECYCLE ====== */
@@ -606,17 +369,10 @@ onMounted(async () => {
     const { data } = await api.get(`/sensors/${sensorId}/details`)
     sensorInfo.value = data
     await connectWebSocketWhenAuthenticated()
-
     await setRange(timeRange.value)
-
-    // Iniciar WS
     initRealTime()
-  } catch (err) {
-    console.error(err)
-    router.push('/')
-  } finally {
-    isBootLoading.value = false
-  }
+  } catch { router.push('/') }
+  finally { isBootLoading.value = false }
 })
 
 onUnmounted(() => {
@@ -624,9 +380,7 @@ onUnmounted(() => {
   if (wsUnbind) wsUnbind()
 })
 
-watch(timeRange, async (r) => {
-  await setRange(r)
-})
+watch(timeRange, r => setRange(r))
 </script>
 
 <template>
@@ -639,17 +393,11 @@ watch(timeRange, async (r) => {
           <small>{{ sensorInfo.client_name }} — {{ sensorInfo.ip_address }}</small>
         </div>
       </div>
-
       <button @click="openCommentsModal" class="btn-action">📝 Bitácora</button>
     </div>
 
     <div class="stats-grid" v-if="stats">
-      <div
-        v-for="(stat, i) in stats"
-        :key="i"
-        class="stat-card"
-        :style="{ borderTopColor: stat.color }"
-      >
+      <div v-for="(stat, i) in stats" :key="i" class="stat-card" :style="{ borderTopColor: stat.color }">
         <span class="stat-label">{{ stat.label }}</span>
         <span class="stat-value" :style="{ color: stat.color }">{{ stat.value }}</span>
       </div>
@@ -658,18 +406,10 @@ watch(timeRange, async (r) => {
     <div class="chart-wrapper">
       <div class="toolbar">
         <div class="range-btns">
-          <button
-            v-for="(_, r) in hoursMap"
-            :key="r"
-            :class="{ active: timeRange === r }"
-            @click="setRange(r)"
-          >
-            {{ r }}
-          </button>
+          <button v-for="(_, r) in hoursMap" :key="r" :class="{ active: timeRange === r }" @click="setRange(r)">{{ r }}</button>
         </div>
         <div v-show="isFetching" class="spinner">↻</div>
       </div>
-
       <div class="chart-container">
         <v-chart class="chart" :option="chartOption" autoresize />
       </div>
@@ -681,37 +421,20 @@ watch(timeRange, async (r) => {
           <h3>📖 Bitácora: {{ sensorInfo?.name }}</h3>
           <button class="btn-close" @click="showCommentsModal = false">X</button>
         </div>
-
         <div class="comments-list">
-          <div v-if="isLoadingComments" class="loading-text">Cargando notas...</div>
-          <div v-else-if="comments.length === 0" class="empty-state">
-            <div class="empty-icon">📂</div>
-            <p>No hay registros en la bitácora aún.</p>
-          </div>
-
+          <div v-if="isLoadingComments">Cargando...</div>
+          <div v-else-if="comments.length === 0" class="empty-state">📂 Sin registros.</div>
           <div v-else class="comments-scroll">
             <div v-for="c in comments" :key="c.id" class="comment-item">
-              <div class="comment-header">
-                <span class="comment-date">{{ formatDate(c.created_at) }}</span>
-              </div>
+              <div class="comment-header"><span>{{ formatDate(c.created_at) }}</span></div>
               <div class="comment-body">{{ c.content }}</div>
             </div>
           </div>
         </div>
-
-        <hr class="separator" />
-
         <div class="comment-form">
-          <label>Nueva Nota</label>
-          <textarea
-            v-model="newComment"
-            rows="3"
-            placeholder="Registrar mantenimiento, alertas falsas, cambios de configuración..."
-          ></textarea>
+          <textarea v-model="newComment" rows="3" placeholder="Registrar mantenimiento..."></textarea>
           <div class="modal-actions">
-            <button class="btn-primary" @click="submitComment" :disabled="isSendingComment">
-              {{ isSendingComment ? 'Guardando...' : 'Agregar Nota' }}
-            </button>
+            <button class="btn-primary" @click="submitComment" :disabled="isSendingComment">Agregar Nota</button>
           </div>
         </div>
       </div>
@@ -720,262 +443,35 @@ watch(timeRange, async (r) => {
 </template>
 
 <style scoped>
-.detail-view {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 1rem;
-}
-
-.top-bar {
-  display: flex;
-  justify-content: space-between; /* Separar info del botón log */
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-.left-group {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.back-btn {
-  background: var(--surface-color);
-  border: 1px solid var(--primary-color);
-  color: var(--font-color);
-  padding: 0.5rem 1rem;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.back-btn:hover {
-  background: var(--primary-color);
-  color: white;
-}
-
-/* Estilo botón Bitácora */
-.btn-action {
-  background: var(--surface-color);
-  border: 1px solid var(--blue);
-  color: var(--blue);
-  padding: 0.5rem 1rem;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: bold;
-  transition: 0.2s;
-}
-.btn-action:hover {
-  background: var(--blue);
-  color: white;
-}
-
-.info h1 {
-  margin: 0;
-  font-size: 1.5rem;
-}
-.info small {
-  color: var(--gray);
-  font-family: monospace;
-}
-
-/* KPIs */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-.stat-card {
-  background: var(--surface-color);
-  padding: 1rem;
-  border-radius: 8px;
-  border-top: 3px solid var(--primary-color);
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
-.stat-label {
-  font-size: 0.85rem;
-  color: var(--gray);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.stat-value {
-  font-size: 1.8rem;
-  font-weight: bold;
-  margin-top: 0.25rem;
-}
-
-/* Chart Area */
-.chart-wrapper {
-  background: var(--surface-color);
-  border-radius: 12px;
-  padding: 1rem;
-  height: 600px; /* Altura generosa para el gráfico */
-  display: flex;
-  flex-direction: column;
-}
-
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-}
-
-.range-btns button {
-  background: transparent;
-  border: 1px solid var(--gray);
-  color: var(--gray);
-  padding: 0.25rem 0.75rem;
-  margin-right: 0.5rem;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.range-btns button.active {
-  background: var(--blue);
-  border-color: var(--blue);
-  color: white;
-}
-
-.chart-container {
-  flex-grow: 1;
-  position: relative;
-  min-height: 0; /* Fix flex overflow */
-}
-.chart {
-  height: 100%;
-  width: 100%;
-}
-
-.spinner {
-  animation: spin 1s linear infinite;
-  font-weight: bold;
-  color: var(--blue);
-}
-@keyframes spin {
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-/* --- MODAL STYLES (Consistente con ManageDevice) --- */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 3000;
-}
-.modal-content {
-  background: var(--surface-color);
-  padding: 2rem;
-  border-radius: 10px;
-  border: 1px solid var(--primary-color);
-  color: white;
-}
-.large-modal {
-  width: 600px;
-  max-width: 95%;
-  max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-}
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-.btn-close {
-  background: transparent;
-  border: 1px solid var(--gray);
-  color: var(--gray);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.comments-list {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 6px;
-  padding: 1rem;
-  margin-bottom: 1rem;
-  min-height: 200px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-.comments-scroll {
-  max-height: 300px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-.comment-item {
-  background: var(--bg-color);
-  border: 1px solid var(--primary-color);
-  padding: 0.8rem;
-  border-radius: 6px;
-}
-.comment-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-  font-size: 0.8rem;
-  color: var(--gray);
-}
-.comment-body {
-  white-space: pre-wrap;
-  color: #eee;
-  font-size: 0.95rem;
-}
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--gray);
-}
-.empty-icon {
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
-}
-.separator {
-  border: 0;
-  border-top: 1px solid var(--primary-color);
-  margin: 1rem 0;
-}
-.comment-form textarea {
-  width: 100%;
-  background-color: var(--bg-color);
-  color: white;
-  border: 1px solid var(--primary-color);
-  border-radius: 6px;
-  padding: 0.7rem;
-  margin-top: 0.5rem;
-  outline: none;
-  font-family: inherit;
-  resize: vertical;
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 1rem;
-}
-.btn-primary {
-  background: var(--green);
-  color: white;
-  padding: 0.6rem 1.2rem;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-  font-weight: bold;
-}
-.btn-primary:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
+.detail-view { max-width: 1400px; margin: 0 auto; padding: 1rem; }
+.top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+.left-group { display: flex; align-items: center; gap: 1rem; }
+.back-btn { background: var(--surface-color); border: 1px solid var(--primary-color); color: var(--font-color); padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; }
+.btn-action { background: var(--surface-color); border: 1px solid var(--blue); color: var(--blue); padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-weight: bold; }
+.info h1 { margin: 0; font-size: 1.5rem; }
+.info small { color: var(--gray); font-family: monospace; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.stat-card { background: var(--surface-color); padding: 1rem; border-radius: 8px; border-top: 3px solid var(--primary-color); display: flex; flex-direction: column; }
+.stat-label { font-size: 0.85rem; color: var(--gray); text-transform: uppercase; }
+.stat-value { font-size: 1.8rem; font-weight: bold; margin-top: 0.25rem; }
+.chart-wrapper { background: var(--surface-color); border-radius: 12px; padding: 1rem; height: 600px; display: flex; flex-direction: column; }
+.toolbar { display: flex; justify-content: space-between; margin-bottom: 1rem; }
+.range-btns button { background: transparent; border: 1px solid var(--gray); color: var(--gray); padding: 0.25rem 0.75rem; margin-right: 0.5rem; border-radius: 4px; cursor: pointer; }
+.range-btns button.active { background: var(--blue); border-color: var(--blue); color: white; }
+.chart-container { flex-grow: 1; position: relative; min-height: 0; }
+.chart { height: 100%; width: 100%; }
+.spinner { animation: spin 1s linear infinite; color: var(--blue); }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; align-items: center; justify-content: center; z-index: 3000; }
+.modal-content { background: var(--surface-color); padding: 2rem; border-radius: 10px; border: 1px solid var(--primary-color); color: white; }
+.large-modal { width: 600px; max-width: 95%; max-height: 85vh; display: flex; flex-direction: column; }
+.modal-header { display: flex; justify-content: space-between; margin-bottom: 1rem; }
+.comments-list { background: rgba(0,0,0,0.2); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; min-height: 200px; }
+.comments-scroll { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; }
+.comment-item { background: var(--bg-color); border: 1px solid var(--primary-color); padding: 0.8rem; border-radius: 6px; }
+.comment-header { font-size: 0.8rem; color: var(--gray); margin-bottom: 0.5rem; }
+.comment-body { white-space: pre-wrap; font-size: 0.95rem; }
+.comment-form textarea { width: 100%; background: var(--bg-color); color: white; border: 1px solid var(--primary-color); border-radius: 6px; padding: 0.7rem; }
+.modal-actions { display: flex; justify-content: flex-end; margin-top: 1rem; }
+.btn-primary { background: var(--green); color: white; padding: 0.6rem 1.2rem; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; }
 </style>
