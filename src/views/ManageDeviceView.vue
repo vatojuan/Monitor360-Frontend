@@ -181,18 +181,37 @@ function formatDate(isoStr) {
   })
 }
 
-// ===== ESTADO TERMINAL (NUEVO) =====
+// ===== ESTADO TERMINAL (MODAL PREVIO DE PUERTO) =====
+const showTerminalSetupModal = ref(false)
 const showTerminalModal = ref(false)
 const activeTerminalDevice = ref(null)
+const activeTerminalPort = ref(22)
 
-function openTerminal(device) {
-  activeTerminalDevice.value = device
+const terminalSetupDevice = ref(null)
+const terminalSetupPort = ref(22)
+
+// 1. Abrimos el modal de setup de puerto
+function openTerminalSetup(device) {
+  terminalSetupDevice.value = device
+  // Leemos el puerto guardado o usamos 22 por defecto
+  terminalSetupPort.value = device.ssh_port || 22
+  showTerminalSetupModal.value = true
+}
+
+// 2. Confirmamos y lanzamos la terminal real
+function confirmTerminalSetup() {
+  activeTerminalDevice.value = terminalSetupDevice.value
+  activeTerminalPort.value = terminalSetupPort.value
+  showTerminalSetupModal.value = false
   showTerminalModal.value = true
 }
 
+// 3. Al cerrar la terminal
 function closeTerminal() {
   showTerminalModal.value = false
   activeTerminalDevice.value = null
+  // Refrescamos los dispositivos por si el Auto-Guardado Ninja actualizó el puerto en DB
+  fetchAllDevices()
 }
 
 // ===== COMPUTADAS INTELIGENTES =====
@@ -859,7 +878,7 @@ onMounted(async () => {
                   </button>
                   
                   <button 
-                    @click="openTerminal(device)" 
+                    @click="openTerminalSetup(device)" 
                     class="btn-sm btn-action" 
                     title="Abrir Smart Terminal"
                   >
@@ -1164,10 +1183,38 @@ onMounted(async () => {
       </div>
     </div>
 
+    <div v-if="showTerminalSetupModal" class="modal-overlay" style="z-index: 4000">
+      <div class="modal-content" style="max-width: 400px; width: 100%;">
+        <h3>💻 Conexión Smart Terminal</h3>
+        <p class="text-dim" style="margin-bottom: 1.5rem;">
+          Conectando a <strong>{{ terminalSetupDevice?.client_name }}</strong> ({{ terminalSetupDevice?.ip_address }})
+        </p>
+        
+        <div class="form-group">
+          <label>Puerto SSH</label>
+          <input 
+            type="number" 
+            v-model="terminalSetupPort" 
+            placeholder="22" 
+            @keyup.enter="confirmTerminalSetup"
+          />
+          <small class="text-dim" style="margin-top: 5px;">
+            Por defecto es 22. Si la conexión es exitosa, este puerto se guardará automáticamente para la próxima vez.
+          </small>
+        </div>
+
+        <div class="modal-actions">
+          <button @click="showTerminalSetupModal = false" class="btn-secondary">Cancelar</button>
+          <button @click="confirmTerminalSetup" class="btn-primary">Conectar</button>
+        </div>
+      </div>
+    </div>
+
     <SmartTerminalModal
       v-if="showTerminalModal"
       :device="activeTerminalDevice"
       protocol="ssh"
+      :port="activeTerminalPort"
       @close="closeTerminal"
     />
 
