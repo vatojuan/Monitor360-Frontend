@@ -1767,6 +1767,13 @@ function closeSensorDetails() {
   font-size: 0.9rem;
   color: #ddd;
   font-weight: 500;
+  /* --- FIX: Truncado profesional de texto --- */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  margin-right: 1rem;
 }
 
 /* CONTENEDOR DERECHO DEL SENSOR: DATOS + LAPIZ */
@@ -1775,6 +1782,8 @@ function closeSensorDetails() {
   align-items: center;
   gap: 12px;
   text-align: right;
+  /* --- FIX: Proteger el ancho de los botones --- */
+  flex-shrink: 0;
 }
 .sensor-value {
   font-size: 0.9rem;
