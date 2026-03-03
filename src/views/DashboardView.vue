@@ -909,121 +909,89 @@ function closeSensorDetails() {
                     }"
                     @click="goToSensorDetail(sensor.id)"
                   >
-                    <span class="sensor-name">
-                      {{ sensor.name }}
-                      <small v-if="sensor.alerts_paused">⏸️</small>
-                    </span>
+                    <div class="sensor-tier-top">
+                      <span class="sensor-name" :title="sensor.name">
+                        {{ sensor.name }}
+                        <small v-if="sensor.alerts_paused" title="Alertas Pausadas">⏸️</small>
+                      </span>
 
-                    <div class="sensor-status-group">
-                      <div
-                        class="sensor-value"
-                        :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
-                      >
-                        <template v-if="!sensor.is_active">
-                          <span class="text-off">OFF</span>
-                        </template>
-
-                        <template v-else-if="sensor.sensor_type === 'ping'">
-                          <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'"
-                            >Timeout</span
-                          >
-                          <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'error'"
-                            >Error</span
-                          >
-                          <span
-                            v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'"
-                            >...</span
-                          >
-                          <span v-else
-                            >{{
-                              formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms)
-                            }}
-                            ms</span
-                          >
-                        </template>
-
-                        <template v-else-if="sensor.sensor_type === 'ethernet'">
-                          <div class="ethernet-data-flex">
-                            <span class="ethernet-main-status">
-                              {{
-                                (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace(
-                                  '_',
-                                  ' ',
-                                )
-                              }}
-                              <span
-                                class="ethernet-speed"
-                                v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'"
-                              >
-                                ({{ liveSensorStatus[String(sensor.id)]?.speed || '—' }})
-                              </span>
-                            </span>
-                            <span
-                              class="ethernet-traffic-row"
-                              v-if="liveSensorStatus[String(sensor.id)]?.status !== 'pending'"
-                            >
-                              <span class="traf-item"
-                                >↓
-                                {{
-                                  formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate)
-                                }}</span
-                              >
-                              <span class="traf-item"
-                                >↑
-                                {{
-                                  formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate)
-                                }}</span
-                              >
-                            </span>
-                          </div>
-                        </template>
-
-                        <template v-else-if="sensor.sensor_type === 'wireless'">
-                          <div class="wireless-data-flex">
-                            <span class="wireless-main-status">
-                              <span v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Punto de Acceso">📡 AP</span>
-                              <span v-else-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'CPE'" title="Estación / Cliente">📶 CPE</span>
-                              <span v-else>📡</span>
-                              {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
-                            </span>
-                            <span class="wireless-metrics-row" v-if="liveSensorStatus[String(sensor.id)]?.status !== 'pending'">
-                              <span class="metric-item" title="Señal">
-                                📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} dBm
-                              </span>
-                              <span class="metric-item" title="CCQ (TX)">
-                                📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }}%
-                              </span>
-                              <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">
-                                👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}
-                              </span>
-                              <span class="metric-item" title="TX / RX Rate (Mbps)">
-                                🚀 {{ formatRateString(liveSensorStatus[String(sensor.id)]?.tx_rate) }} / {{ formatRateString(liveSensorStatus[String(sensor.id)]?.rx_rate) }} Mbps
-                              </span>
-                            </span>
-                          </div>
-                        </template>
-
-                        <template v-else>{{
-                          liveSensorStatus[String(sensor.id)]?.status || 'pending'
-                        }}</template>
-                      </div>
-
-                      <div class="sensor-row-actions">
-                        <button
-                          class="details-btn"
-                          @click="showSensorDetails(sensor, monitor, $event)"
-                          title="Editar"
+                      <div class="sensor-top-right">
+                        <div
+                          class="sensor-main-status"
+                          :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
                         >
-                          ✎
-                        </button>
-                        <button
-                          class="details-btn delete-btn-sensor"
-                          @click="deleteSensor(sensor, $event)"
-                          title="Eliminar Sensor"
-                        >
-                          ✕
-                        </button>
+                          <template v-if="!sensor.is_active">
+                            <span class="text-off">OFF</span>
+                          </template>
+
+                          <template v-else-if="sensor.sensor_type === 'ping'">
+                            <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'">Timeout</span>
+                            <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'error'">Error</span>
+                            <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'">...</span>
+                            <span v-else>{{ formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms) }} ms</span>
+                          </template>
+
+                          <template v-else-if="sensor.sensor_type === 'ethernet'">
+                            {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace('_', ' ').toUpperCase() }}
+                          </template>
+
+                          <template v-else-if="sensor.sensor_type === 'wireless'">
+                            <span v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Punto de Acceso">📡 AP</span>
+                            <span v-else-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'CPE'" title="Estación / Cliente">📶 CPE</span>
+                            <span v-else>📡</span>
+                            {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
+                          </template>
+
+                          <template v-else>
+                            {{ liveSensorStatus[String(sensor.id)]?.status || 'pending' }}
+                          </template>
+                        </div>
+
+                        <div class="sensor-row-actions">
+                          <button
+                            class="details-btn"
+                            @click="showSensorDetails(sensor, monitor, $event)"
+                            title="Editar"
+                          >
+                            ✎
+                          </button>
+                          <button
+                            class="details-btn delete-btn-sensor"
+                            @click="deleteSensor(sensor, $event)"
+                            title="Eliminar Sensor"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
+                    </div>
+
+                    <div
+                      class="sensor-tier-bottom"
+                      v-if="sensor.is_active && sensor.sensor_type !== 'ping' && !['pending', 'timeout', 'error'].includes(liveSensorStatus[String(sensor.id)]?.status)"
+                    >
+                      <template v-if="sensor.sensor_type === 'ethernet'">
+                        <span class="metric-item speed" v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'">
+                          🔗 {{ liveSensorStatus[String(sensor.id)]?.speed || '—' }}
+                        </span>
+                        <span class="metric-item">↓ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate) }}</span>
+                        <span class="metric-item">↑ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}</span>
+                      </template>
+
+                      <template v-else-if="sensor.sensor_type === 'wireless'">
+                        <span class="metric-item" title="Señal">
+                          📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} dBm
+                        </span>
+                        <span class="metric-item" title="CCQ (TX)">
+                          📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }}%
+                        </span>
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">
+                          👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}
+                        </span>
+                        <span class="metric-item" title="TX / RX Rate (Mbps)">
+                          🚀 {{ formatRateString(liveSensorStatus[String(sensor.id)]?.tx_rate) }} / {{ formatRateString(liveSensorStatus[String(sensor.id)]?.rx_rate) }} Mbps
+                        </span>
+                      </template>
                     </div>
                   </div>
                 </div>
@@ -1736,25 +1704,28 @@ function closeSensorDetails() {
   flex-grow: 1;
 }
 
-/* SENSORES: FLEXBOX PARA ALINEACION */
+/* =========================================
+   SENSORES: DISEÑO "TWO-TIER" (Dos Niveles)
+   ========================================= */
 .sensors-container {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
+
 .sensor-row {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
   background: var(--bg-color);
-  padding: 0.5rem 0.8rem;
-  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
   border-left: 3px solid transparent;
   cursor: pointer;
   transition: background 0.2s;
 }
 .sensor-row:hover {
-  background: var(--primary-color);
+  background: rgba(255, 255, 255, 0.05); /* Suave highlight al pasar el ratón */
 }
 .sensor-row.row-paused {
   border-left-color: #fbbf24;
@@ -1763,32 +1734,39 @@ function closeSensorDetails() {
   opacity: 0.5;
 }
 
+/* NIVEL SUPERIOR: Cabecera del sensor */
+.sensor-tier-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
 .sensor-name {
-  font-size: 0.9rem;
-  color: #ddd;
+  font-size: 0.95rem;
+  color: #eee;
   font-weight: 500;
-  /* --- FIX: Truncado profesional de texto --- */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
   min-width: 0;
-  margin-right: 1rem;
 }
 
-/* CONTENEDOR DERECHO DEL SENSOR: DATOS + LAPIZ */
-.sensor-status-group {
+.sensor-top-right {
   display: flex;
   align-items: center;
   gap: 12px;
-  text-align: right;
-  /* --- FIX: Proteger el ancho de los botones --- */
   flex-shrink: 0;
 }
-.sensor-value {
-  font-size: 0.9rem;
+
+.sensor-main-status {
+  font-size: 0.85rem;
   font-family: monospace;
-  color: #fff;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 .text-off {
   color: #666;
@@ -1796,53 +1774,32 @@ function closeSensorDetails() {
   font-size: 0.8rem;
 }
 
-/* ETHERNET DATA RESTAURADO */
-.ethernet-data-flex {
+/* NIVEL INFERIOR: Caja de Métricas */
+.sensor-tier-bottom {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  line-height: 1.2;
-}
-.ethernet-main-status {
-  font-weight: bold;
-  text-transform: capitalize;
-  font-size: 0.85rem;
-}
-.ethernet-traffic-row {
-  font-size: 0.75rem;
-  color: #aaa;
-  display: flex;
-  gap: 8px;
-}
-.traf-item {
-  white-space: nowrap;
-}
-
-/* NUEVO: WIRELESS DATA STYLES */
-.wireless-data-flex {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  line-height: 1.2;
-}
-.wireless-main-status {
-  font-weight: bold;
-  font-size: 0.85rem;
-  display: flex;
-  gap: 5px;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 10px;
+  border-radius: 4px;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
 }
-.wireless-metrics-row {
+
+.metric-item {
   font-size: 0.75rem;
   color: #aaa;
   display: flex;
-  gap: 10px;
-  margin-top: 3px;
-}
-.metric-item {
+  align-items: center;
+  gap: 5px;
   white-space: nowrap;
 }
+.metric-item.speed {
+  color: #ccc;
+  font-weight: bold;
+}
 
+/* ESTADOS DE COLOR */
 .status-ok {
   color: var(--green);
 }
@@ -1856,11 +1813,11 @@ function closeSensorDetails() {
   color: var(--gray);
 }
 
-/* NUEVOS BOTONES DE ACCIÓN PARA SENSORES */
+/* BOTONES DE ACCIÓN PARA SENSORES */
 .sensor-row-actions {
   display: flex;
   gap: 6px;
-  margin-left: 8px;
+  margin-left: 4px;
 }
 
 .details-btn {
@@ -1885,6 +1842,7 @@ function closeSensorDetails() {
   color: var(--secondary-color); /* Rojo */
 }
 
+/* OTROS ESTILOS */
 .collapsed-summary {
   padding: 0.5rem 1rem;
   background: var(--bg-color);
