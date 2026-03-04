@@ -642,6 +642,7 @@ async function submitRotateCredentials() {
     
     showNotification('Credenciales rotadas exitosamente', 'success')
     showRotateCredentialsModal.value = false
+    monitorToEdit.value = null // <-- CORRECCIÓN: Cierra el modal de herramientas subyacente
     
     // Actualizar datos en memoria para reflejar el cambio en vivo
     await fetchAllMonitors()

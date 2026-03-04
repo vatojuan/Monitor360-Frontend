@@ -252,9 +252,9 @@ async function submitRotateCredentials() {
     
     showNotification('Credenciales rotadas exitosamente', 'success')
     showRotateCredentialsModal.value = false
-    activeDeviceForPassword.value = null
+    activeDeviceForPassword.value = null // <-- CORRECCIÓN: Resetea y cierra el modal
     
-    // --- NUEVO: Refrescar el inventario y las credenciales en vivo ---
+    // --- Refrescar el inventario y las credenciales en vivo ---
     await fetchAllDevices()
     await fetchCredentials()
 
