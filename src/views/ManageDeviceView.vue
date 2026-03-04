@@ -2,7 +2,6 @@
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
-import { supabase } from '@/lib/supabase'
 import SmartTerminalModal from '@/components/SmartTerminalModal.vue'
 
 const router = useRouter()
@@ -18,18 +17,6 @@ const authErrorMessage = ref('')
 function showNotification(message, type = 'success') {
   notification.value = { show: true, message, type }
   setTimeout(() => (notification.value.show = false), 4000)
-}
-
-// ===== Usuario =====
-const userEmail = ref('')
-async function loadUser() {
-  const { data } = await supabase.auth.getUser()
-  userEmail.value = data.user?.email || ''
-}
-async function logout() {
-  await supabase.auth.signOut()
-  showNotification('Sesión cerrada.', 'success')
-  router.push('/login')
 }
 
 // ===== Alta en un paso =====
@@ -59,6 +46,13 @@ const deletingId = ref(null)
 
 // --- Nuevo Estado para Selector de IP Destino (Masivo) ---
 const allDevicesList = ref([])
+
+// ===== ESTADO FILTROS INVENTARIO (NUEVO) =====
+const inventoryFilter = ref({
+  search: '',
+  vendor: '',
+  role: 'all' // 'all', 'maestro', 'managed', 'generic'
+})
 
 // ===== ESTADO ACCIONES MASIVAS =====
 const selectedDevices = ref([])
@@ -311,8 +305,53 @@ onUnmounted(() => {
   document.removeEventListener('click', closeDropdownOnClickOutside)
 })
 
-// ===== COMPUTADAS INTELIGENTES =====
+// ===== COMPUTADAS INTELIGENTES Y FILTROS =====
+
+// Lógica de roles helper (movida arriba para poder usarla en el computed)
+function getDeviceRole(device) {
+  if (device.is_maestro) return { label: 'Maestro', class: 'maestro' }
+  if (device.credential_id) return { label: 'Gestionado', class: 'managed' }
+  return { label: 'Dispositivo', class: 'device' }
+}
+
 const maestros = computed(() => allDevices.value.filter((d) => d.is_maestro))
+
+const uniqueVendors = computed(() => {
+  const vendors = allDevices.value.map(d => d.vendor || 'Generico')
+  return [...new Set(vendors)].sort()
+})
+
+const filteredDevices = computed(() => {
+  return allDevices.value.filter(d => {
+    // 1. Search text (Búsqueda difusa)
+    if (inventoryFilter.value.search) {
+      const q = inventoryFilter.value.search.toLowerCase().trim()
+      const match = (
+        (d.client_name || '').toLowerCase().includes(q) ||
+        (d.ip_address || '').toLowerCase().includes(q) ||
+        (d.mac_address || '').toLowerCase().includes(q) ||
+        (d.identity || '').toLowerCase().includes(q)
+      )
+      if (!match) return false
+    }
+
+    // 2. Vendor
+    if (inventoryFilter.value.vendor) {
+      const dVendor = d.vendor || 'Generico'
+      if (dVendor !== inventoryFilter.value.vendor) return false
+    }
+
+    // 3. Role
+    if (inventoryFilter.value.role !== 'all') {
+      const roleClass = getDeviceRole(d).class // 'maestro', 'managed', 'device' (genérico)
+      if (inventoryFilter.value.role === 'maestro' && roleClass !== 'maestro') return false
+      if (inventoryFilter.value.role === 'managed' && roleClass !== 'managed') return false
+      if (inventoryFilter.value.role === 'generic' && roleClass !== 'device') return false
+    }
+
+    return true
+  })
+})
 
 // Helper para Label del Puerto Dinámico
 const portLabel = computed(() => {
@@ -578,7 +617,7 @@ async function deleteDevice(device) {
   }
 }
 
-// ===== LÓGICA DE SELECCIÓN Y MASIVAS =====
+// ===== LÓGICA DE SELECCIÓN Y MASIVAS (ACTUALIZADO PARA FILTROS) =====
 function toggleSelection(id) {
   if (selectedDevices.value.includes(id)) {
     selectedDevices.value = selectedDevices.value.filter((d) => d !== id)
@@ -588,10 +627,16 @@ function toggleSelection(id) {
 }
 
 function selectAll() {
-  if (selectedDevices.value.length === allDevices.value.length) {
-    selectedDevices.value = []
+  const visibleIds = filteredDevices.value.map(d => d.id)
+  const allVisibleSelected = visibleIds.every(id => selectedDevices.value.includes(id))
+
+  if (allVisibleSelected) {
+    // Si todos los visibles están seleccionados, los deseleccionamos
+    selectedDevices.value = selectedDevices.value.filter(id => !visibleIds.includes(id))
   } else {
-    selectedDevices.value = allDevices.value.map((d) => d.id)
+    // Si no, seleccionamos solo los que están actualmente visibles
+    const newSelections = visibleIds.filter(id => !selectedDevices.value.includes(id))
+    selectedDevices.value.push(...newSelections)
   }
 }
 
@@ -728,16 +773,8 @@ async function submitBulkMonitors() {
   }
 }
 
-// ===== LÓGICA DE ROLES =====
-function getDeviceRole(device) {
-  if (device.is_maestro) return { label: 'Maestro', class: 'maestro' }
-  if (device.credential_id) return { label: 'Gestionado', class: 'managed' }
-  return { label: 'Dispositivo', class: 'device' }
-}
-
 // ===== Lifecycle =====
 onMounted(async () => {
-  await loadUser()
   fetchAllDevices()
   fetchVpnProfiles()
   fetchCredentials()
@@ -749,10 +786,6 @@ onMounted(async () => {
   <div class="page-wrap">
     <header class="topbar">
       <h1>Dispositivos</h1>
-      <div class="auth-box">
-        <span v-if="userEmail" class="user-pill">{{ userEmail }}</span>
-        <button class="btn-secondary" @click="logout">Cerrar sesión</button>
-      </div>
     </header>
 
     <div class="tabs">
@@ -886,6 +919,27 @@ onMounted(async () => {
         </div>
       </div>
 
+      <div class="filter-bar fade-in" v-if="!isLoadingDevices && allDevices.length > 0">
+        <div class="search-group">
+          <span class="icon">🔍</span>
+          <input type="text" v-model="inventoryFilter.search" placeholder="Buscar IP, MAC, Nombre..." class="filter-input" />
+        </div>
+        
+        <div class="filter-controls">
+          <select v-model="inventoryFilter.vendor" class="filter-select">
+            <option value="">Todo Fabricante</option>
+            <option v-for="v in uniqueVendors" :key="v" :value="v">{{ v }}</option>
+          </select>
+
+          <div class="toggle-group">
+            <button :class="{ active: inventoryFilter.role === 'all' }" @click="inventoryFilter.role = 'all'">Todos</button>
+            <button :class="{ active: inventoryFilter.role === 'maestro' }" @click="inventoryFilter.role = 'maestro'">Maestros</button>
+            <button :class="{ active: inventoryFilter.role === 'managed' }" @click="inventoryFilter.role = 'managed'">Gestionados</button>
+            <button :class="{ active: inventoryFilter.role === 'generic' }" @click="inventoryFilter.role = 'generic'">Genéricos</button>
+          </div>
+        </div>
+      </div>
+
       <div v-if="isLoadingDevices" class="loading-text">Cargando inventario...</div>
 
       <div v-else class="table-responsive">
@@ -897,7 +951,7 @@ onMounted(async () => {
                   type="checkbox"
                   @change="selectAll"
                   :checked="
-                    selectedDevices.length > 0 && selectedDevices.length === allDevices.length
+                    selectedDevices.length > 0 && filteredDevices.length > 0 && filteredDevices.every(d => selectedDevices.includes(d.id))
                   "
                 />
               </th>
@@ -910,8 +964,13 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
+            <tr v-if="filteredDevices.length === 0">
+              <td colspan="7" style="text-align: center; padding: 2.5rem; color: #888; font-style: italic; border: 2px dashed var(--primary-color);">
+                🔍 No se encontraron dispositivos con los filtros actuales.
+              </td>
+            </tr>
             <tr
-              v-for="device in allDevices"
+              v-for="device in filteredDevices"
               :key="device.id"
               :class="{ selected: selectedDevices.includes(device.id) }"
             >
@@ -1390,18 +1449,6 @@ onMounted(async () => {
 .topbar h1 {
   color: var(--blue);
 }
-.auth-box {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-.user-pill {
-  padding: 0.25rem 0.5rem;
-  border: 1px solid var(--primary-color);
-  border-radius: 20px;
-  font-size: 0.9rem;
-  color: var(--gray);
-}
 .tabs {
   display: flex;
   gap: 0.5rem;
@@ -1546,6 +1593,83 @@ label {
 .notification.warning {
   background: #f39c12;
   color: white;
+}
+
+/* =========================================
+   ESTILOS BARRA DE FILTROS (NUEVOS)
+   ========================================= */
+.filter-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px 15px;
+  border-radius: 8px 8px 0 0;
+  margin-bottom: 2px;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+.search-group {
+  display: flex;
+  align-items: center;
+  background: var(--bg-color);
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  flex: 1;
+  min-width: 200px;
+  max-width: 400px;
+}
+.search-group .icon { color: #777; margin-right: 5px; }
+.filter-input {
+  background: transparent !important;
+  border: none !important;
+  color: white;
+  padding: 8px 0 !important;
+  margin-top: 0 !important;
+  width: 100%;
+  outline: none;
+}
+.filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+.filter-select {
+  background: var(--bg-color) !important;
+  color: white;
+  border: 1px solid #444 !important;
+  padding: 6px 10px !important;
+  margin-top: 0 !important;
+  border-radius: 6px !important;
+  outline: none;
+  font-size: 0.9rem;
+  min-width: 150px;
+}
+.toggle-group {
+  display: flex;
+  background: var(--bg-color);
+  border-radius: 6px;
+  border: 1px solid #444;
+  overflow: hidden;
+}
+.toggle-group button {
+  background: transparent;
+  border: none;
+  color: #aaa;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+  border-right: 1px solid #444;
+}
+.toggle-group button:last-child { border-right: none; }
+.toggle-group button:hover { color: white; background: rgba(255,255,255,0.05); }
+.toggle-group button.active {
+  background: var(--primary-color);
+  color: white;
+  font-weight: bold;
 }
 
 /* ESTILOS TABLE & BULK */

@@ -88,7 +88,7 @@ const suggestedTargetDevices = computed(() => {
 })
 
 // =============================================================================
-// LÓGICA DE FILTRADO
+// LÓGICA DE FILTRADO (REFINADA)
 // =============================================================================
 
 // Helper para detectar si es infraestructura (Gestionable)
@@ -102,11 +102,11 @@ function isInfra(dev) {
 // Filtro Genérico Reutilizable
 function filterDevicesList(list, filters) {
     return list.filter(d => {
-        // 1. Search Text
+        // 1. Search Text (Refinado con .trim() para evitar errores humanos de espacios)
         if (filters.search) {
-            const q = filters.search.toLowerCase();
+            const q = filters.search.toLowerCase().trim();
             const textMatch = (
-                (d.ip_address || '').includes(q) ||
+                (d.ip_address || '').toLowerCase().includes(q) ||
                 (d.mac_address || '').toLowerCase().includes(q) ||
                 (d.identity || '').toLowerCase().includes(q) ||
                 (d.hostname || '').toLowerCase().includes(q) ||
@@ -264,14 +264,18 @@ function resetConfigForm() {
 // --- ACTIONS INBOX ---
 function toggleSelection(mac) { selectedPending.value.includes(mac) ? selectedPending.value = selectedPending.value.filter(m => m !== mac) : selectedPending.value.push(mac) }
 
+// [CORREGIDO] Selección Inteligente y Segura
 function selectAll() {
   const visibleMacs = filteredPendingDevices.value.map(d => d.mac_address);
   const allVisibleSelected = visibleMacs.every(mac => selectedPending.value.includes(mac));
   
   if (allVisibleSelected) {
-      selectedPending.value = [];
+      // Si todos los visibles están seleccionados, quita SOLO los visibles de la selección
+      selectedPending.value = selectedPending.value.filter(mac => !visibleMacs.includes(mac));
   } else {
-      selectedPending.value = [...visibleMacs];
+      // Selecciona los visibles que falten sin perder los que ya estaban
+      const newSelections = visibleMacs.filter(mac => !selectedPending.value.includes(mac));
+      selectedPending.value.push(...newSelections);
   }
 }
 
@@ -332,10 +336,17 @@ async function deletePending(mac) {
 // --- ACTIONS IGNORED ---
 function toggleIgnoredSelection(mac) { selectedIgnored.value.includes(mac) ? selectedIgnored.value = selectedIgnored.value.filter(m => m !== mac) : selectedIgnored.value.push(mac) }
 
+// [CORREGIDO] Selección Inteligente y Segura
 function selectAllIgnored() {
     const visibleMacs = filteredIgnoredDevices.value.map(d => d.mac_address);
     const allVisibleSelected = visibleMacs.every(mac => selectedIgnored.value.includes(mac));
-    if (allVisibleSelected) { selectedIgnored.value = [] } else { selectedIgnored.value = [...visibleMacs] }
+    
+    if (allVisibleSelected) {
+        selectedIgnored.value = selectedIgnored.value.filter(mac => !visibleMacs.includes(mac));
+    } else {
+        const newSelections = visibleMacs.filter(mac => !selectedIgnored.value.includes(mac));
+        selectedIgnored.value.push(...newSelections);
+    }
 }
 
 async function restoreSelected() {
@@ -464,7 +475,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
           <tbody>
             <tr v-if="filteredPendingDevices.length === 0">
               <td colspan="9" class="empty-row">
-                  {{ pendingDevices.length === 0 ? '📭 Bandeja vacía.' : '🔍 No hay coincidencias con los filtros.' }}
+                  {{ pendingDevices.length === 0 ? '📭 Bandeja vacía.' : '🔍 No se encontraron dispositivos con los filtros actuales.' }}
               </td>
             </tr>
             <tr v-for="dev in filteredPendingDevices" :key="dev.mac_address" :class="{ selected: selectedPending.includes(dev.mac_address) }">
@@ -547,7 +558,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 <tbody>
                     <tr v-if="filteredIgnoredDevices.length === 0">
                         <td colspan="8" class="empty-row">
-                            {{ ignoredDevices.length === 0 ? '✅ No hay dispositivos ignorados.' : '🔍 No hay coincidencias.' }}
+                            {{ ignoredDevices.length === 0 ? '✅ No hay dispositivos ignorados.' : '🔍 No se encontraron dispositivos con los filtros actuales.' }}
                         </td>
                     </tr>
                     <tr v-for="dev in filteredIgnoredDevices" :key="dev.mac_address" class="ignored-row" :class="{ selected: selectedIgnored.includes(dev.mac_address) }">
@@ -707,7 +718,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .badge { background: var(--error-red); color: white; font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; position: absolute; top: 5px; right: 5px; }
 .badge-gray { background: #555; color: #ccc; font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; position: absolute; top: 5px; right: 5px; }
 
-/* NUEVOS ESTILOS PARA LA BARRA DE FILTROS */
+/* ESTILOS PARA LA BARRA DE FILTROS (SINCRONIZADOS CON INVENTARIO) */
 .filter-bar {
     display: flex;
     justify-content: space-between;
@@ -735,10 +746,11 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 }
 .search-group .icon { color: #777; margin-right: 5px; }
 .filter-input {
-    background: transparent;
-    border: none;
+    background: transparent !important;
+    border: none !important;
     color: white;
-    padding: 8px 0;
+    padding: 8px 0 !important;
+    margin-top: 0 !important;
     width: 100%;
     outline: none;
 }
@@ -749,11 +761,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     flex-wrap: wrap;
 }
 .filter-select {
-    background: var(--bg-color);
+    background: var(--bg-color) !important;
     color: white;
-    border: 1px solid #444;
-    padding: 6px 10px;
-    border-radius: 6px;
+    border: 1px solid #444 !important;
+    padding: 6px 10px !important;
+    margin-top: 0 !important;
+    border-radius: 6px !important;
     outline: none;
     font-size: 0.9rem;
     min-width: 150px;
