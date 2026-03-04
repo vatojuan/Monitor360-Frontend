@@ -325,8 +325,16 @@ function formatRateString(rate) {
   if (!rate || rate === 'N/A') return 'N/A'
   return String(rate).replace(/mbps/ig, '').trim()
 }
+function formatUptimeShort(seconds) {
+  if (seconds == null) return ''
+  const d = Math.floor(seconds / 86400)
+  if (d > 0) return `${d}d`
+  const h = Math.floor((seconds % 86400) / 3600)
+  if (h > 0) return `${h}h`
+  const m = Math.floor((seconds % 3600) / 60)
+  return `${m}m`
+}
 function getStatusClass(status) {
-  // ACTUALIZADO: Integración de los nuevos estados
   if (['timeout', 'error', 'link_down', 'critical'].includes(status)) return 'status-timeout'
   if (['high_latency', 'degraded', 'searching'].includes(status)) return 'status-high-latency'
   if (['ok', 'link_up', 'connected', 'optimal'].includes(status)) return 'status-ok'
@@ -1071,17 +1079,20 @@ function closeSensorDetails() {
                       </template>
 
                       <template v-else-if="sensor.sensor_type === 'system'">
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.cpu_percent !== null" title="Uso de CPU">
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.cpu_percent != null" title="Uso de CPU">
                           ⚙️ {{ Number(liveSensorStatus[String(sensor.id)]?.cpu_percent || 0).toFixed(1) }}%
                         </span>
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.memory_percent !== null" title="Uso de RAM">
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.memory_percent != null" title="Uso de RAM">
                           🧠 {{ Number(liveSensorStatus[String(sensor.id)]?.memory_percent || 0).toFixed(1) }}%
                         </span>
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.temperature !== null" title="Temperatura">
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.temperature != null" title="Temperatura">
                           🌡️ {{ liveSensorStatus[String(sensor.id)]?.temperature }}°C
                         </span>
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.voltage !== null" title="Voltaje">
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.voltage != null" title="Voltaje">
                           ⚡ {{ Number(liveSensorStatus[String(sensor.id)]?.voltage || 0).toFixed(1) }}V
+                        </span>
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.uptime_seconds != null" title="Tiempo de Actividad">
+                          ⏱️ {{ formatUptimeShort(liveSensorStatus[String(sensor.id)]?.uptime_seconds) }}
                         </span>
                       </template>
                     </div>
