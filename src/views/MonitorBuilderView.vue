@@ -90,7 +90,7 @@ const suggestedTargetDevices = computed(() => {
 })
 
 //
-// --- Plantillas de Formularios (ACTUALIZADO: notify_recovery y Wireless con TX/RX Rate) ---
+// --- Plantillas de Formularios (ACTUALIZADO: notify_recovery, Wireless y System) ---
 const createNewPingSensor = () => ({
   name: '',
   config: {
@@ -142,7 +142,7 @@ const createNewEthernetSensor = () => ({
   },
 })
 
-// NUEVO: Plantilla para el Sensor Wireless con el Motor Anti-Spam y Modulación
+// Plantilla para el Sensor Wireless con el Motor Anti-Spam y Modulación
 const createNewWirelessSensor = () => ({
   name: '',
   config: {
@@ -151,10 +151,32 @@ const createNewWirelessSensor = () => ({
       min_signal_dbm: -80,
       min_ccq_percent: 75,
       min_client_count: 0,
-      min_tx_rate_mbps: 0, // Nuevo: Umbral TX
-      min_rx_rate_mbps: 0, // Nuevo: Umbral RX
+      min_tx_rate_mbps: 0,
+      min_rx_rate_mbps: 0,
     },
     tolerance_checks: 3, // Tolerancia Anti-Spam gestionada por Redis
+  },
+  ui_alert_status: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    notify_recovery: true,
+  },
+})
+
+// NUEVO: Plantilla para el Sensor System (CPU, RAM, Temperatura, Uptime)
+const createNewSystemSensor = () => ({
+  name: '',
+  config: {
+    thresholds: {
+      max_cpu_percent: 85,
+      max_memory_percent: 90,
+      max_temperature: 75,
+      min_voltage: null, // Null permite que sea ignorado si el input está vacío
+      max_voltage: null,
+      restart_uptime_seconds: 300, // 5 min
+    },
+    tolerance_checks: 3,
   },
   ui_alert_status: {
     enabled: false,
@@ -167,6 +189,7 @@ const createNewWirelessSensor = () => ({
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
 const newWirelessSensor = ref(createNewWirelessSensor())
+const newSystemSensor = ref(createNewSystemSensor())
 
 //
 // --- Ciclo de Vida ---
@@ -231,7 +254,7 @@ function safeJsonParse(v, fallback = null) {
 }
 
 //
-// --- Lógica Sensores (ACTUALIZADO: Wireless y Payload con TX/RX Rate) ---
+// --- Lógica Sensores ---
 function buildSensorPayload(sensorType, sensorData) {
   const finalConfig = { ...sensorData.config }
   finalConfig.alerts = []
@@ -291,7 +314,6 @@ function buildSensorPayload(sensorType, sensorData) {
       })
     }
   } else if (sensorType === 'wireless') {
-    // Normalizar umbrales incluyendo TX y RX
     finalConfig.thresholds = {
       min_signal_dbm: onlyNums(sensorData.config.thresholds.min_signal_dbm, -80),
       min_ccq_percent: onlyNums(sensorData.config.thresholds.min_ccq_percent, 75),
@@ -311,6 +333,28 @@ function buildSensorPayload(sensorType, sensorData) {
         notify_recovery: !!a.notify_recovery,
       })
     }
+  } else if (sensorType === 'system') {
+    // Normalización de Sensor System
+    finalConfig.thresholds = {
+      max_cpu_percent: onlyNums(sensorData.config.thresholds.max_cpu_percent, null),
+      max_memory_percent: onlyNums(sensorData.config.thresholds.max_memory_percent, null),
+      max_temperature: onlyNums(sensorData.config.thresholds.max_temperature, null),
+      min_voltage: onlyNums(sensorData.config.thresholds.min_voltage, null),
+      max_voltage: onlyNums(sensorData.config.thresholds.max_voltage, null),
+      restart_uptime_seconds: onlyNums(sensorData.config.thresholds.restart_uptime_seconds, 300),
+    }
+    finalConfig.tolerance_checks = Math.max(1, onlyNums(sensorData.config.tolerance_checks, 3))
+
+    if (sensorData.ui_alert_status?.enabled) {
+      const a = sensorData.ui_alert_status
+      if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Sistema.')
+      finalConfig.alerts.push({
+        type: 'system_status',
+        channel_id: a.channel_id,
+        cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
+        notify_recovery: !!a.notify_recovery,
+      })
+    }
   }
   return { name: sensorData.name, config: finalConfig }
 }
@@ -322,7 +366,9 @@ async function handleSaveSensor() {
     ? newPingSensor.value 
     : formToShow.value === 'ethernet' 
       ? newEthernetSensor.value 
-      : newWirelessSensor.value
+      : formToShow.value === 'wireless'
+        ? newWirelessSensor.value
+        : newSystemSensor.value
 
   try {
     const payload = buildSensorPayload(formToShow.value, sensorData)
@@ -367,6 +413,7 @@ function openFormForCreate(type) {
   newPingSensor.value = createNewPingSensor()
   newEthernetSensor.value = createNewEthernetSensor()
   newWirelessSensor.value = createNewWirelessSensor()
+  newSystemSensor.value = createNewSystemSensor()
   
   if (type === 'ping' && !hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
@@ -464,6 +511,32 @@ function openFormForEdit(sensor) {
       }
     }
     newWirelessSensor.value = uiData
+
+  } else if (sensor.sensor_type === 'system') {
+    const uiData = createNewSystemSensor()
+    uiData.name = sensor.name
+    uiData.config = {
+      tolerance_checks: cfg.tolerance_checks ?? 3,
+      thresholds: {
+        max_cpu_percent: cfg.thresholds?.max_cpu_percent ?? null,
+        max_memory_percent: cfg.thresholds?.max_memory_percent ?? null,
+        max_temperature: cfg.thresholds?.max_temperature ?? null,
+        min_voltage: cfg.thresholds?.min_voltage ?? null,
+        max_voltage: cfg.thresholds?.max_voltage ?? null,
+        restart_uptime_seconds: cfg.thresholds?.restart_uptime_seconds ?? 300,
+      }
+    }
+
+    const tSys = mapAlert(alerts, 'system_status')
+    if (tSys.type) {
+      uiData.ui_alert_status = {
+        enabled: true,
+        ...tSys,
+        channel_id: tSys.channel_id ?? null,
+        notify_recovery: tSys.notify_recovery ?? true,
+      }
+    }
+    newSystemSensor.value = uiData
   }
   
   formToShow.value = sensor.sensor_type
@@ -668,6 +741,7 @@ watch(searchQuery, (newQuery) => {
               <button @click="openFormForCreate('ping')">Añadir Ping</button>
               <button @click="openFormForCreate('ethernet')">Añadir Ethernet</button>
               <button @click="openFormForCreate('wireless')">Añadir Wireless 📡</button>
+              <button @click="openFormForCreate('system')">Añadir Sistema 💻</button>
             </div>
           </div>
         </div>
@@ -1060,6 +1134,104 @@ watch(searchQuery, (newQuery) => {
           </div>
         </form>
 
+        <form
+          v-if="formToShow === 'system'"
+          @submit.prevent="handleSaveSensor"
+          class="config-form"
+        >
+          <div class="form-group span-3">
+            <label>Nombre del Sensor</label>
+            <input type="text" v-model="newSystemSensor.name" required placeholder="Ej: Recursos y Salud" />
+          </div>
+
+          <div class="sub-section span-3">
+            <h4>Umbrales de Alerta</h4>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
+              <div class="form-group">
+                <label>CPU Máximo (%)</label>
+                <input type="number" v-model.number="newSystemSensor.config.thresholds.max_cpu_percent" placeholder="85" min="1" max="100" />
+                <span class="form-hint">Dejar vacío para ignorar</span>
+              </div>
+              <div class="form-group">
+                <label>Memoria Máxima (%)</label>
+                <input type="number" v-model.number="newSystemSensor.config.thresholds.max_memory_percent" placeholder="90" min="1" max="100" />
+                <span class="form-hint">Dejar vacío para ignorar</span>
+              </div>
+              <div class="form-group">
+                <label>Temperatura Máx (°C)</label>
+                <input type="number" v-model.number="newSystemSensor.config.thresholds.max_temperature" placeholder="75" />
+                <span class="form-hint">Solo si el equipo tiene sensor</span>
+              </div>
+              
+              <div class="form-group">
+                <label>Voltaje Mínimo (V)</label>
+                <input type="number" step="0.1" v-model.number="newSystemSensor.config.thresholds.min_voltage" placeholder="23.5" />
+                <span class="form-hint">Detecta caída de baterías</span>
+              </div>
+              <div class="form-group">
+                <label>Voltaje Máximo (V)</label>
+                <input type="number" step="0.1" v-model.number="newSystemSensor.config.thresholds.max_voltage" placeholder="28.0" />
+                <span class="form-hint">Detecta sobrecarga</span>
+              </div>
+              <div class="form-group">
+                <label>Uptime Reinicio (s)</label>
+                <input type="number" v-model.number="newSystemSensor.config.thresholds.restart_uptime_seconds" placeholder="300" min="0" />
+                <span class="form-hint">Alerta si se reinició hace poco</span>
+              </div>
+            </div>
+            
+            <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem; margin-top: 0.5rem;">
+              <label>Tolerancia Anti-Spam (Redis)</label>
+              <input type="number" v-model.number="newSystemSensor.config.tolerance_checks" placeholder="3" min="1" />
+              <span class="form-hint">Chequeos consecutivos superando umbrales antes de alertar (evita picos cortos de CPU).</span>
+            </div>
+          </div>
+
+          <div class="sub-section span-3">
+            <h4>Notificaciones de Sistema</h4>
+
+            <div class="alert-config-item span-3">
+              <div class="form-group checkbox-group">
+                <input
+                  type="checkbox"
+                  v-model="newSystemSensor.ui_alert_status.enabled"
+                  id="sysStat"
+                />
+                <label for="sysStat">Alertar por Exceso de Recursos / Reinicios</label>
+              </div>
+              <template v-if="newSystemSensor.ui_alert_status.enabled">
+                <div class="form-group">
+                  <label>Canal de Alerta</label>
+                  <select v-model="newSystemSensor.ui_alert_status.channel_id">
+                    <option :value="null">-- Seleccionar --</option>
+                    <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Enfriamiento (min)</label>
+                  <input
+                    type="number"
+                    v-model.number="newSystemSensor.ui_alert_status.cooldown_minutes"
+                  />
+                </div>
+                <div class="form-group checkbox-group" style="grid-column: span 1;">
+                  <input
+                    type="checkbox"
+                    v-model="newSystemSensor.ui_alert_status.notify_recovery"
+                    id="sysRec"
+                  />
+                  <label for="sysRec">Notificar Reanudación 🟢</label>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="modal-actions span-3">
+            <button type="button" @click="closeForm" class="btn-secondary">Cancelar</button>
+            <button type="submit" class="btn-add">Guardar</button>
+          </div>
+        </form>
+
       </div>
     </div>
   </div>
@@ -1266,6 +1438,10 @@ h4 {
   background-color: #8b5cf6;
   color: white;
 }
+.sensor-type-badge.system {
+  background-color: #f59e0b; /* Color Ambar distintivo */
+  color: var(--bg-color);
+}
 
 .sensor-actions {
   display: flex;
@@ -1337,6 +1513,7 @@ h4 {
   font-size: 0.8rem;
   color: var(--gray);
   margin-top: 0.25rem;
+  display: block;
 }
 .alert-enabled-badge {
   font-size: 0.9rem;

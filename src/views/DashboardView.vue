@@ -138,7 +138,7 @@ const createNewEthernetSensor = () => ({
   },
 })
 
-// NUEVO: Plantilla para Edición de Sensor Wireless
+// Plantilla para Edición de Sensor Wireless
 const createNewWirelessSensor = () => ({
   name: '',
   is_active: true,
@@ -149,8 +149,32 @@ const createNewWirelessSensor = () => ({
       min_signal_dbm: -80,
       min_ccq_percent: 75,
       min_client_count: 0,
-      min_tx_rate_mbps: 0, // Nuevo
-      min_rx_rate_mbps: 0, // Nuevo
+      min_tx_rate_mbps: 0,
+      min_rx_rate_mbps: 0,
+    },
+    tolerance_checks: 3,
+  },
+  ui_alert_status: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    notify_recovery: true,
+  },
+})
+
+// NUEVO: Plantilla para Edición de Sensor System
+const createNewSystemSensor = () => ({
+  name: '',
+  is_active: true,
+  alerts_paused: false,
+  config: {
+    thresholds: {
+      max_cpu_percent: 85,
+      max_memory_percent: 90,
+      max_temperature: 75,
+      min_voltage: null,
+      max_voltage: null,
+      restart_uptime_seconds: 300,
     },
     tolerance_checks: 3,
   },
@@ -165,6 +189,7 @@ const createNewWirelessSensor = () => ({
 const newPingSensor = ref(createNewPingSensor())
 const newEthernetSensor = ref(createNewEthernetSensor())
 const newWirelessSensor = ref(createNewWirelessSensor())
+const newSystemSensor = ref(createNewSystemSensor())
 
 // --- API FETCHERS ---
 async function fetchGroups() {
@@ -301,7 +326,7 @@ function formatRateString(rate) {
   return String(rate).replace(/mbps/ig, '').trim()
 }
 function getStatusClass(status) {
-  // ACTUALIZADO: Integración de los nuevos estados Wireless
+  // ACTUALIZADO: Integración de los nuevos estados
   if (['timeout', 'error', 'link_down', 'critical'].includes(status)) return 'status-timeout'
   if (['high_latency', 'degraded', 'searching'].includes(status)) return 'status-high-latency'
   if (['ok', 'link_up', 'connected', 'optimal'].includes(status)) return 'status-ok'
@@ -458,7 +483,7 @@ function getOverallCardStatus(monitor) {
   if (!monitor.sensors || !monitor.sensors.length) return false
   return monitor.sensors.some((s) => {
     const st = liveSensorStatus.value[String(s.id)]?.status
-    // ACTUALIZADO: Considerar degraded y critical para iluminar la tarjeta
+    // Considerar degraded y critical para iluminar la tarjeta
     return ['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(st)
   })
 }
@@ -483,7 +508,6 @@ function goToSensorDetail(id) {
   router.push(`/sensor/${id}`)
 }
 
-// --- NUEVO: ELIMINAR SENSOR INDIVIDUAL ---
 async function deleteSensor(sensor, e) {
   e?.stopPropagation()
   if (!confirm(`¿Eliminar sensor "${sensor.name}"?`)) return
@@ -662,6 +686,33 @@ async function showSensorDetails(s, m, e) {
       }
     })
     newWirelessSensor.value = d
+  } else if (s.sensor_type === 'system') {
+    const d = createNewSystemSensor()
+    d.name = s.name
+    d.is_active = s.is_active !== false
+    d.alerts_paused = s.alerts_paused === true
+    d.config = {
+      tolerance_checks: cfg.tolerance_checks ?? 3,
+      thresholds: {
+        max_cpu_percent: cfg.thresholds?.max_cpu_percent ?? null,
+        max_memory_percent: cfg.thresholds?.max_memory_percent ?? null,
+        max_temperature: cfg.thresholds?.max_temperature ?? null,
+        min_voltage: cfg.thresholds?.min_voltage ?? null,
+        max_voltage: cfg.thresholds?.max_voltage ?? null,
+        restart_uptime_seconds: cfg.thresholds?.restart_uptime_seconds ?? 300,
+      }
+    }
+    ;(cfg.alerts || []).forEach((a) => {
+      if (a.type === 'system_status') {
+        d.ui_alert_status = {
+          enabled: true,
+          channel_id: a.channel_id,
+          cooldown_minutes: a.cooldown_minutes ?? 10,
+          notify_recovery: a.notify_recovery ?? true,
+        }
+      }
+    })
+    newSystemSensor.value = d
   }
 }
 
@@ -673,7 +724,9 @@ async function handleUpdateSensor() {
     ? newPingSensor.value 
     : type === 'ethernet' 
       ? newEthernetSensor.value 
-      : newWirelessSensor.value
+      : type === 'wireless' 
+        ? newWirelessSensor.value 
+        : newSystemSensor.value
 
   const config = { ...uiData.config }
   config.alerts = []
@@ -735,6 +788,26 @@ async function handleUpdateSensor() {
     if (w.enabled && w.channel_id) {
       config.alerts.push({
         type: 'wireless_status',
+        channel_id: w.channel_id,
+        cooldown_minutes: num(w.cooldown_minutes, 10),
+        notify_recovery: !!w.notify_recovery
+      })
+    }
+  } else if (type === 'system') {
+    config.thresholds = {
+      max_cpu_percent: num(uiData.config.thresholds.max_cpu_percent, null),
+      max_memory_percent: num(uiData.config.thresholds.max_memory_percent, null),
+      max_temperature: num(uiData.config.thresholds.max_temperature, null),
+      min_voltage: num(uiData.config.thresholds.min_voltage, null),
+      max_voltage: num(uiData.config.thresholds.max_voltage, null),
+      restart_uptime_seconds: num(uiData.config.thresholds.restart_uptime_seconds, 300),
+    }
+    config.tolerance_checks = Math.max(1, num(uiData.config.tolerance_checks, 3))
+
+    const w = uiData.ui_alert_status
+    if (w.enabled && w.channel_id) {
+      config.alerts.push({
+        type: 'system_status',
         channel_id: w.channel_id,
         cooldown_minutes: num(w.cooldown_minutes, 10),
         notify_recovery: !!w.notify_recovery
@@ -942,6 +1015,10 @@ function closeSensorDetails() {
                             {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
                           </template>
 
+                          <template v-else-if="sensor.sensor_type === 'system'">
+                            💻 {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
+                          </template>
+
                           <template v-else>
                             {{ liveSensorStatus[String(sensor.id)]?.status || 'pending' }}
                           </template>
@@ -990,6 +1067,21 @@ function closeSensorDetails() {
                         </span>
                         <span class="metric-item" title="TX / RX Rate (Mbps)">
                           🚀 {{ formatRateString(liveSensorStatus[String(sensor.id)]?.tx_rate) }} / {{ formatRateString(liveSensorStatus[String(sensor.id)]?.rx_rate) }} Mbps
+                        </span>
+                      </template>
+
+                      <template v-else-if="sensor.sensor_type === 'system'">
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.cpu_percent !== null" title="Uso de CPU">
+                          ⚙️ {{ Number(liveSensorStatus[String(sensor.id)]?.cpu_percent || 0).toFixed(1) }}%
+                        </span>
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.memory_percent !== null" title="Uso de RAM">
+                          🧠 {{ Number(liveSensorStatus[String(sensor.id)]?.memory_percent || 0).toFixed(1) }}%
+                        </span>
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.temperature !== null" title="Temperatura">
+                          🌡️ {{ liveSensorStatus[String(sensor.id)]?.temperature }}°C
+                        </span>
+                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.voltage !== null" title="Voltaje">
+                          ⚡ {{ Number(liveSensorStatus[String(sensor.id)]?.voltage || 0).toFixed(1) }}V
                         </span>
                       </template>
                     </div>
@@ -1080,7 +1172,7 @@ function closeSensorDetails() {
               <div class="form-group checkbox-group">
                 <input
                   type="checkbox"
-                  v-model="(sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : sensorDetailsToShow.sensor_type === 'ethernet' ? newEthernetSensor : newWirelessSensor).is_active"
+                  v-model="(sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : sensorDetailsToShow.sensor_type === 'ethernet' ? newEthernetSensor : sensorDetailsToShow.sensor_type === 'wireless' ? newWirelessSensor : newSystemSensor).is_active"
                   id="gAct"
                 />
                 <label for="gAct">Encendido</label>
@@ -1088,7 +1180,7 @@ function closeSensorDetails() {
               <div class="form-group checkbox-group">
                 <input
                   type="checkbox"
-                  v-model="(sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : sensorDetailsToShow.sensor_type === 'ethernet' ? newEthernetSensor : newWirelessSensor).alerts_paused"
+                  v-model="(sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : sensorDetailsToShow.sensor_type === 'ethernet' ? newEthernetSensor : sensorDetailsToShow.sensor_type === 'wireless' ? newWirelessSensor : newSystemSensor).alerts_paused"
                   id="gPau"
                 />
                 <label for="gPau">Pausar Alertas</label>
@@ -1407,6 +1499,75 @@ function closeSensorDetails() {
                     </div>
                     <div class="form-group checkbox-group" style="grid-column: span 2;">
                       <input type="checkbox" v-model="newWirelessSensor.ui_alert_status.notify_recovery" />
+                      <label>Notificar Reanudación 🟢</label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template v-if="sensorDetailsToShow.sensor_type === 'system'">
+            <div class="form-group span-3">
+              <label>Nombre del Sensor</label>
+              <input type="text" v-model="newSystemSensor.name" required />
+            </div>
+
+            <div class="sub-section span-3">
+              <h4>Umbrales de Sistema</h4>
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
+                <div class="form-group">
+                  <label>CPU Máximo (%)</label>
+                  <input type="number" v-model.number="newSystemSensor.config.thresholds.max_cpu_percent" placeholder="85" />
+                </div>
+                <div class="form-group">
+                  <label>RAM Máxima (%)</label>
+                  <input type="number" v-model.number="newSystemSensor.config.thresholds.max_memory_percent" placeholder="90" />
+                </div>
+                <div class="form-group">
+                  <label>Temp. Máxima (°C)</label>
+                  <input type="number" v-model.number="newSystemSensor.config.thresholds.max_temperature" placeholder="75" />
+                </div>
+                <div class="form-group">
+                  <label>Voltaje Mín (V)</label>
+                  <input type="number" step="0.1" v-model.number="newSystemSensor.config.thresholds.min_voltage" placeholder="23.5" />
+                </div>
+                <div class="form-group">
+                  <label>Voltaje Máx (V)</label>
+                  <input type="number" step="0.1" v-model.number="newSystemSensor.config.thresholds.max_voltage" placeholder="28.0" />
+                </div>
+                <div class="form-group">
+                  <label>Uptime Reinicio (s)</label>
+                  <input type="number" v-model.number="newSystemSensor.config.thresholds.restart_uptime_seconds" placeholder="300" />
+                </div>
+              </div>
+              <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem; margin-top: 0.5rem;">
+                <label>Tolerancia Anti-Spam (Redis)</label>
+                <input type="number" v-model.number="newSystemSensor.config.tolerance_checks" />
+              </div>
+            </div>
+
+            <div class="sub-section span-3">
+              <h4>Notificaciones de Sistema</h4>
+              <div class="alert-config-item">
+                <div class="form-group checkbox-group">
+                  <input type="checkbox" v-model="newSystemSensor.ui_alert_status.enabled" id="sysStatEdit" />
+                  <label for="sysStatEdit">Alertar por Exceso de Recursos</label>
+                </div>
+                <div v-if="newSystemSensor.ui_alert_status.enabled">
+                  <div class="config-grid">
+                    <div class="form-group">
+                      <label>Canal</label>
+                      <select v-model="newSystemSensor.ui_alert_status.channel_id">
+                        <option v-for="c in channelsList" :key="c.id" :value="c.id">{{ c.name }}</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Enfriamiento (min)</label>
+                      <input type="number" v-model.number="newSystemSensor.ui_alert_status.cooldown_minutes" />
+                    </div>
+                    <div class="form-group checkbox-group" style="grid-column: span 2;">
+                      <input type="checkbox" v-model="newSystemSensor.ui_alert_status.notify_recovery" />
                       <label>Notificar Reanudación 🟢</label>
                     </div>
                   </div>

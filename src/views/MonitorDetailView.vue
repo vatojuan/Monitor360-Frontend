@@ -44,7 +44,7 @@ const isFetching = ref(false)
 let historyAbort = null
 let fetchToken = 0
 
-/* ====== ESTADO BITÁCORA (NUEVO) ====== */
+/* ====== ESTADO BITÁCORA ====== */
 const showCommentsModal = ref(false)
 const comments = ref([])
 const newComment = ref('')
@@ -182,6 +182,38 @@ const stats = computed(() => {
       const stColor = ['CONNECTED', 'OPTIMAL', 'LINK_UP'].includes(st) ? '#4caf50' : '#e94560'
       kpis.push({ label: 'Estado', value: st, color: stColor })
     }
+    return kpis
+  } else if (sensorInfo.value?.sensor_type === 'system') {
+    const last = data[data.length - 1]
+    const cpu = last.cpu_percent !== null && last.cpu_percent !== undefined ? Number(last.cpu_percent).toFixed(1) : null
+    const mem = last.memory_percent !== null && last.memory_percent !== undefined ? Number(last.memory_percent).toFixed(1) : null
+    const temp = last.temperature !== null && last.temperature !== undefined ? Number(last.temperature).toFixed(1) : null
+    const volt = last.voltage !== null && last.voltage !== undefined ? Number(last.voltage).toFixed(2) : null
+    const uptime = last.uptime_seconds
+
+    const kpis = []
+    
+    if (cpu !== null) kpis.push({ label: 'CPU', value: `${cpu}%`, color: cpu > 85 ? '#e94560' : '#36a2eb' })
+    if (mem !== null) kpis.push({ label: 'RAM', value: `${mem}%`, color: mem > 90 ? '#e94560' : '#4bc0c0' })
+    if (temp !== null) kpis.push({ label: 'Temperatura', value: `${temp}°C`, color: temp > 75 ? '#facc15' : '#ff9800' })
+    if (volt !== null) kpis.push({ label: 'Voltaje', value: `${volt}V`, color: '#9c27b0' })
+
+    if (uptime !== null && uptime !== undefined) {
+      const d = Math.floor(uptime / 86400)
+      const h = Math.floor((uptime % 86400) / 3600)
+      const m = Math.floor((uptime % 3600) / 60)
+      let upStr = ''
+      if (d > 0) upStr += `${d}d `
+      if (h > 0 || d > 0) upStr += `${h}h `
+      upStr += `${m}m`
+      kpis.push({ label: 'Uptime', value: upStr || '< 1m', color: '#4caf50' })
+    }
+    
+    // Si no hay datos legibles o dio error
+    if (kpis.length === 0) {
+        kpis.push({ label: 'Estado', value: (last.status || 'unknown').toUpperCase(), color: '#e94560' })
+    }
+
     return kpis
   }
   return []
@@ -471,6 +503,124 @@ const chartOption = computed(() => {
       legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
       // Ajuste de grid para dejar espacio a los ejes Y derechos
       grid: { left: '2%', right: isAP ? '18%' : '10%', bottom: '15%', top: '15%', containLabel: true },
+      yAxis: yAxes,
+      series: series
+    }
+  }
+
+  // --- Lógica SYSTEM ---
+  if (type === 'system') {
+    const cpuData = data.map((d) => d.cpu_percent !== null && d.cpu_percent !== undefined ? Number(d.cpu_percent).toFixed(1) : null)
+    const memData = data.map((d) => d.memory_percent !== null && d.memory_percent !== undefined ? Number(d.memory_percent).toFixed(1) : null)
+    const tempData = data.map((d) => d.temperature !== null && d.temperature !== undefined ? Number(d.temperature).toFixed(1) : null)
+    const voltData = data.map((d) => d.voltage !== null && d.voltage !== undefined ? Number(d.voltage).toFixed(2) : null)
+
+    const hasTemp = tempData.some((v) => v !== null)
+    const hasVolt = voltData.some((v) => v !== null)
+
+    const series = [
+      {
+        name: 'CPU (%)',
+        type: 'line',
+        data: cpuData,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 0,
+        itemStyle: { color: '#36a2eb' },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: 'rgba(54, 162, 235, 0.3)' }, { offset: 1, color: 'rgba(54, 162, 235, 0)' }]
+          }
+        },
+      },
+      {
+        name: 'RAM (%)',
+        type: 'line',
+        data: memData,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 0,
+        itemStyle: { color: '#4bc0c0' },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: 'rgba(75, 192, 192, 0.3)' }, { offset: 1, color: 'rgba(75, 192, 192, 0)' }]
+          }
+        },
+      }
+    ]
+
+    const legendData = ['CPU (%)', 'RAM (%)']
+    
+    const yAxes = [
+      {
+        type: 'value',
+        name: '% (CPU/RAM)',
+        position: 'left',
+        min: 0,
+        max: 100,
+        splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
+        axisLabel: { color: '#888' }
+      }
+    ]
+
+    let rightOffset = 0
+
+    if (hasTemp) {
+      series.push({
+        name: 'Temp (°C)',
+        type: 'line',
+        data: tempData,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: yAxes.length,
+        itemStyle: { color: '#ff9800' }
+      })
+      legendData.push('Temp (°C)')
+      yAxes.push({
+        type: 'value',
+        name: '°C',
+        position: 'right',
+        offset: rightOffset,
+        splitLine: { show: false },
+        axisLabel: { color: '#888' }
+      })
+      rightOffset += 50
+    }
+
+    if (hasVolt) {
+      series.push({
+        name: 'Voltaje (V)',
+        type: 'line',
+        data: voltData,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: yAxes.length,
+        itemStyle: { color: '#9c27b0' }
+      })
+      legendData.push('Voltaje (V)')
+      yAxes.push({
+        type: 'value',
+        name: 'V',
+        position: 'right',
+        offset: rightOffset,
+        splitLine: { show: false },
+        axisLabel: { color: '#888' }
+      })
+      rightOffset += 50
+    }
+
+    return {
+      ...baseOption,
+      legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
+      grid: { 
+        left: '2%', 
+        right: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', 
+        bottom: '15%', 
+        top: '15%', 
+        containLabel: true 
+      },
       yAxis: yAxes,
       series: series
     }
