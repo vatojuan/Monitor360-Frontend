@@ -33,10 +33,10 @@ const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
 const isRebooting = ref(false)
 
-// Estado para Cambio de Contraseña
-const showChangePasswordModal = ref(false)
-const changePasswordForm = ref({ newPassword: '', confirmPassword: '', credentialName: '' })
-const isChangingPassword = ref(false)
+// Estado para Rotación de Credenciales
+const showRotateCredentialsModal = ref(false)
+const rotateCredentialsForm = ref({ newUsername: '', newPassword: '', confirmPassword: '', credentialName: '' })
+const isRotatingCredentials = ref(false)
 
 // Estado para Bitácora
 const showCommentsModal = ref(false)
@@ -610,40 +610,42 @@ async function addComment() {
   }
 }
 
-// Lógica de Cambio de Contraseña
-function triggerChangePassword() {
+// Lógica de Rotación de Credenciales
+function triggerRotateCredentials() {
   // Pre-llenar el formulario con un nombre sugerido
-  changePasswordForm.value = {
+  rotateCredentialsForm.value = {
+    newUsername: '',
     newPassword: '',
     confirmPassword: '',
     credentialName: `Cred-${monitorToEdit.value.client_name}-${new Date().toISOString().split('T')[0]}`
   }
-  showChangePasswordModal.value = true
+  showRotateCredentialsModal.value = true
 }
 
-async function submitChangePassword() {
-  if (changePasswordForm.value.newPassword !== changePasswordForm.value.confirmPassword) {
+async function submitRotateCredentials() {
+  if (rotateCredentialsForm.value.newPassword !== rotateCredentialsForm.value.confirmPassword) {
     showNotification('Las contraseñas no coinciden', 'error')
     return
   }
-  if (!changePasswordForm.value.credentialName.trim()) {
+  if (!rotateCredentialsForm.value.credentialName.trim()) {
     showNotification('El nombre de perfil es obligatorio', 'error')
     return
   }
 
-  isChangingPassword.value = true
+  isRotatingCredentials.value = true
   try {
-    await api.post(`/devices/${monitorToEdit.value.device_id}/change-password`, {
-      new_password: changePasswordForm.value.newPassword,
-      new_credential_name: changePasswordForm.value.credentialName
+    await api.post(`/devices/${monitorToEdit.value.device_id}/rotate-credentials`, {
+      new_username: rotateCredentialsForm.value.newUsername.trim() || null,
+      new_password: rotateCredentialsForm.value.newPassword,
+      new_credential_name: rotateCredentialsForm.value.credentialName
     })
     
-    showNotification('Contraseña cambiada exitosamente', 'success')
-    showChangePasswordModal.value = false
+    showNotification('Credenciales rotadas exitosamente', 'success')
+    showRotateCredentialsModal.value = false
   } catch (err) {
-    showNotification(err.response?.data?.detail || 'Error al cambiar la contraseña', 'error')
+    showNotification(err.response?.data?.detail || 'Error al rotar credenciales', 'error')
   } finally {
-    isChangingPassword.value = false
+    isRotatingCredentials.value = false
   }
 }
 
@@ -1244,9 +1246,9 @@ function closeSensorDetails() {
             <span class="tool-text">{{ isRebooting ? 'Reiniciando...' : 'Reiniciar Equipo' }}</span>
           </button>
 
-          <button class="tool-btn warning" @click="triggerChangePassword">
+          <button class="tool-btn warning" @click="triggerRotateCredentials">
             <span class="tool-icon">🔑</span>
-            <span class="tool-text">Cambiar Contraseña</span>
+            <span class="tool-text">Rotar Credenciales</span>
           </button>
         </div>
 
@@ -1265,37 +1267,42 @@ function closeSensorDetails() {
       </div>
     </div>
 
-    <div v-if="showChangePasswordModal" class="modal-overlay" @click.self="showChangePasswordModal = false">
+    <div v-if="showRotateCredentialsModal" class="modal-overlay" @click.self="showRotateCredentialsModal = false">
       <div class="modal-content small">
         <div class="modal-header-alert">
           <span class="alert-icon-large">🔑</span>
-          <h3>Cambiar Contraseña</h3>
+          <h3>Rotar Credenciales</h3>
         </div>
         <p class="modal-subtitle" style="text-align: center; margin-bottom: 1.5rem;">
-          Se cambiará la clave en el equipo físico y se creará un nuevo perfil de credencial en el sistema.
+          Se cambiará el usuario y/o contraseña en el equipo físico y se actualizará el perfil.
         </p>
         
-        <form @submit.prevent="submitChangePassword" class="vertical-form">
+        <form @submit.prevent="submitRotateCredentials" class="vertical-form">
+          <div class="form-group">
+            <label>Nuevo Usuario (Opcional)</label>
+            <input type="text" v-model="rotateCredentialsForm.newUsername" placeholder="Dejar en blanco para mantener actual" />
+          </div>
+
           <div class="form-group">
             <label>Nueva Contraseña</label>
-            <input type="password" v-model="changePasswordForm.newPassword" required placeholder="Ingresa la nueva clave" />
+            <input type="password" v-model="rotateCredentialsForm.newPassword" required placeholder="Ingresa la nueva clave" />
           </div>
           
           <div class="form-group">
             <label>Confirmar Contraseña</label>
-            <input type="password" v-model="changePasswordForm.confirmPassword" required placeholder="Repite la clave" />
+            <input type="password" v-model="rotateCredentialsForm.confirmPassword" required placeholder="Repite la clave" />
           </div>
 
           <div class="form-group" style="margin-top: 1rem; border-top: 1px dashed #555; padding-top: 1rem;">
             <label>Nombre del Nuevo Perfil de Credencial</label>
-            <input type="text" v-model="changePasswordForm.credentialName" required />
+            <input type="text" v-model="rotateCredentialsForm.credentialName" required />
             <small style="color: #888; font-size: 0.75rem; margin-top: 0.2rem;">Este perfil se guardará en la base de datos para no perder el acceso.</small>
           </div>
 
           <div class="modal-actions" style="margin-top: 2rem;">
-            <button type="button" class="btn-secondary" @click="showChangePasswordModal = false" :disabled="isChangingPassword">Cancelar</button>
-            <button type="submit" class="btn-warning" :disabled="isChangingPassword">
-              {{ isChangingPassword ? 'Cambiando...' : 'Aplicar Cambio' }}
+            <button type="button" class="btn-secondary" @click="showRotateCredentialsModal = false" :disabled="isRotatingCredentials">Cancelar</button>
+            <button type="submit" class="btn-warning" :disabled="isRotatingCredentials">
+              {{ isRotatingCredentials ? 'Cambiando...' : 'Aplicar Cambio' }}
             </button>
           </div>
         </form>

@@ -214,47 +214,49 @@ function closeTerminal() {
   fetchAllDevices()
 }
 
-// ===== NUEVO: ESTADO CAMBIO DE CONTRASEÑA =====
-const showChangePasswordModal = ref(false)
+// ===== NUEVO: ESTADO ROTAR CREDENCIALES =====
+const showRotateCredentialsModal = ref(false)
 const activeDeviceForPassword = ref(null)
-const changePasswordForm = ref({ newPassword: '', confirmPassword: '', credentialName: '' })
-const isChangingPassword = ref(false)
+const rotateCredentialsForm = ref({ newUsername: '', newPassword: '', confirmPassword: '', credentialName: '' })
+const isRotatingCredentials = ref(false)
 
-function openChangePasswordModal(device) {
+function openRotateCredentialsModal(device) {
   activeDeviceForPassword.value = device
-  changePasswordForm.value = {
+  rotateCredentialsForm.value = {
+    newUsername: '',
     newPassword: '',
     confirmPassword: '',
     credentialName: `Cred-${device.client_name}-${new Date().toISOString().split('T')[0]}`
   }
-  showChangePasswordModal.value = true
+  showRotateCredentialsModal.value = true
   activeDropdown.value = null // Cierra el menú si está abierto
 }
 
-async function submitChangePassword() {
-  if (changePasswordForm.value.newPassword !== changePasswordForm.value.confirmPassword) {
+async function submitRotateCredentials() {
+  if (rotateCredentialsForm.value.newPassword !== rotateCredentialsForm.value.confirmPassword) {
     showNotification('Las contraseñas no coinciden', 'error')
     return
   }
-  if (!changePasswordForm.value.credentialName.trim()) {
+  if (!rotateCredentialsForm.value.credentialName.trim()) {
     showNotification('El nombre de perfil es obligatorio', 'error')
     return
   }
 
-  isChangingPassword.value = true
+  isRotatingCredentials.value = true
   try {
-    await api.post(`/devices/${activeDeviceForPassword.value.id}/change-password`, {
-      new_password: changePasswordForm.value.newPassword,
-      new_credential_name: changePasswordForm.value.credentialName
+    await api.post(`/devices/${activeDeviceForPassword.value.id}/rotate-credentials`, {
+      new_username: rotateCredentialsForm.value.newUsername.trim() || null,
+      new_password: rotateCredentialsForm.value.newPassword,
+      new_credential_name: rotateCredentialsForm.value.credentialName
     })
     
-    showNotification('Contraseña cambiada exitosamente', 'success')
-    showChangePasswordModal.value = false
+    showNotification('Credenciales rotadas exitosamente', 'success')
+    showRotateCredentialsModal.value = false
     activeDeviceForPassword.value = null
   } catch (err) {
-    showNotification(err.response?.data?.detail || 'Error al cambiar la contraseña', 'error')
+    showNotification(err.response?.data?.detail || 'Error al rotar credenciales', 'error')
   } finally {
-    isChangingPassword.value = false
+    isRotatingCredentials.value = false
   }
 }
 
@@ -977,8 +979,8 @@ onMounted(async () => {
                       <span class="icon">⬆️</span> Promover Maestro
                     </button>
 
-                    <button class="dropdown-item text-warning" @click="openChangePasswordModal(device)">
-                      <span class="icon">🔑</span> Cambiar Clave
+                    <button class="dropdown-item text-warning" @click="openRotateCredentialsModal(device)">
+                      <span class="icon">🔑</span> Rotar Credenciales
                     </button>
 
                     <button class="dropdown-item text-danger" @click="requestReboot(device)" :disabled="isRebooting">
@@ -1221,39 +1223,44 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-if="showChangePasswordModal" class="modal-overlay" @click.self="showChangePasswordModal = false; activeDeviceForPassword = null" style="z-index: 4000">
+    <div v-if="showRotateCredentialsModal" class="modal-overlay" @click.self="showRotateCredentialsModal = false; activeDeviceForPassword = null" style="z-index: 4000">
       <div class="modal-content" style="max-width: 450px;">
         <div class="modal-header-alert" style="text-align: center; margin-bottom: 1rem;">
           <span style="font-size: 2.5rem; display: block; margin-bottom: 0.5rem;">🔑</span>
-          <h3 style="margin:0;">Cambiar Contraseña</h3>
+          <h3 style="margin:0;">Rotar Credenciales</h3>
           <p class="text-dim" style="margin-top: 0.5rem;">
             {{ activeDeviceForPassword?.client_name }} ({{ activeDeviceForPassword?.ip_address }})
           </p>
         </div>
         
-        <form @submit.prevent="submitChangePassword" style="display: flex; flex-direction: column; gap: 1rem;">
+        <form @submit.prevent="submitRotateCredentials" style="display: flex; flex-direction: column; gap: 1rem;">
+          <div class="form-group">
+            <label>Nuevo Usuario (Opcional)</label>
+            <input type="text" v-model="rotateCredentialsForm.newUsername" placeholder="Dejar en blanco para mantener actual" />
+          </div>
+
           <div class="form-group">
             <label>Nueva Contraseña</label>
-            <input type="password" v-model="changePasswordForm.newPassword" required placeholder="Ingresa la nueva clave" />
+            <input type="password" v-model="rotateCredentialsForm.newPassword" required placeholder="Ingresa la nueva clave" />
           </div>
           
           <div class="form-group">
             <label>Confirmar Contraseña</label>
-            <input type="password" v-model="changePasswordForm.confirmPassword" required placeholder="Repite la clave" />
+            <input type="password" v-model="rotateCredentialsForm.confirmPassword" required placeholder="Repite la clave" />
           </div>
 
           <div class="form-group" style="margin-top: 0.5rem; border-top: 1px dashed var(--primary-color); padding-top: 1rem;">
             <label>Nombre del Nuevo Perfil de Credencial</label>
-            <input type="text" v-model="changePasswordForm.credentialName" required />
+            <input type="text" v-model="rotateCredentialsForm.credentialName" required />
             <small class="text-dim" style="margin-top: 0.3rem; display: block; line-height: 1.3;">
               Para no perder el acceso a otros equipos que comparten la credencial actual, se creará este nuevo perfil y se asignará automáticamente a este dispositivo.
             </small>
           </div>
 
           <div class="modal-actions">
-            <button type="button" class="btn-secondary" @click="showChangePasswordModal = false; activeDeviceForPassword = null" :disabled="isChangingPassword">Cancelar</button>
-            <button type="submit" class="btn-warning" :disabled="isChangingPassword">
-              {{ isChangingPassword ? 'Cambiando...' : 'Aplicar Cambio' }}
+            <button type="button" class="btn-secondary" @click="showRotateCredentialsModal = false; activeDeviceForPassword = null" :disabled="isRotatingCredentials">Cancelar</button>
+            <button type="submit" class="btn-warning" :disabled="isRotatingCredentials">
+              {{ isRotatingCredentials ? 'Cambiando...' : 'Aplicar Cambio' }}
             </button>
           </div>
         </form>
