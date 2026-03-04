@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { supabase } from '@/lib/supabase'
@@ -137,6 +137,7 @@ async function openCommentsModal(device) {
   activeDeviceForComments.value = device
   showCommentsModal.value = true
   newComment.value = ''
+  activeDropdown.value = null // Cierra el menú si está abierto
   await loadComments(device.id)
 }
 
@@ -193,9 +194,9 @@ const terminalSetupPort = ref(22)
 // 1. Abrimos el modal de setup de puerto
 function openTerminalSetup(device) {
   terminalSetupDevice.value = device
-  // Leemos el puerto guardado o usamos 22 por defecto
   terminalSetupPort.value = device.ssh_port || 22
   showTerminalSetupModal.value = true
+  activeDropdown.value = null // Cierra el menú si está abierto
 }
 
 // 2. Confirmamos y lanzamos la terminal real
@@ -210,9 +211,98 @@ function confirmTerminalSetup() {
 function closeTerminal() {
   showTerminalModal.value = false
   activeTerminalDevice.value = null
-  // Refrescamos los dispositivos por si el Auto-Guardado Ninja actualizó el puerto en DB
   fetchAllDevices()
 }
+
+// ===== NUEVO: ESTADO CAMBIO DE CONTRASEÑA =====
+const showChangePasswordModal = ref(false)
+const activeDeviceForPassword = ref(null)
+const changePasswordForm = ref({ newPassword: '', confirmPassword: '', credentialName: '' })
+const isChangingPassword = ref(false)
+
+function openChangePasswordModal(device) {
+  activeDeviceForPassword.value = device
+  changePasswordForm.value = {
+    newPassword: '',
+    confirmPassword: '',
+    credentialName: `Cred-${device.client_name}-${new Date().toISOString().split('T')[0]}`
+  }
+  showChangePasswordModal.value = true
+  activeDropdown.value = null // Cierra el menú si está abierto
+}
+
+async function submitChangePassword() {
+  if (changePasswordForm.value.newPassword !== changePasswordForm.value.confirmPassword) {
+    showNotification('Las contraseñas no coinciden', 'error')
+    return
+  }
+  if (!changePasswordForm.value.credentialName.trim()) {
+    showNotification('El nombre de perfil es obligatorio', 'error')
+    return
+  }
+
+  isChangingPassword.value = true
+  try {
+    await api.post(`/devices/${activeDeviceForPassword.value.id}/change-password`, {
+      new_password: changePasswordForm.value.newPassword,
+      new_credential_name: changePasswordForm.value.credentialName
+    })
+    
+    showNotification('Contraseña cambiada exitosamente', 'success')
+    showChangePasswordModal.value = false
+    activeDeviceForPassword.value = null
+  } catch (err) {
+    showNotification(err.response?.data?.detail || 'Error al cambiar la contraseña', 'error')
+  } finally {
+    isChangingPassword.value = false
+  }
+}
+
+// ===== REINICIO =====
+const isRebooting = ref(false)
+
+async function requestReboot(device) {
+  if (!confirm(`¿Estás seguro de REINICIAR el dispositivo ${device.client_name}?\nSe perderá la conexión temporalmente.`)) {
+    return
+  }
+  
+  isRebooting.value = true
+  activeDropdown.value = null // Cierra el menú si está abierto
+  
+  try {
+    await api.post(`/devices/${device.id}/reboot`)
+    showNotification(`Reiniciando ${device.client_name}...`, 'success')
+  } catch (err) {
+    console.error(err)
+    showNotification(err.response?.data?.detail || 'Error al enviar comando de reinicio.', 'error')
+  } finally {
+    isRebooting.value = false
+  }
+}
+
+// ===== GESTIÓN DEL DROPDOWN MENU =====
+const activeDropdown = ref(null)
+
+function toggleDropdown(deviceId) {
+  if (activeDropdown.value === deviceId) {
+    activeDropdown.value = null
+  } else {
+    activeDropdown.value = deviceId
+  }
+}
+
+function closeDropdownOnClickOutside(e) {
+  if (!e.target.closest('.dropdown-container')) {
+    activeDropdown.value = null
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', closeDropdownOnClickOutside)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', closeDropdownOnClickOutside)
+})
 
 // ===== COMPUTADAS INTELIGENTES =====
 const maestros = computed(() => allDevices.value.filter((d) => d.is_maestro))
@@ -466,6 +556,7 @@ async function handleVpnAssociation(device) {
 }
 
 async function deleteDevice(device) {
+  activeDropdown.value = null // Cierra el menú si está abierto
   if (!confirm(`¿Eliminar "${device.client_name}"?`)) return
   try {
     deletingId.value = device.id
@@ -808,7 +899,7 @@ onMounted(async () => {
               <th>Fabricante</th>
               <th>Rol</th>
               <th>Conexión</th>
-              <th>Acciones</th>
+              <th style="text-align: right;">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -859,39 +950,47 @@ onMounted(async () => {
                 </div>
                 <div v-else class="text-dim">-</div>
               </td>
-              <td>
-                <div class="row-actions">
-                  <button
-                    @click="openCommentsModal(device)"
-                    class="btn-sm btn-action"
-                    title="Ver Bitácora / Comentarios"
+              
+              <td style="text-align: right; position: relative;">
+                <div class="dropdown-container">
+                  <button 
+                    class="btn-kebab" 
+                    @click.stop="toggleDropdown(device.id)"
                   >
-                    📝
-                  </button>
-                  <button
-                    v-if="!device.is_maestro && device.credential_id"
-                    @click="promoteToMaestro(device)"
-                    class="btn-sm btn-action"
-                    title="Promover a Maestro"
-                  >
-                    ⬆️
+                    ⋮
                   </button>
                   
-                  <button 
-                    @click="openTerminalSetup(device)" 
-                    class="btn-sm btn-action" 
-                    title="Abrir Smart Terminal"
-                  >
-                    💻
-                  </button>
+                  <div class="dropdown-menu" v-if="activeDropdown === device.id">
+                    <button class="dropdown-item" @click="openCommentsModal(device)">
+                      <span class="icon">📝</span> Bitácora
+                    </button>
+                    
+                    <button class="dropdown-item" @click="openTerminalSetup(device)">
+                      <span class="icon">💻</span> Smart Terminal
+                    </button>
 
-                  <button
-                    @click="deleteDevice(device)"
-                    class="btn-sm btn-del"
-                    :disabled="deletingId === device.id"
-                  >
-                    🗑️
-                  </button>
+                    <button 
+                      v-if="!device.is_maestro && device.credential_id" 
+                      class="dropdown-item" 
+                      @click="promoteToMaestro(device)"
+                    >
+                      <span class="icon">⬆️</span> Promover Maestro
+                    </button>
+
+                    <button class="dropdown-item text-warning" @click="openChangePasswordModal(device)">
+                      <span class="icon">🔑</span> Cambiar Clave
+                    </button>
+
+                    <button class="dropdown-item text-danger" @click="requestReboot(device)" :disabled="isRebooting">
+                      <span class="icon">🔄</span> Reiniciar Equipo
+                    </button>
+
+                    <div class="dropdown-divider"></div>
+
+                    <button class="dropdown-item text-danger" @click="deleteDevice(device)" :disabled="deletingId === device.id">
+                      <span class="icon">🗑️</span> Eliminar
+                    </button>
+                  </div>
                 </div>
               </td>
             </tr>
@@ -1119,6 +1218,45 @@ onMounted(async () => {
             {{ isBulking ? 'Procesando...' : 'Aplicar Configuración' }}
           </button>
         </div>
+      </div>
+    </div>
+
+    <div v-if="showChangePasswordModal" class="modal-overlay" @click.self="showChangePasswordModal = false; activeDeviceForPassword = null" style="z-index: 4000">
+      <div class="modal-content" style="max-width: 450px;">
+        <div class="modal-header-alert" style="text-align: center; margin-bottom: 1rem;">
+          <span style="font-size: 2.5rem; display: block; margin-bottom: 0.5rem;">🔑</span>
+          <h3 style="margin:0;">Cambiar Contraseña</h3>
+          <p class="text-dim" style="margin-top: 0.5rem;">
+            {{ activeDeviceForPassword?.client_name }} ({{ activeDeviceForPassword?.ip_address }})
+          </p>
+        </div>
+        
+        <form @submit.prevent="submitChangePassword" style="display: flex; flex-direction: column; gap: 1rem;">
+          <div class="form-group">
+            <label>Nueva Contraseña</label>
+            <input type="password" v-model="changePasswordForm.newPassword" required placeholder="Ingresa la nueva clave" />
+          </div>
+          
+          <div class="form-group">
+            <label>Confirmar Contraseña</label>
+            <input type="password" v-model="changePasswordForm.confirmPassword" required placeholder="Repite la clave" />
+          </div>
+
+          <div class="form-group" style="margin-top: 0.5rem; border-top: 1px dashed var(--primary-color); padding-top: 1rem;">
+            <label>Nombre del Nuevo Perfil de Credencial</label>
+            <input type="text" v-model="changePasswordForm.credentialName" required />
+            <small class="text-dim" style="margin-top: 0.3rem; display: block; line-height: 1.3;">
+              Para no perder el acceso a otros equipos que comparten la credencial actual, se creará este nuevo perfil y se asignará automáticamente a este dispositivo.
+            </small>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" @click="showChangePasswordModal = false; activeDeviceForPassword = null" :disabled="isChangingPassword">Cancelar</button>
+            <button type="submit" class="btn-warning" :disabled="isChangingPassword">
+              {{ isChangingPassword ? 'Cambiando...' : 'Aplicar Cambio' }}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -1350,6 +1488,18 @@ label {
   border-radius: 6px;
   cursor: pointer;
 }
+.btn-warning {
+  background: #f59e0b;
+  color: #111;
+  border: none;
+  padding: 0.7rem 1.2rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.btn-warning:hover:not(:disabled) {
+  background: #fbbf24;
+}
 .test-box {
   padding: 1rem;
   margin-top: 1rem;
@@ -1373,7 +1523,7 @@ label {
   border-radius: 8px;
   color: white;
   font-weight: bold;
-  z-index: 1000;
+  z-index: 5000;
 }
 .notification.success {
   background: var(--green);
@@ -1406,18 +1556,12 @@ label {
   cursor: pointer;
   transition: opacity 0.2s;
 }
-.btn-warning {
-  background: #f39c12;
-}
-.btn-danger {
-  background: var(--error-red);
-}
 .btn-bulk:hover {
   opacity: 0.9;
 }
 
 .table-responsive {
-  overflow-x: auto;
+  overflow-x: visible; /* Cambiado para no ocultar dropdowns */
 }
 .device-table {
   width: 100%;
@@ -1469,30 +1613,85 @@ label {
   border: 1px solid var(--primary-color);
   color: white;
 }
-.row-actions {
-  display: flex;
-  gap: 0.5rem;
+
+/* =========================================
+   DROPDOWN MENU STYLES (KEBAB)
+   ========================================= */
+.dropdown-container {
+  position: relative;
+  display: inline-block;
 }
-.btn-sm {
-  padding: 4px 8px;
+
+.btn-kebab {
+  background: transparent;
   border: none;
-  border-radius: 4px;
+  color: #aaa;
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 4px 8px;
   cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
 }
-.btn-action {
+
+.btn-kebab:hover, .btn-kebab:focus {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 5px;
+  background-color: var(--surface-color);
   border: 1px solid var(--primary-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  min-width: 200px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0;
+}
+
+.dropdown-item {
   background: transparent;
+  border: none;
+  color: #ddd;
+  text-align: left;
+  padding: 0.8rem 1.2rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background 0.2s;
+}
+
+.dropdown-item:hover {
+  background: rgba(255,255,255,0.05);
   color: white;
 }
-.btn-del {
-  background: transparent;
-  border: 1px solid var(--error-red);
-  color: var(--error-red);
+
+.dropdown-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
-.btn-del:hover {
-  background-color: var(--error-red);
-  color: white;
+
+.dropdown-divider {
+  height: 1px;
+  background-color: var(--primary-color);
+  margin: 0.5rem 0;
 }
+
+.text-warning {
+  color: #fbbf24;
+}
+.text-danger {
+  color: #ff6b6b;
+}
+
 .font-mono {
   font-family: monospace;
 }
@@ -1510,7 +1709,7 @@ label {
   }
 }
 
-/* MODAL AVANZADO ESTILOS */
+/* MODALES */
 .modal-overlay {
   position: fixed;
   top: 0;

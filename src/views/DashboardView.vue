@@ -33,6 +33,17 @@ const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
 const isRebooting = ref(false)
 
+// Estado para Cambio de Contraseña
+const showChangePasswordModal = ref(false)
+const changePasswordForm = ref({ newPassword: '', confirmPassword: '', credentialName: '' })
+const isChangingPassword = ref(false)
+
+// Estado para Bitácora
+const showCommentsModal = ref(false)
+const deviceComments = ref([])
+const newCommentContent = ref('')
+const isAddingComment = ref(false)
+
 // --- Nuevo Estado para Selector de IP Destino ---
 const allDevicesList = ref([])
 
@@ -354,6 +365,10 @@ function safeJsonParse(v, f = {}) {
 function toggleCardCollapse(mid) {
   collapsedCards.value.has(mid) ? collapsedCards.value.delete(mid) : collapsedCards.value.add(mid)
 }
+function formatDate(dateString) {
+  if (!dateString) return ''
+  return new Date(dateString).toLocaleString()
+}
 
 // --- WEBSOCKETS ---
 function normalizeWsPayload(raw) {
@@ -548,12 +563,91 @@ async function deleteSensor(sensor, e) {
   }
 }
 
-// --- GESTIÓN DE MONITOR (CAMBIO GRUPO + REBOOT) ---
+// --- GESTIÓN DE HERRAMIENTAS DEL DISPOSITIVO ---
 function openMonitorSettings(monitor) {
   monitorToEdit.value = monitor
   editMonitorGroup.value = monitor.group_name || 'General'
 }
 
+function openTerminal() {
+  if (!monitorToEdit.value?.device_id) return
+  // Abrimos la terminal en una nueva pestaña (misma lógica que VpnsView)
+  const routeData = router.resolve({
+    path: '/terminal',
+    query: { device_id: monitorToEdit.value.device_id }
+  })
+  window.open(routeData.href, '_blank')
+}
+
+// Lógica de Bitácora
+async function openCommentsModal() {
+  if (!monitorToEdit.value?.device_id) return
+  showCommentsModal.value = true
+  deviceComments.value = []
+  newCommentContent.value = ''
+  try {
+    const { data } = await api.get(`/devices/${monitorToEdit.value.device_id}/comments`)
+    deviceComments.value = data
+  } catch (err) {
+    showNotification('Error al cargar comentarios.', 'error')
+  }
+}
+
+async function addComment() {
+  if (!newCommentContent.value.trim()) return
+  isAddingComment.value = true
+  try {
+    const { data } = await api.post(`/devices/${monitorToEdit.value.device_id}/comments`, {
+      content: newCommentContent.value.trim()
+    })
+    deviceComments.value.unshift(data)
+    newCommentContent.value = ''
+    showNotification('Comentario agregado')
+  } catch (err) {
+    showNotification('Error al agregar comentario', 'error')
+  } finally {
+    isAddingComment.value = false
+  }
+}
+
+// Lógica de Cambio de Contraseña
+function triggerChangePassword() {
+  // Pre-llenar el formulario con un nombre sugerido
+  changePasswordForm.value = {
+    newPassword: '',
+    confirmPassword: '',
+    credentialName: `Cred-${monitorToEdit.value.client_name}-${new Date().toISOString().split('T')[0]}`
+  }
+  showChangePasswordModal.value = true
+}
+
+async function submitChangePassword() {
+  if (changePasswordForm.value.newPassword !== changePasswordForm.value.confirmPassword) {
+    showNotification('Las contraseñas no coinciden', 'error')
+    return
+  }
+  if (!changePasswordForm.value.credentialName.trim()) {
+    showNotification('El nombre de perfil es obligatorio', 'error')
+    return
+  }
+
+  isChangingPassword.value = true
+  try {
+    await api.post(`/devices/${monitorToEdit.value.device_id}/change-password`, {
+      new_password: changePasswordForm.value.newPassword,
+      new_credential_name: changePasswordForm.value.credentialName
+    })
+    
+    showNotification('Contraseña cambiada exitosamente', 'success')
+    showChangePasswordModal.value = false
+  } catch (err) {
+    showNotification(err.response?.data?.detail || 'Error al cambiar la contraseña', 'error')
+  } finally {
+    isChangingPassword.value = false
+  }
+}
+
+// Configuración de Monitor y Reinicio (Existentes)
 async function saveMonitorSettings() {
   if (!monitorToEdit.value) return
   const newGroup = editMonitorGroup.value
@@ -939,7 +1033,7 @@ function closeSensorDetails() {
                   <button
                     class="action-icon-btn"
                     @click="openMonitorSettings(monitor)"
-                    title="Configuración de Monitor"
+                    title="Configuración y Herramientas"
                   >
                     ⚙️
                   </button>
@@ -1129,35 +1223,119 @@ function closeSensorDetails() {
 
     <div v-if="monitorToEdit" class="modal-overlay" @click.self="monitorToEdit = null">
       <div class="modal-content small">
-        <h3>Configurar Monitor</h3>
+        <h3>Herramientas del Dispositivo</h3>
         <p class="modal-subtitle">
           {{ monitorToEdit.client_name }} ({{ monitorToEdit.ip_address }})
         </p>
 
-        <div class="form-group" style="margin-top: 1.5rem">
-          <label>Mover a Grupo:</label>
-          <select v-model="editMonitorGroup" class="full-width-input">
+        <div class="tools-grid">
+          <button class="tool-btn" @click="openTerminal">
+            <span class="tool-icon">›_</span>
+            <span class="tool-text">Terminal SSH</span>
+          </button>
+          
+          <button class="tool-btn" @click="openCommentsModal">
+            <span class="tool-icon">📝</span>
+            <span class="tool-text">Bitácora</span>
+          </button>
+
+          <button class="tool-btn danger" @click="requestReboot" :disabled="isRebooting">
+            <span class="tool-icon">🔄</span>
+            <span class="tool-text">{{ isRebooting ? 'Reiniciando...' : 'Reiniciar Equipo' }}</span>
+          </button>
+
+          <button class="tool-btn warning" @click="triggerChangePassword">
+            <span class="tool-icon">🔑</span>
+            <span class="tool-text">Cambiar Contraseña</span>
+          </button>
+        </div>
+
+        <div class="dashboard-config-section">
+          <label>Mover a Grupo del Dashboard:</label>
+          <select v-model="editMonitorGroup" class="full-width-input mt-2">
             <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
             <option value="Sin Grupo">Sin Grupo</option>
           </select>
         </div>
 
-        <div
-          class="danger-zone"
-          style="margin-top: 2rem; border-top: 1px dashed #555; padding-top: 1rem"
-        >
-          <h4 style="color: #ff6b6b; margin-bottom: 0.5rem; font-size: 0.9rem">
-            Acciones de Dispositivo
-          </h4>
-          <button class="btn-danger-outline" @click="requestReboot" :disabled="isRebooting">
-            {{ isRebooting ? 'Reiniciando...' : '🔄 Reiniciar Dispositivo' }}
-          </button>
+        <div class="modal-actions">
+          <button class="btn-secondary" @click="monitorToEdit = null">Cancelar</button>
+          <button class="btn-primary" @click="saveMonitorSettings">Guardar Grupo</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showChangePasswordModal" class="modal-overlay" @click.self="showChangePasswordModal = false">
+      <div class="modal-content small">
+        <div class="modal-header-alert">
+          <span class="alert-icon-large">🔑</span>
+          <h3>Cambiar Contraseña</h3>
+        </div>
+        <p class="modal-subtitle" style="text-align: center; margin-bottom: 1.5rem;">
+          Se cambiará la clave en el equipo físico y se creará un nuevo perfil de credencial en el sistema.
+        </p>
+        
+        <form @submit.prevent="submitChangePassword" class="vertical-form">
+          <div class="form-group">
+            <label>Nueva Contraseña</label>
+            <input type="password" v-model="changePasswordForm.newPassword" required placeholder="Ingresa la nueva clave" />
+          </div>
+          
+          <div class="form-group">
+            <label>Confirmar Contraseña</label>
+            <input type="password" v-model="changePasswordForm.confirmPassword" required placeholder="Repite la clave" />
+          </div>
+
+          <div class="form-group" style="margin-top: 1rem; border-top: 1px dashed #555; padding-top: 1rem;">
+            <label>Nombre del Nuevo Perfil de Credencial</label>
+            <input type="text" v-model="changePasswordForm.credentialName" required />
+            <small style="color: #888; font-size: 0.75rem; margin-top: 0.2rem;">Este perfil se guardará en la base de datos para no perder el acceso.</small>
+          </div>
+
+          <div class="modal-actions" style="margin-top: 2rem;">
+            <button type="button" class="btn-secondary" @click="showChangePasswordModal = false" :disabled="isChangingPassword">Cancelar</button>
+            <button type="submit" class="btn-warning" :disabled="isChangingPassword">
+              {{ isChangingPassword ? 'Cambiando...' : 'Aplicar Cambio' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div v-if="showCommentsModal" class="modal-overlay" @click.self="showCommentsModal = false">
+      <div class="modal-content" style="max-width: 500px;">
+        <h3>Bitácora del Dispositivo</h3>
+        <p class="modal-subtitle">{{ monitorToEdit?.client_name }}</p>
+
+        <div class="comments-container">
+          <div v-if="deviceComments.length === 0" class="no-comments">
+            No hay registros en la bitácora.
+          </div>
+          <div v-else class="comments-list">
+            <div v-for="comment in deviceComments" :key="comment.id" class="comment-item">
+              <div class="comment-header">
+                <span class="comment-date">{{ formatDate(comment.created_at) }}</span>
+              </div>
+              <div class="comment-body">{{ comment.content }}</div>
+            </div>
+          </div>
         </div>
 
-        <div class="modal-actions" style="margin-top: 2rem">
-          <button class="btn-secondary" @click="monitorToEdit = null">Cerrar</button>
-          <button class="btn-primary" @click="saveMonitorSettings">Guardar Cambios</button>
-        </div>
+        <form @submit.prevent="addComment" class="comment-form">
+          <textarea 
+            v-model="newCommentContent" 
+            placeholder="Escribe un nuevo registro..." 
+            rows="3" 
+            required
+            class="full-width-input"
+          ></textarea>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" @click="showCommentsModal = false">Cerrar</button>
+            <button type="submit" class="btn-primary" :disabled="isAddingComment">
+              {{ isAddingComment ? 'Guardando...' : 'Agregar Registro' }}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -2074,6 +2252,120 @@ function closeSensorDetails() {
   grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
+
+/* HERRAMIENTAS Y BOTONES UNIFICADOS */
+.tools-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.tool-btn {
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tool-btn:hover:not(:disabled) {
+  background: var(--primary-color);
+  transform: translateY(-2px);
+}
+
+.tool-btn.danger {
+  border-color: rgba(255, 107, 107, 0.3);
+}
+.tool-btn.danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: #ff6b6b;
+}
+
+.tool-btn.warning {
+  border-color: rgba(251, 191, 36, 0.3);
+}
+.tool-btn.warning:hover:not(:disabled) {
+  background: rgba(251, 191, 36, 0.1);
+  border-color: #fbbf24;
+}
+
+.tool-icon {
+  font-size: 1.5rem;
+}
+.tool-text {
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.dashboard-config-section {
+  border-top: 1px dashed #555;
+  padding-top: 1.5rem;
+}
+
+.modal-header-alert {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 0.5rem;
+}
+.alert-icon-large {
+  font-size: 2rem;
+}
+
+.vertical-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ESTILOS DE BITÁCORA */
+.comments-container {
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  border-radius: 6px;
+  height: 250px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+}
+.no-comments {
+  color: #666;
+  text-align: center;
+  padding: 2rem;
+  font-style: italic;
+}
+.comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.comment-item {
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.8rem;
+  border-radius: 4px;
+  border-left: 3px solid var(--blue);
+}
+.comment-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+  font-size: 0.75rem;
+  color: #888;
+}
+.comment-body {
+  font-size: 0.9rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
 .form-group {
   display: flex;
   flex-direction: column;
@@ -2106,6 +2398,7 @@ function closeSensorDetails() {
   border: 1px solid var(--primary-color);
   border-radius: 4px;
   color: white;
+  font-family: inherit;
 }
 .general-config-grid {
   display: grid;
@@ -2193,6 +2486,18 @@ function closeSensorDetails() {
   padding: 0.6rem 1.2rem;
   border-radius: 6px;
   cursor: pointer;
+}
+.btn-warning {
+  background: #f59e0b;
+  color: #111;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.btn-warning:hover:not(:disabled) {
+  background: #fbbf24;
 }
 .btn-danger-outline {
   width: 100%;
