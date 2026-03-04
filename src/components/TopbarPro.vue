@@ -140,14 +140,14 @@
           <router-link to="/" class="m360-item" role="menuitem" @click="closeMenu"
             >📊 Dashboard</router-link
           >
+          <router-link to="/devices" class="m360-item" role="menuitem" @click="closeMenu"
+            >⚙️ Gestionar dispositivos</router-link
+          >
           <router-link to="/monitor-builder" class="m360-item" role="menuitem" @click="closeMenu"
             >➕ Añadir monitor</router-link
           >
           <router-link to="/scan" class="m360-item" role="menuitem" @click="closeMenu"
             >📡 Escáner de Red</router-link
-          >
-          <router-link to="/devices" class="m360-item" role="menuitem" @click="closeMenu"
-            >⚙️ Gestionar dispositivos</router-link
           >
           <router-link to="/credentials" class="m360-item" role="menuitem" @click="closeMenu"
             >🔐 Credenciales</router-link
