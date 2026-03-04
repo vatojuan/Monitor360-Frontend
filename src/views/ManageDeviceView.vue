@@ -253,6 +253,11 @@ async function submitRotateCredentials() {
     showNotification('Credenciales rotadas exitosamente', 'success')
     showRotateCredentialsModal.value = false
     activeDeviceForPassword.value = null
+    
+    // --- NUEVO: Refrescar el inventario y las credenciales en vivo ---
+    await fetchAllDevices()
+    await fetchCredentials()
+
   } catch (err) {
     showNotification(err.response?.data?.detail || 'Error al rotar credenciales', 'error')
   } finally {

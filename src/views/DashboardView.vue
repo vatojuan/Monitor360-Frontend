@@ -642,6 +642,11 @@ async function submitRotateCredentials() {
     
     showNotification('Credenciales rotadas exitosamente', 'success')
     showRotateCredentialsModal.value = false
+    
+    // Actualizar datos en memoria para reflejar el cambio en vivo
+    await fetchAllMonitors()
+    await fetchAllDevices()
+    
   } catch (err) {
     showNotification(err.response?.data?.detail || 'Error al rotar credenciales', 'error')
   } finally {
