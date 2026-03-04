@@ -590,8 +590,8 @@ watch(searchQuery, (newQuery) => {
           </div>
           <ul v-if="searchResults.length > 0" class="search-results">
             <li v-for="device in searchResults" :key="device.id" @click="selectDevice(device)">
-              <strong>{{ device.client_name }}</strong
-              ><span>{{ device.ip_address }}</span>
+              <strong>{{ device.client_name }}</strong>
+              <span>{{ device.ip_address }}</span>
             </li>
           </ul>
         </div>
@@ -651,12 +651,12 @@ watch(searchQuery, (newQuery) => {
                   <span class="sensor-type-badge" :class="sensor.sensor_type">{{
                     sensor.sensor_type
                   }}</span>
-                  <strong>{{ sensor.name }}</strong>
-                  <span v-if="sensor.config?.alerts?.length" class="alert-enabled-badge">🔔</span>
+                  <strong :title="sensor.name">{{ sensor.name }}</strong>
+                  <span v-if="sensor.config?.alerts?.length" class="alert-enabled-badge" title="Alerta configurada">🔔</span>
                 </div>
                 <div class="sensor-actions">
-                  <button @click="openFormForEdit(sensor)" class="action-btn edit-btn">✏️</button>
-                  <button @click="deleteSensor(sensor.id)" class="action-btn delete-btn">×</button>
+                  <button @click="openFormForEdit(sensor)" class="action-btn edit-btn" title="Editar Sensor">✏️</button>
+                  <button @click="deleteSensor(sensor.id)" class="action-btn delete-btn" title="Eliminar Sensor">×</button>
                 </div>
               </li>
             </ul>
@@ -1127,6 +1127,12 @@ h4 {
   border-radius: 6px;
   color: white;
 }
+
+/* ==============================================
+   FIX: TRUNCADO PROFESIONAL PARA LISTAS Y TARJETAS
+   ============================================== */
+
+/* 1. Resultados de búsqueda blindados */
 .search-results {
   list-style: none;
   padding: 0;
@@ -1140,11 +1146,26 @@ h4 {
   cursor: pointer;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 1rem; /* Espaciado entre nombre e IP */
   transition: background-color 0.2s;
 }
 .search-results li:hover {
   background-color: var(--primary-color);
 }
+.search-results li strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.search-results li span {
+  flex-shrink: 0;
+  color: #aaa;
+}
+
+/* 2. Tarjeta de dispositivo seleccionado blindada */
 .selected-device-card {
   background-color: var(--bg-color);
   padding: 1rem;
@@ -1153,7 +1174,18 @@ h4 {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 1rem; /* Previene colisiones */
   border-left: 4px solid var(--green);
+}
+.selected-device-card > div {
+  flex: 1;
+  min-width: 0;
+}
+.selected-device-card h3 {
+  margin: 0 0 0.2rem 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .selected-device-card button {
   padding: 0.6rem 1.2rem;
@@ -1162,7 +1194,9 @@ h4 {
   color: #f1f1f1;
   cursor: pointer;
   border-radius: 6px;
+  flex-shrink: 0; /* Nunca se aplasta el botón */
 }
+
 .btn-create {
   width: 100%;
   padding: 1rem;
@@ -1175,6 +1209,8 @@ h4 {
   cursor: pointer;
   margin-top: 1rem;
 }
+
+/* 3. Lista de Sensores (MonitorBuilder) blindada */
 .sensor-list {
   margin-top: 2rem;
   padding-top: 1.5rem;
@@ -1194,11 +1230,21 @@ h4 {
   background-color: var(--bg-color);
   padding: 0.75rem 1rem;
   border-radius: 8px;
+  gap: 1rem; /* Previene que el nombre y botones choquen */
 }
 .sensor-info {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+.sensor-info strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
 .sensor-type-badge {
   font-size: 0.75rem;
@@ -1206,6 +1252,7 @@ h4 {
   padding: 0.2rem 0.5rem;
   border-radius: 12px;
   text-transform: uppercase;
+  flex-shrink: 0; /* Badge sagrado */
 }
 .sensor-type-badge.ping {
   background-color: var(--blue);
@@ -1216,9 +1263,37 @@ h4 {
   color: var(--bg-color);
 }
 .sensor-type-badge.wireless {
-  background-color: #8b5cf6; /* Púrpura para distinguir Wireless */
+  background-color: #8b5cf6;
   color: white;
 }
+
+.sensor-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0; /* Botones sagrados */
+}
+.action-btn {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+.edit-btn:hover {
+  background-color: var(--blue);
+}
+.delete-btn {
+  font-size: 1.8rem;
+  color: var(--gray);
+}
+.delete-btn:hover {
+  background-color: transparent;
+  color: var(--secondary-color);
+}
+/* ============================================== */
+
 .empty-list {
   color: var(--gray);
   font-style: italic;
@@ -1265,31 +1340,9 @@ h4 {
 }
 .alert-enabled-badge {
   font-size: 0.9rem;
+  flex-shrink: 0;
 }
-.sensor-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-.action-btn {
-  background: none;
-  border: none;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  transition: background-color 0.2s;
-}
-.edit-btn:hover {
-  background-color: var(--blue);
-}
-.delete-btn {
-  font-size: 1.8rem;
-  color: var(--gray);
-}
-.delete-btn:hover {
-  background-color: transparent;
-  color: var(--secondary-color);
-}
+
 .modal-overlay {
   position: fixed;
   top: 0;
