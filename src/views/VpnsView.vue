@@ -118,8 +118,9 @@ function downloadConfFile(name, content) {
 }
 
 /* ====== Estado UI ====== */
-const newProfile = ref({ name: '', check_ip: '' })
+const newProfile = ref({ name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null })
 const vpnProfiles = ref([])
+const channels = ref([]) // <-- NUEVO: Almacena canales de notificación
 const isLoading = ref(false)
 const isCreating = ref(false)
 
@@ -179,6 +180,15 @@ async function checkStatus(profile) {
 }
 
 /* ====== Acciones Perfil ====== */
+async function fetchChannels() {
+  try {
+    const { data } = await api.get('/channels')
+    channels.value = data || []
+  } catch (err) {
+    console.error('Error al cargar canales:', err)
+  }
+}
+
 async function fetchVpnProfiles() {
   isLoading.value = true
   try {
@@ -202,17 +212,31 @@ async function createAutoProfile() {
       name: newProfile.value.name,
       check_ip: newProfile.value.check_ip || autoData.interface_address?.split('/')[0],
       config_data: autoData.conf_ini,
+      alerts_enabled: newProfile.value.alerts_enabled,
+      notification_channel_id: newProfile.value.notification_channel_id
     }
 
     const { data: savedProfile } = await api.post('/vpns', payload)
 
     vpnProfiles.value.unshift({ ...savedProfile, _expanded: true })
-    newProfile.value = { name: '', check_ip: '' }
+    newProfile.value = { name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null }
     showNotification('Perfil creado y activado.', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
   } finally {
     isCreating.value = false
+  }
+}
+
+async function updateVpnAlerts(profile) {
+  try {
+    await api.put(`/vpns/${profile.id}`, {
+      alerts_enabled: profile.alerts_enabled,
+      notification_channel_id: profile.notification_channel_id
+    })
+    showNotification('Configuración de alertas actualizada', 'success')
+  } catch (err) {
+    showNotification(getAxiosErr(err), 'error')
   }
 }
 
@@ -269,7 +293,7 @@ onBeforeUnmount(() => {
   if (wsUnsubRot) removeWsListener(wsUnsubRot)
 })
 
-// Funciones auxiliares para proposeProfileName (para que el watch funcione)
+// Funciones auxiliares para proposeProfileName
 function proposeProfileName(iniText) {
   try {
     const conf = parseWgIni(iniText)
@@ -284,9 +308,10 @@ function proposeProfileName(iniText) {
 }
 
 onMounted(async () => {
+  await fetchChannels() // <-- NUEVO: Cargamos los canales de alerta
   await fetchVpnProfiles()
 
-  // Watch para autocompletar nombre (si volviéramos a mostrar el campo editable)
+  // Watch para autocompletar nombre
   watch(
     () => newProfile.value.config_data,
     (val, old) => {
@@ -325,11 +350,12 @@ onMounted(async () => {
         <h3>Nuevo Cliente</h3>
       </div>
 
-      <div class="create-form">
+      <div class="create-form-grid">
         <div class="form-group">
           <label>Nombre del Cliente / Sitio</label>
           <input v-model="newProfile.name" type="text" placeholder="Ej: Sucursal Centro" />
         </div>
+        
         <div class="form-group">
           <label>Check IP (Opcional)</label>
           <input
@@ -338,7 +364,23 @@ onMounted(async () => {
             placeholder="IP interna para monitoreo"
           />
         </div>
-        <div class="form-actions">
+
+        <div class="form-group alert-toggle-group">
+          <label class="toggle-label" style="margin-top: auto; margin-bottom: 0.8rem;">
+            <input type="checkbox" v-model="newProfile.alerts_enabled" />
+            🔔 Habilitar Alertas de Caída
+          </label>
+        </div>
+
+        <div class="form-group" v-if="newProfile.alerts_enabled">
+          <label>Canal de Notificación</label>
+          <select v-model="newProfile.notification_channel_id" class="input-select">
+            <option :value="null">-- Seleccionar --</option>
+            <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+          </select>
+        </div>
+
+        <div class="form-actions" style="grid-column: 1 / -1; text-align: right; margin-top: 0.5rem;">
           <button class="btn-primary" @click="createAutoProfile" :disabled="isCreating">
             {{ isCreating ? 'Generando...' : 'Generar Perfil Automático' }}
           </button>
@@ -370,6 +412,7 @@ onMounted(async () => {
                 :class="{ online: inspector.activeProfileId === p.id && inspector.connected }"
               ></span>
               <strong>{{ p.name }}</strong>
+              <span class="alert-badge" v-if="p.alerts_enabled" title="Alertas habilitadas">🔔</span>
               <span class="ip-tag" v-if="p.check_ip">{{ p.check_ip }}</span>
             </div>
 
@@ -410,6 +453,25 @@ onMounted(async () => {
               </div>
             </div>
 
+            <div class="alerts-inline-section">
+              <h4>⚙️ Alertas y Monitoreo</h4>
+              <div class="alerts-controls">
+                <label class="toggle-label">
+                  <input type="checkbox" v-model="p.alerts_enabled" @change="updateVpnAlerts(p)" />
+                  Habilitar Alertas de Caída
+                </label>
+                
+                <select 
+                  v-if="p.alerts_enabled" 
+                  v-model="p.notification_channel_id" 
+                  @change="updateVpnAlerts(p)" 
+                  class="input-select"
+                >
+                  <option :value="null">-- Sin canal seleccionado --</option>
+                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                </select>
+              </div>
+            </div>
             <transition name="fade">
               <div v-if="inspector.activeProfileId === p.id" class="inspector-panel">
                 <div class="inspector-grid">
@@ -469,7 +531,6 @@ onMounted(async () => {
 <style scoped>
 /* VARIABLES (Mapeadas a las globales del proyecto) */
 :root {
-  /* Si no están definidas globalmente, estos son los fallbacks */
   --bg-color: #121212;
   --surface-color: #1e1e1e;
   --primary-color: #333;
@@ -520,11 +581,11 @@ onMounted(async () => {
   font-size: 1.2rem;
 }
 
-/* FORMULARIO CREACIÓN */
-.create-form {
+/* NUEVO: FORMULARIO CREACIÓN RESPONSIVE */
+.create-form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr auto; /* Nombre | IP | Botón */
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem 1rem;
   align-items: end;
 }
 .form-group {
@@ -538,7 +599,7 @@ onMounted(async () => {
   color: var(--gray, #888);
 }
 .form-group input {
-  background: var(--surface-color); /* Fondo igual al panel */
+  background: var(--surface-color);
   border: 1px solid var(--primary-color);
   color: white;
   padding: 0.8rem;
@@ -548,6 +609,43 @@ onMounted(async () => {
 .form-group input:focus {
   outline: 1px solid var(--blue, #3b82f6);
   border-color: var(--blue, #3b82f6);
+}
+
+/* NUEVO: INPUT SELECT Y TOGGLES */
+.input-select {
+  background: var(--surface-color);
+  border: 1px solid var(--primary-color);
+  color: white;
+  padding: 0.8rem;
+  border-radius: 6px;
+  width: 100%;
+  cursor: pointer;
+}
+.input-select option {
+  background-color: var(--surface-color);
+  color: white;
+}
+.input-select:focus {
+  outline: 1px solid var(--blue, #3b82f6);
+  border-color: var(--blue, #3b82f6);
+}
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: var(--font-color, #eaeaea);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.toggle-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+.alert-toggle-group {
+  justify-content: flex-end;
 }
 
 /* BOTONES */
@@ -570,7 +668,6 @@ button {
   opacity: 0.6;
   cursor: not-allowed;
 }
-
 .btn-secondary {
   background-color: transparent;
   border: 1px solid var(--primary-color);
@@ -581,7 +678,6 @@ button {
   background-color: var(--primary-color);
   color: white;
 }
-
 .btn-monitor {
   background-color: var(--primary-color);
   color: white;
@@ -591,10 +687,9 @@ button {
   filter: brightness(1.2);
 }
 .btn-monitor.is-monitoring {
-  background-color: #f59e0b; /* Ambar para estado 'Detener' */
+  background-color: #f59e0b;
   color: black;
 }
-
 .btn-danger {
   background-color: transparent;
   border: 1px solid var(--red, #ef4444);
@@ -605,7 +700,6 @@ button {
   background-color: var(--red, #ef4444);
   color: white;
 }
-
 .btn-ping {
   background: transparent;
   color: var(--blue);
@@ -628,7 +722,7 @@ button {
 }
 
 .vpn-card {
-  background-color: var(--bg-color, #121212); /* Fondo ligeramente más oscuro que el panel */
+  background-color: var(--bg-color, #121212);
   border: 1px solid var(--primary-color);
   border-radius: 8px;
   overflow: hidden;
@@ -647,7 +741,7 @@ button {
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
-  background-color: var(--surface-color); /* Cabecera resalta */
+  background-color: var(--surface-color);
 }
 .vpn-header:hover {
   background-color: rgba(255, 255, 255, 0.03);
@@ -668,6 +762,11 @@ button {
 .status-dot.online {
   background-color: var(--green, #10b981);
   box-shadow: 0 0 8px var(--green, #10b981);
+}
+.alert-badge {
+  font-size: 0.95rem;
+  cursor: help;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.2));
 }
 
 .ip-tag {
@@ -703,7 +802,30 @@ button {
   gap: 0.5rem;
 }
 
-/* INSPECTOR PANEL (Rediseñado) */
+/* NUEVO: SECCIÓN INLINE DE ALERTAS */
+.alerts-inline-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed var(--primary-color);
+  border-radius: 8px;
+  padding: 1rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+.alerts-inline-section h4 {
+  margin: 0 0 1rem 0;
+  font-size: 0.95rem;
+  color: var(--blue);
+}
+.alerts-controls {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.alerts-controls .input-select {
+  max-width: 300px;
+}
+
+/* INSPECTOR PANEL */
 .inspector-panel {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--primary-color);
@@ -825,9 +947,6 @@ textarea {
 
 /* RESPONSIVE */
 @media (max-width: 768px) {
-  .create-form {
-    grid-template-columns: 1fr;
-  }
   .code-grid {
     grid-template-columns: 1fr;
   }
@@ -837,6 +956,10 @@ textarea {
   }
   .tool-group {
     justify-content: space-between;
+  }
+  .alerts-controls select {
+    max-width: 100%;
+    width: 100%;
   }
 }
 </style>
