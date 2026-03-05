@@ -56,11 +56,18 @@ const timeRange = ref('24h')
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
 const currentWindow = ref(null) // { startMs, endMs, mode }
 
-/* ====== STORE (raw/auto) ====== */
-const store = reactive({
+/* ====== ESTADO DE ZOOM ====== */
+const zoomStart = ref(0)
+const zoomEnd = ref(100)
+
+/* ====== STORE (raw/auto) OPTIMIZADO ====== */
+// Usamos un objeto puro para máximo rendimiento. Evitamos que Vue rastree miles de puntos de datos inútilmente.
+const store = {
   raw: { startMs: null, endMs: null, map: new Map() },
   auto: { startMs: null, endMs: null, map: new Map() },
-})
+}
+// Control maestro reactivo: lo incrementamos cuando hay datos nuevos para forzar a Vue a repintar.
+const dataVersion = ref(0) 
 
 /* ====== HELPERS DE DATOS ====== */
 function normalizePoint(p) {
@@ -118,8 +125,23 @@ function parseMbps(val) {
   return m ? parseFloat(m[1]) : 0
 }
 
+/* ====== EVENTOS DE GRAFICA ====== */
+function handleDataZoom(params) {
+  // Almacenar el nivel de zoom actual configurado por el usuario
+  const start = params.batch ? params.batch[0].start : params.start
+  const end = params.batch ? params.batch[0].end : params.end
+  
+  if (start !== undefined && end !== undefined) {
+    zoomStart.value = start
+    zoomEnd.value = end
+  }
+}
+
 /* ====== DATA VISIBLE ====== */
 const visibleData = computed(() => {
+  // Declarar dependencia explícita: cuando dataVersion cambia, esto se recalcula
+  const _trigger = dataVersion.value
+  
   if (!currentWindow.value) return []
   const { startMs, endMs, mode } = currentWindow.value
   return mapToSortedArray(mode, startMs, endMs)
@@ -240,19 +262,20 @@ const chartOption = computed(() => {
       textStyle: { color: '#fff' },
       confine: true,
     },
-    grid: { left: '2%', right: '3%', bottom: '15%', top: '10%', containLabel: true },
+    // Ajuste de Bottom fijo en píxeles para evitar que se pise con el Slider de zoom
+    grid: { left: '2%', right: '3%', bottom: 75, top: '10%', containLabel: true },
     dataZoom: [
-      { type: 'inside', start: 0, end: 100 }, // Zoom con rueda
+      { type: 'inside', start: zoomStart.value, end: zoomEnd.value }, // Zoom con rueda (respeta estado)
       {
         type: 'slider',
-        start: 0,
-        end: 100,
-        bottom: 0,
-        height: 20,
+        start: zoomStart.value, // Mantener posicion
+        end: zoomEnd.value,     // Mantener posicion
+        bottom: 10,
+        height: 24,
         handleSize: '100%',
         showDetail: false,
         fillerColor: 'rgba(83, 114, 240, 0.2)',
-      }, // Barra inferior
+      },
     ],
     xAxis: {
       type: 'category',
@@ -501,8 +524,8 @@ const chartOption = computed(() => {
     return {
       ...baseOption,
       legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
-      // Ajuste de grid para dejar espacio a los ejes Y derechos
-      grid: { left: '2%', right: isAP ? '18%' : '10%', bottom: '15%', top: '15%', containLabel: true },
+      // Ajuste de grid para dejar espacio a los ejes Y derechos y fijar el bottom en 75px
+      grid: { left: '2%', right: isAP ? '18%' : '10%', bottom: 75, top: '15%', containLabel: true },
       yAxis: yAxes,
       series: series
     }
@@ -617,7 +640,7 @@ const chartOption = computed(() => {
       grid: { 
         left: '2%', 
         right: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', 
-        bottom: '15%', 
+        bottom: 75, 
         top: '15%', 
         containLabel: true 
       },
@@ -656,6 +679,9 @@ async function ensureCoverage(mode, startMs, endMs) {
       const items = Array.isArray(data?.items) ? data.items : []
       mergeItems(mode, items)
       extendRange(mode, seg.s, seg.e)
+      
+      // Forzar repintado reactivo tras cargar este bloque
+      dataVersion.value++
     }
   } catch (err) {
     if (err?.code !== 'ERR_CANCELED') console.error('ensureCoverage error:', err)
@@ -671,6 +697,9 @@ async function setView(startMs, endMs) {
 }
 
 async function setRange(range) {
+  // Cuando cambiamos de pestaña (ej de 24h a 7d), reseteamos el zoom a la vista completa
+  zoomStart.value = 0
+  zoomEnd.value = 100
   timeRange.value = range
   const endMs = Date.now()
   const startMs = endMs - (hoursMap[range] ?? 24) * 3600 * 1000
@@ -708,12 +737,10 @@ function handleRawMessage(event) {
     if (relevant.length > 0) {
       const points = relevant.map(normalizePoint)
       mergeItems('raw', points)
-      mergeItems('auto', points)
+      mergeItems('auto', points) // Actualizamos ambas memorias de forma superrápida
 
-      const now = Date.now()
-      if (currentWindow.value && now - currentWindow.value.endMs < 60000) {
-        store.raw = { ...store.raw }
-      }
+      // Trigger de reactividad: Avisamos a Vue que hay datos nuevos
+      dataVersion.value++
     }
   } catch {
     /* ignore */
@@ -852,7 +879,7 @@ watch(timeRange, async (r) => {
       </div>
 
       <div class="chart-container">
-        <v-chart class="chart" :option="chartOption" autoresize />
+        <v-chart class="chart" :option="chartOption" autoresize @datazoom="handleDataZoom" />
       </div>
     </div>
 
