@@ -739,6 +739,20 @@ function handleRawMessage(event) {
       mergeItems('raw', points)
       mergeItems('auto', points) // Actualizamos ambas memorias de forma superrápida
 
+      // --- MAGIA DEL TIEMPO REAL (SLIDING WINDOW) ---
+      if (currentWindow.value) {
+        // Encontrar el timestamp más nuevo que acaba de llegar
+        const latestMs = Math.max(...points.map((p) => p._ms))
+        
+        // Si el dato es más nuevo que el límite final de nuestra ventana visual
+        if (latestMs > currentWindow.value.endMs) {
+          // Calculamos cuánto tiempo pasó (el delta) y empujamos la ventana hacia adelante
+          const delta = latestMs - currentWindow.value.endMs
+          currentWindow.value.endMs += delta
+          currentWindow.value.startMs += delta
+        }
+      }
+
       // Trigger de reactividad: Avisamos a Vue que hay datos nuevos
       dataVersion.value++
     }
