@@ -35,6 +35,7 @@ const newChannel = ref({
 
 const availableChats = ref([])
 const isFetchingChats = ref(false)
+const isTestingChannel = ref(false) // NUEVO: Estado para evitar multiclics rápidos al probar
 
 onMounted(() => {
   fetchChannels()
@@ -180,6 +181,23 @@ async function handleDeleteChannel(id) {
   } catch (err) {
     console.error('Error al eliminar canal:', err)
     showNotification(err.response?.data?.detail || 'Error al eliminar canal.', 'error')
+  }
+}
+
+// NUEVA FUNCIÓN: Probar Conectividad
+async function handleTestChannel(id) {
+  if (isTestingChannel.value) return
+  isTestingChannel.value = true
+  
+  try {
+    showNotification('Enviando mensaje de prueba...', 'success')
+    const { data } = await api.post(`/channels/${id}/test`)
+    showNotification(data.message || 'Prueba enviada correctamente.', 'success')
+  } catch (err) {
+    console.error('Error al probar canal:', err)
+    showNotification(err.response?.data?.detail || 'Error al enviar el mensaje de prueba. Revisa la configuración.', 'error')
+  } finally {
+    isTestingChannel.value = false
   }
 }
 
@@ -335,7 +353,10 @@ function formatHistoryDetails(details) {
                   ({{ channel.config?.timezone || 'UTC' }})
                 </span>
               </div>
-              <button @click="handleDeleteChannel(channel.id)" class="delete-btn">×</button>
+              <div class="item-actions">
+                <button @click="handleTestChannel(channel.id)" class="test-btn" :disabled="isTestingChannel" title="Probar conexión">🔔 Probar</button>
+                <button @click="handleDeleteChannel(channel.id)" class="delete-btn" title="Eliminar Canal">×</button>
+              </div>
             </li>
           </ul>
           <div v-else class="empty-list">No hay canales configurados.</div>
@@ -482,6 +503,32 @@ function formatHistoryDetails(details) {
 .item-info strong {
   color: white;
 }
+/* NUEVO: Contenedor para alinear los botones de acción */
+.item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-shrink: 0;
+}
+/* NUEVO: Estilos para el botón de prueba */
+.test-btn {
+  background-color: transparent;
+  border: 1px solid var(--primary-color);
+  color: white;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: bold;
+  transition: all 0.2s ease;
+}
+.test-btn:hover:not(:disabled) {
+  background-color: var(--primary-color);
+}
+.test-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .delete-btn {
   background: none;
   border: none;
@@ -489,6 +536,10 @@ function formatHistoryDetails(details) {
   font-size: 1.8rem;
   cursor: pointer;
   padding: 0 0.5rem;
+  transition: color 0.2s ease;
+}
+.delete-btn:hover {
+  color: var(--error-red);
 }
 .history-table {
   width: 100%;
