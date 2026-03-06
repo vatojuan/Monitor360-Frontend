@@ -234,11 +234,14 @@ async function deleteReport(jobId) {
   }
 }
 
-// Lógica de WebSocket para Progreso en Vivo
+// Lógica de WebSocket para Progreso en Vivo (CORREGIDA)
 function setupWebSocket() {
-  // Ajusta la URL de conexión si tu arquitectura usa otro path
+  // Obtenemos el token del localStorage (ajusta esto si usas Pinia/Vuex u otro método)
+  const token = localStorage.getItem('token') || ''
+  
+  // Ajustamos la URL para apuntar a la raíz /ws (como define FastAPI)
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/api/ws`
+  const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`
   
   try {
     wsConnection = new WebSocket(wsUrl)
@@ -252,9 +255,14 @@ function setupWebSocket() {
       } catch (e) { /* Ignorar errores de parseo */ }
     }
     
-    // Auto-reconexión simple si se corta
-    wsConnection.onclose = () => {
-      setTimeout(setupWebSocket, 5000)
+    wsConnection.onclose = (e) => {
+      console.log("WebSocket desconectado. Código:", e.code)
+      // Evitar reconexión en bucle si el problema es un token inválido/faltante
+      if (e.code !== 4401) {
+        setTimeout(setupWebSocket, 5000)
+      } else {
+        console.error("Error de autenticación WS: Token inválido.")
+      }
     }
   } catch (e) {
     console.error("Error iniciando WebSocket:", e)
@@ -920,7 +928,7 @@ async function confirmDeleteProfile() {
   border: 1px solid #059669;
 }
 .badge-mimosa {
-  background-color: rgba(236, 72, 153, 0.2);
+  background-color: rgba(236, 72, 153, 0.2); /* Rosa */
   color: #f472b6;
   border: 1px solid #db2777;
 }
@@ -949,11 +957,21 @@ async function confirmDeleteProfile() {
   border-radius: 50%;
   margin-right: 6px;
 }
-.dot.badge-ros { background-color: #60a5fa; }
-.dot.badge-ubnt { background-color: #34d399; }
-.dot.badge-mimosa { background-color: #f472b6; }
-.dot.badge-snmp { background-color: #fbbf24; }
-.dot.badge-gray { background-color: #888; }
+.dot.badge-ros {
+  background-color: #60a5fa;
+}
+.dot.badge-ubnt {
+  background-color: #34d399;
+}
+.dot.badge-mimosa {
+  background-color: #f472b6;
+}
+.dot.badge-snmp {
+  background-color: #fbbf24;
+}
+.dot.badge-gray {
+  background-color: #888;
+}
 
 .cred-user {
   font-size: 0.9rem;
@@ -1123,9 +1141,18 @@ async function confirmDeleteProfile() {
   font-weight: bold;
   cursor: pointer;
 }
-.btn-primary { background-color: var(--blue); color: white; }
-.btn-secondary { background-color: var(--primary-color); color: white; }
-.btn-danger { background-color: var(--error-red); color: white; }
+.btn-primary {
+  background-color: var(--blue);
+  color: white;
+}
+.btn-secondary {
+  background-color: var(--primary-color);
+  color: white;
+}
+.btn-danger {
+  background-color: var(--error-red);
+  color: white;
+}
 
 /* DUAL LIST STYLES (EDITOR) */
 .full-width-input {
@@ -1164,6 +1191,7 @@ async function confirmDeleteProfile() {
   color: var(--gray);
   font-size: 1.5rem;
 }
+
 .list-item {
   display: flex;
   align-items: center;
@@ -1175,10 +1203,22 @@ async function confirmDeleteProfile() {
   background-color: rgba(255, 255, 255, 0.03);
   transition: background 0.2s;
 }
-.list-item:hover { background-color: rgba(255, 255, 255, 0.08); }
-.list-item.available .action-icon { font-size: 0.8rem; color: var(--green); }
-.small-user { font-size: 0.8rem; color: var(--gray); margin-left: 0.5rem; }
-.item-text-row { display: flex; align-items: center; }
+.list-item:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+.list-item.available .action-icon {
+  font-size: 0.8rem;
+  color: var(--green);
+}
+.small-user {
+  font-size: 0.8rem;
+  color: var(--gray);
+  margin-left: 0.5rem;
+}
+.item-text-row {
+  display: flex;
+  align-items: center;
+}
 
 .list-item.selected {
   cursor: default;
@@ -1186,7 +1226,11 @@ async function confirmDeleteProfile() {
   background-color: rgba(58, 130, 246, 0.1);
   border: 1px solid rgba(58, 130, 246, 0.2);
 }
-.item-content { display: flex; align-items: center; gap: 0.8rem; }
+.item-content {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
 .priority-badge {
   background-color: var(--blue);
   color: white;
@@ -1199,8 +1243,15 @@ async function confirmDeleteProfile() {
   font-size: 0.75rem;
   font-weight: bold;
 }
-.text-col { display: flex; flex-direction: column; line-height: 1.2; }
-.item-actions { display: flex; gap: 0.3rem; }
+.text-col {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.item-actions {
+  display: flex;
+  gap: 0.3rem;
+}
 .item-actions button {
   background: none;
   border: none;
@@ -1209,11 +1260,25 @@ async function confirmDeleteProfile() {
   padding: 0.2rem;
   font-size: 0.8rem;
 }
-.item-actions button:hover { color: white; }
-.item-actions button:disabled { opacity: 0.3; cursor: not-allowed; }
-.btn-remove { color: var(--error-red) !important; font-size: 0.9rem !important; margin-left: 0.3rem; }
+.item-actions button:hover {
+  color: white;
+}
+.item-actions button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.btn-remove {
+  color: var(--error-red) !important;
+  font-size: 0.9rem !important;
+  margin-left: 0.3rem;
+}
 
-.empty-msg { text-align: center; color: var(--gray); margin-top: 2rem; font-size: 0.9rem; }
+.empty-msg {
+  text-align: center;
+  color: var(--gray);
+  margin-top: 2rem;
+  font-size: 0.9rem;
+}
 .empty-list {
   color: var(--gray);
   text-align: center;
@@ -1233,8 +1298,12 @@ async function confirmDeleteProfile() {
   font-weight: bold;
   z-index: 3000;
 }
-.notification.success { background-color: var(--green); }
-.notification.error { background-color: var(--error-red); }
+.notification.success {
+  background-color: var(--green);
+}
+.notification.error {
+  background-color: var(--error-red);
+}
 
 /* ESTILOS ESPECÍFICOS DE ROTACIÓN MASIVA */
 .radio-label {
