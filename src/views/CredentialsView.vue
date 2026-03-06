@@ -197,16 +197,18 @@ async function openRotateModal(cred) {
   await fetchDevicesForRotation(cred.id)
 }
 
-// NUEVO: Traer equipos para seleccionarlos manualmente
+// NUEVO: Traer equipos vinculados explícitamente a esta credencial
 async function fetchDevicesForRotation(currentCredId) {
   isLoadingDevices.value = true
   try {
     const { data } = await api.get('/devices')
-    allDevices.value = Array.isArray(data) ? data : []
+    const allFetched = Array.isArray(data) ? data : []
     
-    // Auto-seleccionar los equipos que tienen esta credencial explícita en BD
-    const explicitlyUsing = allDevices.value.filter(d => String(d.credential_id) === String(currentCredId))
-    rotateSelectedDevices.value = explicitlyUsing.map(d => d.id)
+    // FILTRAMOS: Solo mostramos los que tengan esta credencial
+    allDevices.value = allFetched.filter(d => String(d.credential_id) === String(currentCredId))
+    
+    // Auto-seleccionar todos por defecto
+    rotateSelectedDevices.value = allDevices.value.map(d => d.id)
   } catch (err) {
     console.error('Error cargando equipos', err)
   } finally {
@@ -538,14 +540,14 @@ async function confirmDeleteProfile() {
         </div>
 
         <div class="devices-selection mt-2">
-          <h4>Seleccionar Equipos a Migrar</h4>
-          <p class="helper-text-small">Selecciona a qué dispositivos físicos inyectarles esta configuración.</p>
+          <h4>Equipos vinculados a esta credencial</h4>
+          <p class="helper-text-small">Estos son los dispositivos en la base de datos que actualmente usan esta configuración.</p>
           
           <div v-if="isLoadingDevices" class="empty-msg">Cargando lista de equipos...</div>
           <div v-else class="devices-listbox">
-            <div class="device-item-row header-row">
+            <div class="device-item-row header-row" v-if="allDevices.length > 0">
               <label>
-                <input type="checkbox" @change="toggleAllDevices" :checked="rotateSelectedDevices.length === allDevices.length && allDevices.length > 0" />
+                <input type="checkbox" @change="toggleAllDevices" :checked="rotateSelectedDevices.length === allDevices.length" />
                 Seleccionar Todos
               </label>
             </div>
@@ -555,17 +557,17 @@ async function confirmDeleteProfile() {
                 <input type="checkbox" :value="dev.id" v-model="rotateSelectedDevices" />
                 <span class="dev-name">{{ dev.name }}</span>
                 <span class="dev-ip">({{ dev.ip_address }})</span>
-                <span v-if="String(dev.credential_id) === String(rotateSourceCred?.id)" class="dev-badge">Pre-vinculado</span>
+                <span class="dev-badge">Vinculado</span>
               </label>
             </div>
             
-            <div v-if="allDevices.length === 0" class="empty-msg">No hay equipos registrados.</div>
+            <div v-if="allDevices.length === 0" class="empty-msg">Ningún equipo usa explícitamente esta credencial.</div>
           </div>
         </div>
 
         <div class="modal-actions mt-2">
           <button @click="isRotateModalOpen = false" class="btn-secondary">Cancelar</button>
-          <button @click="submitBulkRotation" class="btn-primary">🚀 Iniciar Migración</button>
+          <button @click="submitBulkRotation" class="btn-primary" :disabled="allDevices.length === 0 || rotateSelectedDevices.length === 0">🚀 Iniciar Migración</button>
         </div>
       </div>
     </div>
