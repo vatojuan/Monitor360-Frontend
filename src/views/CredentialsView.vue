@@ -1,7 +1,9 @@
 <script setup>
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import api from '@/lib/api'
-import { supabase } from '@/lib/supabase' // <--- AÑADIDO: Importamos Supabase para obtener el token
+
+// --- AÑADIDO: Importamos el gestor central de WebSockets ---
+import { connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
 
 // --- ESTADO GLOBAL ---
 const activeTab = ref('credentials') // 'credentials' | 'profiles'
@@ -49,19 +51,22 @@ const rotateNewCred = ref({
 const isReportsModalOpen = ref(false)
 const activeReportsCred = ref(null)
 
-// --- WEBSOCKET PARA TIEMPO REAL ---
-let wsConnection = null
+// Variable para guardar la función de desvinculación del listener
+let wsUnbind = null
 
 // --- LIFECYCLE ---
-onMounted(() => {
+onMounted(async () => {
   fetchCredentials()
   fetchProfiles()
-  setupWebSocket()
+  
+  // Aseguramos que el WS centralizado esté conectado y luego nos colgamos de él
+  await connectWebSocketWhenAuthenticated()
+  initRealTime()
 })
 
 onUnmounted(() => {
-  if (wsConnection) {
-    wsConnection.close()
+  if (wsUnbind) {
+    wsUnbind()
   }
 })
 
@@ -235,40 +240,36 @@ async function deleteReport(jobId) {
   }
 }
 
-// Lógica de WebSocket para Progreso en Vivo (CORREGIDA)
-async function setupWebSocket() {
-  // 1. OBTENEMOS EL TOKEN DE SUPABASE DIRECTAMENTE
-  const { data } = await supabase.auth.getSession()
-  const token = data?.session?.access_token || ''
+// ==========================================
+// LÓGICA WEBSOCKET GLOBAL (INTEGRADO)
+// ==========================================
+function initRealTime() {
+  const ws = getCurrentWebSocket()
   
-  // 2. AJUSTAMOS LA URL A LA RAÍZ DEL WS
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`
-  
-  try {
-    wsConnection = new WebSocket(wsUrl)
-    
-    wsConnection.onmessage = (event) => {
-      try {
-        const payloadData = JSON.parse(event.data)
-        if (payloadData.type === 'bulk_rotation_progress') {
-          handleRealtimeProgress(payloadData)
-        }
-      } catch (e) { /* Ignorar errores de parseo */ }
-    }
-    
-    wsConnection.onclose = (e) => {
-      console.log("WebSocket desconectado. Código:", e.code)
-      // Evitar reconexión en bucle si el problema es un token inválido/faltante
-      if (e.code !== 4401) {
-        setTimeout(setupWebSocket, 5000)
-      } else {
-        console.error("Error de autenticación WS: Token inválido.")
-      }
-    }
-  } catch (e) {
-    console.error("Error iniciando WebSocket:", e)
+  if (!ws) {
+    // Si aún no está listo el socket global, reintentamos en un rato
+    setTimeout(initRealTime, 1000)
+    return
   }
+
+  // Listener para mensajes entrantes
+  const handleMessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (data.type === 'bulk_rotation_progress') {
+        handleRealtimeProgress(data)
+      }
+    } catch (e) {
+      /* Ignorar errores de parseo (pueden ser pings u otros eventos) */
+    }
+  }
+
+  // Desvinculamos por si acaso ya existía, y lo volvemos a añadir
+  ws.removeEventListener('message', handleMessage)
+  ws.addEventListener('message', handleMessage)
+
+  // Guardamos la función para poder destruirla en el onUnmounted
+  wsUnbind = () => ws.removeEventListener('message', handleMessage)
 }
 
 function handleRealtimeProgress(data) {
@@ -959,21 +960,11 @@ async function confirmDeleteProfile() {
   border-radius: 50%;
   margin-right: 6px;
 }
-.dot.badge-ros {
-  background-color: #60a5fa;
-}
-.dot.badge-ubnt {
-  background-color: #34d399;
-}
-.dot.badge-mimosa {
-  background-color: #f472b6;
-}
-.dot.badge-snmp {
-  background-color: #fbbf24;
-}
-.dot.badge-gray {
-  background-color: #888;
-}
+.dot.badge-ros { background-color: #60a5fa; }
+.dot.badge-ubnt { background-color: #34d399; }
+.dot.badge-mimosa { background-color: #f472b6; }
+.dot.badge-snmp { background-color: #fbbf24; }
+.dot.badge-gray { background-color: #888; }
 
 .cred-user {
   font-size: 0.9rem;
@@ -1143,18 +1134,9 @@ async function confirmDeleteProfile() {
   font-weight: bold;
   cursor: pointer;
 }
-.btn-primary {
-  background-color: var(--blue);
-  color: white;
-}
-.btn-secondary {
-  background-color: var(--primary-color);
-  color: white;
-}
-.btn-danger {
-  background-color: var(--error-red);
-  color: white;
-}
+.btn-primary { background-color: var(--blue); color: white; }
+.btn-secondary { background-color: var(--primary-color); color: white; }
+.btn-danger { background-color: var(--error-red); color: white; }
 
 /* DUAL LIST STYLES (EDITOR) */
 .full-width-input {
@@ -1193,7 +1175,6 @@ async function confirmDeleteProfile() {
   color: var(--gray);
   font-size: 1.5rem;
 }
-
 .list-item {
   display: flex;
   align-items: center;
@@ -1205,22 +1186,10 @@ async function confirmDeleteProfile() {
   background-color: rgba(255, 255, 255, 0.03);
   transition: background 0.2s;
 }
-.list-item:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-}
-.list-item.available .action-icon {
-  font-size: 0.8rem;
-  color: var(--green);
-}
-.small-user {
-  font-size: 0.8rem;
-  color: var(--gray);
-  margin-left: 0.5rem;
-}
-.item-text-row {
-  display: flex;
-  align-items: center;
-}
+.list-item:hover { background-color: rgba(255, 255, 255, 0.08); }
+.list-item.available .action-icon { font-size: 0.8rem; color: var(--green); }
+.small-user { font-size: 0.8rem; color: var(--gray); margin-left: 0.5rem; }
+.item-text-row { display: flex; align-items: center; }
 
 .list-item.selected {
   cursor: default;
@@ -1228,11 +1197,7 @@ async function confirmDeleteProfile() {
   background-color: rgba(58, 130, 246, 0.1);
   border: 1px solid rgba(58, 130, 246, 0.2);
 }
-.item-content {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-}
+.item-content { display: flex; align-items: center; gap: 0.8rem; }
 .priority-badge {
   background-color: var(--blue);
   color: white;
@@ -1245,15 +1210,8 @@ async function confirmDeleteProfile() {
   font-size: 0.75rem;
   font-weight: bold;
 }
-.text-col {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-.item-actions {
-  display: flex;
-  gap: 0.3rem;
-}
+.text-col { display: flex; flex-direction: column; line-height: 1.2; }
+.item-actions { display: flex; gap: 0.3rem; }
 .item-actions button {
   background: none;
   border: none;
@@ -1262,25 +1220,11 @@ async function confirmDeleteProfile() {
   padding: 0.2rem;
   font-size: 0.8rem;
 }
-.item-actions button:hover {
-  color: white;
-}
-.item-actions button:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-.btn-remove {
-  color: var(--error-red) !important;
-  font-size: 0.9rem !important;
-  margin-left: 0.3rem;
-}
+.item-actions button:hover { color: white; }
+.item-actions button:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-remove { color: var(--error-red) !important; font-size: 0.9rem !important; margin-left: 0.3rem; }
 
-.empty-msg {
-  text-align: center;
-  color: var(--gray);
-  margin-top: 2rem;
-  font-size: 0.9rem;
-}
+.empty-msg { text-align: center; color: var(--gray); margin-top: 2rem; font-size: 0.9rem; }
 .empty-list {
   color: var(--gray);
   text-align: center;
@@ -1300,12 +1244,8 @@ async function confirmDeleteProfile() {
   font-weight: bold;
   z-index: 3000;
 }
-.notification.success {
-  background-color: var(--green);
-}
-.notification.error {
-  background-color: var(--error-red);
-}
+.notification.success { background-color: var(--green); }
+.notification.error { background-color: var(--error-red); }
 
 /* ESTILOS ESPECÍFICOS DE ROTACIÓN MASIVA */
 .radio-label {
