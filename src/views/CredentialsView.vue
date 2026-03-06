@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import api from '@/lib/api'
+import { supabase } from '@/lib/supabase' // <--- AÑADIDO: Importamos Supabase para obtener el token
 
 // --- ESTADO GLOBAL ---
 const activeTab = ref('credentials') // 'credentials' | 'profiles'
@@ -235,11 +236,12 @@ async function deleteReport(jobId) {
 }
 
 // Lógica de WebSocket para Progreso en Vivo (CORREGIDA)
-function setupWebSocket() {
-  // Obtenemos el token del localStorage (ajusta esto si usas Pinia/Vuex u otro método)
-  const token = localStorage.getItem('token') || ''
+async function setupWebSocket() {
+  // 1. OBTENEMOS EL TOKEN DE SUPABASE DIRECTAMENTE
+  const { data } = await supabase.auth.getSession()
+  const token = data?.session?.access_token || ''
   
-  // Ajustamos la URL para apuntar a la raíz /ws (como define FastAPI)
+  // 2. AJUSTAMOS LA URL A LA RAÍZ DEL WS
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`
   
@@ -248,9 +250,9 @@ function setupWebSocket() {
     
     wsConnection.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data)
-        if (data.type === 'bulk_rotation_progress') {
-          handleRealtimeProgress(data)
+        const payloadData = JSON.parse(event.data)
+        if (payloadData.type === 'bulk_rotation_progress') {
+          handleRealtimeProgress(payloadData)
         }
       } catch (e) { /* Ignorar errores de parseo */ }
     }
