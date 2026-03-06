@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import api from '@/lib/api'
 
 // --- ESTADO GLOBAL ---
@@ -30,10 +30,38 @@ const profileForm = ref({
   selectedCreds: [], // Array de objetos {id, name, username, type}
 })
 
+// --- ESTADO ROTACIÓN MASIVA ---
+const isRotateModalOpen = ref(false)
+const rotateSourceCred = ref(null)
+const rotateMode = ref('new') // 'new' | 'existing'
+const rotateTargetId = ref(null)
+const rotateNewCred = ref({
+  name: '',
+  username: '',
+  password: '',
+  type: 'mikrotik_api',
+  vendor: 'Mikrotik',
+  is_password_only: false,
+})
+
+// --- ESTADO REPORTES DE ROTACIÓN ---
+const isReportsModalOpen = ref(false)
+const activeReportsCred = ref(null)
+
+// --- WEBSOCKET PARA TIEMPO REAL ---
+let wsConnection = null
+
 // --- LIFECYCLE ---
 onMounted(() => {
   fetchCredentials()
   fetchProfiles()
+  setupWebSocket()
+})
+
+onUnmounted(() => {
+  if (wsConnection) {
+    wsConnection.close()
+  }
 })
 
 // --- NOTIFICACIONES ---
@@ -51,6 +79,14 @@ async function fetchCredentials() {
   try {
     const { data } = await api.get('/credentials')
     savedCredentials.value = Array.isArray(data) ? data : []
+    
+    // Si el modal de reportes está abierto, actualizamos su data
+    if (activeReportsCred.value) {
+      const updatedCred = savedCredentials.value.find(c => c.id === activeReportsCred.value.id)
+      if (updatedCred) {
+        activeReportsCred.value = updatedCred
+      }
+    }
   } catch (err) {
     console.error('Error al cargar credenciales:', err)
     showNotification('Error al cargar credenciales.', 'error')
@@ -58,20 +94,19 @@ async function fetchCredentials() {
 }
 
 // Cambio automático de tipo al seleccionar vendor
-function onVendorChange() {
-  const v = newCredential.value.vendor
+function onVendorChange(targetObj) {
+  const v = targetObj.vendor
   if (v === 'Mikrotik') {
-    newCredential.value.type = 'mikrotik_api'
-    newCredential.value.is_password_only = false
+    targetObj.type = 'mikrotik_api'
+    targetObj.is_password_only = false
   } else if (v === 'Ubiquiti') {
-    newCredential.value.type = 'ssh'
-    newCredential.value.is_password_only = false
+    targetObj.type = 'ssh'
+    targetObj.is_password_only = false
   } else if (v === 'Mimosa') {
-    newCredential.value.type = 'ssh' // Mimosa usa SSH usualmente o HTTP digest, pero ssh es lo que tenemos
-    // Mantenemos is_password_only como estaba o false
+    targetObj.type = 'ssh'
   } else if (v === 'SNMP') {
-    newCredential.value.type = 'snmp'
-    newCredential.value.is_password_only = false // Community string va en username usualmente
+    targetObj.type = 'snmp'
+    targetObj.is_password_only = false 
   }
 }
 
@@ -90,7 +125,6 @@ async function handleAddCredential() {
   try {
     const payload = {
       ...newCredential.value,
-      // Si es password only, enviamos username null o vacío
       username: newCredential.value.is_password_only ? null : newCredential.value.username,
     }
 
@@ -130,6 +164,125 @@ async function confirmDeleteCredential() {
   }
 }
 
+// ==========================================
+// 2. LOGICA ROTACIÓN MASIVA Y REPORTES
+// ==========================================
+
+function openRotateModal(cred) {
+  rotateSourceCred.value = cred
+  rotateMode.value = 'new'
+  rotateTargetId.value = null
+  rotateNewCred.value = {
+    name: `Migración de ${cred.name}`,
+    username: cred.username || '',
+    password: '',
+    type: cred.type || 'mikrotik_api',
+    vendor: cred.vendor || 'Mikrotik',
+    is_password_only: cred.is_password_only || false,
+  }
+  isRotateModalOpen.value = true
+}
+
+const availableTargetsForRotation = computed(() => {
+  if (!rotateSourceCred.value) return []
+  return savedCredentials.value.filter(c => c.id !== rotateSourceCred.value.id)
+})
+
+async function submitBulkRotation() {
+  if (rotateMode.value === 'existing' && !rotateTargetId.value) {
+    return showNotification('Selecciona una credencial destino.', 'error')
+  }
+  if (rotateMode.value === 'new') {
+    if (!rotateNewCred.value.name.trim()) return showNotification('Nombre obligatorio.', 'error')
+    if (!rotateNewCred.value.is_password_only && !rotateNewCred.value.username.trim()) return showNotification('Usuario obligatorio.', 'error')
+    if (!rotateNewCred.value.password.trim() && rotateNewCred.value.vendor !== 'SNMP') return showNotification('Contraseña obligatoria.', 'error')
+  }
+
+  const payload = {}
+  if (rotateMode.value === 'existing') {
+    payload.target_credential_id = rotateTargetId.value
+  } else {
+    payload.new_credential_data = {
+      ...rotateNewCred.value,
+      username: rotateNewCred.value.is_password_only ? null : rotateNewCred.value.username
+    }
+  }
+
+  try {
+    await api.post(`/credentials/${rotateSourceCred.value.id}/bulk-rotate`, payload)
+    showNotification('Rotación masiva iniciada en segundo plano.', 'success')
+    isRotateModalOpen.value = false
+    fetchCredentials() // Refrescamos para ver el nuevo reporte en progreso
+  } catch (err) {
+    showNotification(err.response?.data?.detail || 'Error iniciando rotación masiva.', 'error')
+  }
+}
+
+function openReportsModal(cred) {
+  activeReportsCred.value = cred
+  isReportsModalOpen.value = true
+}
+
+async function deleteReport(jobId) {
+  if (!activeReportsCred.value) return
+  try {
+    await api.delete(`/credentials/${activeReportsCred.value.id}/reports/${jobId}`)
+    showNotification('Reporte eliminado.', 'success')
+    fetchCredentials()
+  } catch (err) {
+    showNotification(err.response?.data?.detail || 'Error eliminando reporte.', 'error')
+  }
+}
+
+// Lógica de WebSocket para Progreso en Vivo
+function setupWebSocket() {
+  // Ajusta la URL de conexión si tu arquitectura usa otro path
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${protocol}//${window.location.host}/api/ws`
+  
+  try {
+    wsConnection = new WebSocket(wsUrl)
+    
+    wsConnection.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.type === 'bulk_rotation_progress') {
+          handleRealtimeProgress(data)
+        }
+      } catch (e) { /* Ignorar errores de parseo */ }
+    }
+    
+    // Auto-reconexión simple si se corta
+    wsConnection.onclose = () => {
+      setTimeout(setupWebSocket, 5000)
+    }
+  } catch (e) {
+    console.error("Error iniciando WebSocket:", e)
+  }
+}
+
+function handleRealtimeProgress(data) {
+  const cred = savedCredentials.value.find(c => c.id === data.credential_id)
+  if (cred) {
+    let reports = cred.rotation_reports || []
+    const idx = reports.findIndex(r => r.job_id === data.job_id)
+    
+    if (idx !== -1) {
+      reports[idx] = { ...reports[idx], ...data }
+    } else {
+      reports.unshift(data)
+    }
+    
+    // Forzamos reactividad reemplazando el array
+    cred.rotation_reports = [...reports]
+    
+    // Si el modal de reportes está abierto para esta credencial, actualizamos
+    if (activeReportsCred.value && activeReportsCred.value.id === data.credential_id) {
+      activeReportsCred.value.rotation_reports = [...reports]
+    }
+  }
+}
+
 // Helpers visuales
 function getVendorBadgeClass(vendor) {
   if (!vendor) return 'badge-gray'
@@ -142,7 +295,7 @@ function getVendorBadgeClass(vendor) {
 }
 
 // ==========================================
-// 2. LOGICA DE PERFILES (LLAVEROS)
+// 3. LOGICA DE PERFILES (LLAVEROS)
 // ==========================================
 async function fetchProfiles() {
   try {
@@ -160,12 +313,11 @@ const availableCredentials = computed(() => {
 
 function openProfileModal(profile = null) {
   if (profile) {
-    // Editar
     const mappedSelection = profile.items.map((item) => ({
       id: item.credential_id,
       name: item.name,
       username: item.username,
-      vendor: item.vendor, // Traemos vendor
+      vendor: item.vendor,
       type: item.type,
     }))
     profileForm.value = {
@@ -174,7 +326,6 @@ function openProfileModal(profile = null) {
       selectedCreds: mappedSelection,
     }
   } else {
-    // Crear Nuevo
     profileForm.value = { id: null, name: '', selectedCreds: [] }
   }
   isProfileModalOpen.value = true
@@ -204,7 +355,6 @@ function moveUp(index) {
 function moveDown(index) {
   const arr = profileForm.value.selectedCreds
   if (index < arr.length - 1) {
-    const arr = profileForm.value.selectedCreds
     const temp = arr[index]
     arr[index] = arr[index + 1]
     arr[index + 1] = temp
@@ -279,6 +429,114 @@ async function confirmDeleteProfile() {
         <div class="modal-actions">
           <button @click="profileToDeleteId = null" class="btn-secondary">Cancelar</button>
           <button @click="confirmDeleteProfile" class="btn-danger">Eliminar</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="isRotateModalOpen" class="modal-overlay">
+      <div class="modal-content large-modal">
+        <h3>🔄 Rotación Masiva</h3>
+        <p class="helper-text">Migrar equipos desde <strong>{{ rotateSourceCred?.name }}</strong> hacia una nueva credencial.</p>
+        
+        <div class="rotation-modes">
+          <label class="radio-label">
+            <input type="radio" v-model="rotateMode" value="new"> Crear nueva credencial
+          </label>
+          <label class="radio-label">
+            <input type="radio" v-model="rotateMode" value="existing"> Elegir de la bóveda
+          </label>
+        </div>
+
+        <div v-if="rotateMode === 'new'" class="credential-form mt-1">
+          <div class="form-group-no-margin">
+            <label class="label-small">Fabricante / Tipo</label>
+            <select v-model="rotateNewCred.vendor" @change="onVendorChange(rotateNewCred)" class="type-select">
+              <option value="Mikrotik">📡 MikroTik (RouterOS)</option>
+              <option value="Ubiquiti">💻 Ubiquiti (AirOS / EdgeOS)</option>
+              <option value="Mimosa">📡 Mimosa Networks</option>
+              <option value="SNMP">🌐 SNMP (Solo Lectura)</option>
+            </select>
+          </div>
+
+          <input type="text" v-model="rotateNewCred.name" placeholder="Nombre descriptivo (Ej: Admin 2026) *" />
+
+          <div v-if="rotateNewCred.vendor === 'Mimosa'" class="checkbox-row">
+            <label>
+              <input type="checkbox" v-model="rotateNewCred.is_password_only" />
+              Solo Contraseña (Sin usuario)
+            </label>
+          </div>
+
+          <input v-if="!rotateNewCred.is_password_only" type="text" v-model="rotateNewCred.username" 
+                 :placeholder="rotateNewCred.vendor === 'SNMP' ? 'Community String *' : 'Nuevo Usuario *'" />
+
+          <input type="password" v-model="rotateNewCred.password" 
+                 :placeholder="rotateNewCred.vendor === 'SNMP' ? 'Contraseña (Opcional)' : 'Nueva Contraseña *'" />
+        </div>
+
+        <div v-if="rotateMode === 'existing'" class="credential-form mt-1">
+          <label class="label-small">Selecciona la credencial destino:</label>
+          <select v-model="rotateTargetId" class="type-select full-width-input">
+            <option value="null" disabled>-- Seleccionar --</option>
+            <option v-for="cred in availableTargetsForRotation" :key="cred.id" :value="cred.id">
+              {{ cred.name }} {{ cred.username ? `(${cred.username})` : '' }}
+            </option>
+          </select>
+        </div>
+
+        <div class="modal-actions mt-2">
+          <button @click="isRotateModalOpen = false" class="btn-secondary">Cancelar</button>
+          <button @click="submitBulkRotation" class="btn-primary">🚀 Iniciar Migración</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="isReportsModalOpen" class="modal-overlay">
+      <div class="modal-content large-modal reports-modal">
+        <h3>📊 Historial de Rotaciones: {{ activeReportsCred?.name }}</h3>
+        
+        <div v-if="!activeReportsCred?.rotation_reports || activeReportsCred.rotation_reports.length === 0" class="empty-msg">
+          No hay reportes de rotación masiva para esta credencial.
+        </div>
+
+        <div class="reports-list" v-else>
+          <div v-for="report in activeReportsCred.rotation_reports" :key="report.job_id" class="report-card">
+            <div class="report-header">
+              <div class="report-title-row">
+                <strong>{{ report.timestamp ? new Date(report.timestamp).toLocaleString() : 'Reciente' }}</strong>
+                <span :class="['status-badge', report.status]">{{ report.status === 'in_progress' ? '🔄 En Progreso' : '✅ Completado' }}</span>
+              </div>
+              <p class="target-group">{{ report.target_group }}</p>
+            </div>
+            
+            <div class="progress-section">
+              <div class="stats">
+                <span class="text-green">Éxito: {{ report.success_count }}</span>
+                <span class="text-red">Error: {{ report.error_count }}</span>
+                <span class="text-gray" v-if="report.total">Total: {{ report.total }}</span>
+              </div>
+              <div class="progress-bar-container" v-if="report.total && report.total > 0">
+                <div class="progress-bar-fill" 
+                     :style="{ width: (((report.success_count + report.error_count) / report.total) * 100) + '%' }">
+                </div>
+              </div>
+            </div>
+
+            <div v-if="report.errors && report.errors.length > 0" class="errors-list">
+              <p class="error-title">Equipos fallidos:</p>
+              <ul>
+                <li v-for="err in report.errors" :key="err.ip"><strong>{{ err.ip }}:</strong> {{ err.reason }}</li>
+              </ul>
+            </div>
+
+            <div class="report-footer">
+              <button class="btn-remove-report" @click="deleteReport(report.job_id)">🗑️ Borrar Reporte</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button @click="isReportsModalOpen = false" class="btn-secondary">Cerrar</button>
         </div>
       </div>
     </div>
@@ -396,7 +654,7 @@ async function confirmDeleteProfile() {
         <form @submit.prevent="handleAddCredential" class="credential-form">
           <div class="form-group-no-margin">
             <label class="label-small">Fabricante / Tipo</label>
-            <select v-model="newCredential.vendor" @change="onVendorChange" class="type-select">
+            <select v-model="newCredential.vendor" @change="onVendorChange(newCredential)" class="type-select">
               <option value="Mikrotik">📡 MikroTik (RouterOS)</option>
               <option value="Ubiquiti">💻 Ubiquiti (AirOS / EdgeOS)</option>
               <option value="Mimosa">📡 Mimosa Networks</option>
@@ -451,7 +709,18 @@ async function confirmDeleteProfile() {
                 {{ cred.username ? `Usuario: ${cred.username}` : '🔑 (Solo clave)' }}
               </span>
             </div>
-            <button @click="requestDeleteCredential(cred.id)" class="delete-btn">×</button>
+            <div class="cred-actions-group">
+              <button @click="openRotateModal(cred)" class="action-btn" title="Rotación Masiva">🔄</button>
+              
+              <button v-if="cred.rotation_reports && cred.rotation_reports.length > 0" 
+                      @click="openReportsModal(cred)" 
+                      class="action-btn btn-reports" 
+                      title="Ver Reportes de Rotación">
+                📊 ({{ cred.rotation_reports.length }})
+              </button>
+
+              <button @click="requestDeleteCredential(cred.id)" class="delete-btn" title="Eliminar">×</button>
+            </div>
           </li>
         </ul>
         <div v-else class="empty-list">No hay credenciales guardadas.</div>
@@ -511,6 +780,8 @@ async function confirmDeleteProfile() {
     transform: translateY(0);
   }
 }
+.mt-1 { margin-top: 1rem; }
+.mt-2 { margin-top: 2rem; }
 
 /* TABS */
 .tabs-header {
@@ -649,7 +920,7 @@ async function confirmDeleteProfile() {
   border: 1px solid #059669;
 }
 .badge-mimosa {
-  background-color: rgba(236, 72, 153, 0.2); /* Rosa */
+  background-color: rgba(236, 72, 153, 0.2);
   color: #f472b6;
   border: 1px solid #db2777;
 }
@@ -678,25 +949,46 @@ async function confirmDeleteProfile() {
   border-radius: 50%;
   margin-right: 6px;
 }
-.dot.badge-ros {
-  background-color: #60a5fa;
-}
-.dot.badge-ubnt {
-  background-color: #34d399;
-}
-.dot.badge-mimosa {
-  background-color: #f472b6;
-}
-.dot.badge-snmp {
-  background-color: #fbbf24;
-}
-.dot.badge-gray {
-  background-color: #888;
-}
+.dot.badge-ros { background-color: #60a5fa; }
+.dot.badge-ubnt { background-color: #34d399; }
+.dot.badge-mimosa { background-color: #f472b6; }
+.dot.badge-snmp { background-color: #fbbf24; }
+.dot.badge-gray { background-color: #888; }
 
 .cred-user {
   font-size: 0.9rem;
   color: var(--gray);
+}
+
+.cred-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.action-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: white;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+.action-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.btn-reports {
+  font-size: 0.9rem;
+  background-color: rgba(58, 130, 246, 0.1);
+  border: 1px solid var(--blue);
+  color: #60a5fa;
+  padding: 4px 8px;
+}
+.btn-reports:hover {
+  background-color: var(--blue);
+  color: white;
 }
 .delete-btn {
   background: none;
@@ -704,6 +996,7 @@ async function confirmDeleteProfile() {
   color: var(--gray);
   font-size: 1.5rem;
   cursor: pointer;
+  margin-left: 0.5rem;
 }
 .delete-btn:hover {
   color: var(--error-red);
@@ -806,6 +1099,8 @@ async function confirmDeleteProfile() {
   width: 90%;
   text-align: center;
   color: white;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 .modal-content.large-modal {
   max-width: 700px;
@@ -828,18 +1123,9 @@ async function confirmDeleteProfile() {
   font-weight: bold;
   cursor: pointer;
 }
-.btn-primary {
-  background-color: var(--blue);
-  color: white;
-}
-.btn-secondary {
-  background-color: var(--primary-color);
-  color: white;
-}
-.btn-danger {
-  background-color: var(--error-red);
-  color: white;
-}
+.btn-primary { background-color: var(--blue); color: white; }
+.btn-secondary { background-color: var(--primary-color); color: white; }
+.btn-danger { background-color: var(--error-red); color: white; }
 
 /* DUAL LIST STYLES (EDITOR) */
 .full-width-input {
@@ -878,7 +1164,6 @@ async function confirmDeleteProfile() {
   color: var(--gray);
   font-size: 1.5rem;
 }
-
 .list-item {
   display: flex;
   align-items: center;
@@ -890,22 +1175,10 @@ async function confirmDeleteProfile() {
   background-color: rgba(255, 255, 255, 0.03);
   transition: background 0.2s;
 }
-.list-item:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-}
-.list-item.available .action-icon {
-  font-size: 0.8rem;
-  color: var(--green);
-}
-.small-user {
-  font-size: 0.8rem;
-  color: var(--gray);
-  margin-left: 0.5rem;
-}
-.item-text-row {
-  display: flex;
-  align-items: center;
-}
+.list-item:hover { background-color: rgba(255, 255, 255, 0.08); }
+.list-item.available .action-icon { font-size: 0.8rem; color: var(--green); }
+.small-user { font-size: 0.8rem; color: var(--gray); margin-left: 0.5rem; }
+.item-text-row { display: flex; align-items: center; }
 
 .list-item.selected {
   cursor: default;
@@ -913,11 +1186,7 @@ async function confirmDeleteProfile() {
   background-color: rgba(58, 130, 246, 0.1);
   border: 1px solid rgba(58, 130, 246, 0.2);
 }
-.item-content {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-}
+.item-content { display: flex; align-items: center; gap: 0.8rem; }
 .priority-badge {
   background-color: var(--blue);
   color: white;
@@ -930,15 +1199,8 @@ async function confirmDeleteProfile() {
   font-size: 0.75rem;
   font-weight: bold;
 }
-.text-col {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-.item-actions {
-  display: flex;
-  gap: 0.3rem;
-}
+.text-col { display: flex; flex-direction: column; line-height: 1.2; }
+.item-actions { display: flex; gap: 0.3rem; }
 .item-actions button {
   background: none;
   border: none;
@@ -947,25 +1209,11 @@ async function confirmDeleteProfile() {
   padding: 0.2rem;
   font-size: 0.8rem;
 }
-.item-actions button:hover {
-  color: white;
-}
-.item-actions button:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-.btn-remove {
-  color: var(--error-red) !important;
-  font-size: 0.9rem !important;
-  margin-left: 0.3rem;
-}
+.item-actions button:hover { color: white; }
+.item-actions button:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-remove { color: var(--error-red) !important; font-size: 0.9rem !important; margin-left: 0.3rem; }
 
-.empty-msg {
-  text-align: center;
-  color: var(--gray);
-  margin-top: 2rem;
-  font-size: 0.9rem;
-}
+.empty-msg { text-align: center; color: var(--gray); margin-top: 2rem; font-size: 0.9rem; }
 .empty-list {
   color: var(--gray);
   text-align: center;
@@ -983,12 +1231,104 @@ async function confirmDeleteProfile() {
   border-radius: 8px;
   color: white;
   font-weight: bold;
-  z-index: 1000;
+  z-index: 3000;
 }
-.notification.success {
-  background-color: var(--green);
+.notification.success { background-color: var(--green); }
+.notification.error { background-color: var(--error-red); }
+
+/* ESTILOS ESPECÍFICOS DE ROTACIÓN MASIVA */
+.radio-label {
+  display: inline-block;
+  margin-right: 1.5rem;
+  color: white;
+  cursor: pointer;
+  font-size: 1rem;
 }
-.notification.error {
-  background-color: var(--error-red);
+.radio-label input { margin-right: 8px; }
+
+/* ESTILOS DE REPORTES */
+.reports-modal {
+  max-width: 600px;
 }
+.reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.report-card {
+  background-color: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  border-radius: 8px;
+  padding: 1rem;
+}
+.report-header {
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+.report-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.target-group {
+  margin: 0.3rem 0 0 0;
+  font-size: 0.9rem;
+  color: var(--gray);
+}
+.status-badge {
+  font-size: 0.8rem;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-weight: bold;
+}
+.status-badge.in_progress { background-color: rgba(58, 130, 246, 0.2); color: #60a5fa; }
+.status-badge.completed { background-color: rgba(16, 185, 129, 0.2); color: #34d399; }
+
+.stats {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+.text-green { color: #34d399; font-weight: bold; }
+.text-red { color: #f87171; font-weight: bold; }
+.text-gray { color: var(--gray); }
+
+.progress-bar-container {
+  background-color: #333;
+  border-radius: 4px;
+  height: 8px;
+  width: 100%;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  background-color: var(--blue);
+  height: 100%;
+  transition: width 0.3s ease-out;
+}
+
+.errors-list {
+  margin-top: 1rem;
+  background-color: rgba(248, 113, 113, 0.1);
+  border-left: 3px solid #f87171;
+  padding: 0.5rem 1rem;
+  border-radius: 0 4px 4px 0;
+}
+.error-title { margin: 0 0 0.5rem 0; font-weight: bold; color: #fca5a5; font-size: 0.9rem; }
+.errors-list ul { margin: 0; padding-left: 1.2rem; font-size: 0.85rem; color: #fecaca; }
+
+.report-footer {
+  margin-top: 1rem;
+  text-align: right;
+}
+.btn-remove-report {
+  background: none;
+  border: none;
+  color: var(--gray);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.btn-remove-report:hover { color: var(--error-red); }
 </style>
