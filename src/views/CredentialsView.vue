@@ -47,11 +47,16 @@ const rotateNewCred = ref({
   is_password_only: false,
 })
 
+// NUEVO: Estado para cargar y seleccionar dispositivos manualmente
+const allDevices = ref([])
+const isLoadingDevices = ref(false)
+const rotateSelectedDevices = ref([]) // IDs de los equipos seleccionados
+
 // --- ESTADO REPORTES DE ROTACIÓN ---
 const isReportsModalOpen = ref(false)
 const activeReportsCred = ref(null)
 
-// Variable para guardar la función de desvinculación del listener
+// Variable para guardar la función de desvinculación del listener WS
 let wsUnbind = null
 
 // --- LIFECYCLE ---
@@ -174,10 +179,11 @@ async function confirmDeleteCredential() {
 // 2. LOGICA ROTACIÓN MASIVA Y REPORTES
 // ==========================================
 
-function openRotateModal(cred) {
+async function openRotateModal(cred) {
   rotateSourceCred.value = cred
   rotateMode.value = 'new'
   rotateTargetId.value = null
+  rotateSelectedDevices.value = []
   rotateNewCred.value = {
     name: `Migración de ${cred.name}`,
     username: cred.username || '',
@@ -186,7 +192,35 @@ function openRotateModal(cred) {
     vendor: cred.vendor || 'Mikrotik',
     is_password_only: cred.is_password_only || false,
   }
+  
   isRotateModalOpen.value = true
+  await fetchDevicesForRotation(cred.id)
+}
+
+// NUEVO: Traer equipos para seleccionarlos manualmente
+async function fetchDevicesForRotation(currentCredId) {
+  isLoadingDevices.value = true
+  try {
+    const { data } = await api.get('/devices')
+    allDevices.value = Array.isArray(data) ? data : []
+    
+    // Auto-seleccionar los equipos que tienen esta credencial explícita en BD
+    const explicitlyUsing = allDevices.value.filter(d => String(d.credential_id) === String(currentCredId))
+    rotateSelectedDevices.value = explicitlyUsing.map(d => d.id)
+  } catch (err) {
+    console.error('Error cargando equipos', err)
+  } finally {
+    isLoadingDevices.value = false
+  }
+}
+
+// NUEVO: Marcar/Desmarcar todos
+function toggleAllDevices(event) {
+  if (event.target.checked) {
+    rotateSelectedDevices.value = allDevices.value.map(d => d.id)
+  } else {
+    rotateSelectedDevices.value = []
+  }
 }
 
 const availableTargetsForRotation = computed(() => {
@@ -195,6 +229,10 @@ const availableTargetsForRotation = computed(() => {
 })
 
 async function submitBulkRotation() {
+  if (rotateSelectedDevices.value.length === 0) {
+    return showNotification('Debes seleccionar al menos un equipo.', 'error')
+  }
+  
   if (rotateMode.value === 'existing' && !rotateTargetId.value) {
     return showNotification('Selecciona una credencial destino.', 'error')
   }
@@ -204,7 +242,11 @@ async function submitBulkRotation() {
     if (!rotateNewCred.value.password.trim() && rotateNewCred.value.vendor !== 'SNMP') return showNotification('Contraseña obligatoria.', 'error')
   }
 
-  const payload = {}
+  const payload = {
+    // ENVIAMOS EL ARRAY DE EQUIPOS AL BACKEND
+    device_ids: rotateSelectedDevices.value.map(String) 
+  }
+  
   if (rotateMode.value === 'existing') {
     payload.target_credential_id = rotateTargetId.value
   } else {
@@ -252,7 +294,7 @@ function initRealTime() {
     return
   }
 
-  // Listener para mensajes entrantes
+  // Listener para mensajes entrantes de Celery
   const handleMessage = (event) => {
     try {
       const data = JSON.parse(event.data)
@@ -493,6 +535,32 @@ async function confirmDeleteProfile() {
               {{ cred.name }} {{ cred.username ? `(${cred.username})` : '' }}
             </option>
           </select>
+        </div>
+
+        <div class="devices-selection mt-2">
+          <h4>Seleccionar Equipos a Migrar</h4>
+          <p class="helper-text-small">Selecciona a qué dispositivos físicos inyectarles esta configuración.</p>
+          
+          <div v-if="isLoadingDevices" class="empty-msg">Cargando lista de equipos...</div>
+          <div v-else class="devices-listbox">
+            <div class="device-item-row header-row">
+              <label>
+                <input type="checkbox" @change="toggleAllDevices" :checked="rotateSelectedDevices.length === allDevices.length && allDevices.length > 0" />
+                Seleccionar Todos
+              </label>
+            </div>
+            
+            <div v-for="dev in allDevices" :key="dev.id" class="device-item-row">
+              <label>
+                <input type="checkbox" :value="dev.id" v-model="rotateSelectedDevices" />
+                <span class="dev-name">{{ dev.name }}</span>
+                <span class="dev-ip">({{ dev.ip_address }})</span>
+                <span v-if="String(dev.credential_id) === String(rotateSourceCred?.id)" class="dev-badge">Pre-vinculado</span>
+              </label>
+            </div>
+            
+            <div v-if="allDevices.length === 0" class="empty-msg">No hay equipos registrados.</div>
+          </div>
         </div>
 
         <div class="modal-actions mt-2">
@@ -1138,7 +1206,69 @@ async function confirmDeleteProfile() {
 .btn-secondary { background-color: var(--primary-color); color: white; }
 .btn-danger { background-color: var(--error-red); color: white; }
 
-/* DUAL LIST STYLES (EDITOR) */
+/* NUEVO: ESTILOS SELECTOR DE EQUIPOS (ROTACIÓN MANUAL) */
+.helper-text-small {
+  color: var(--gray);
+  font-size: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+.devices-selection {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--primary-color);
+  padding-top: 1rem;
+  text-align: left;
+}
+.devices-selection h4 {
+  margin: 0;
+  color: white;
+}
+.devices-listbox {
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--primary-color);
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+.device-item-row {
+  display: flex;
+  align-items: center;
+  padding: 0.4rem 0;
+  color: white;
+  font-size: 0.9rem;
+}
+.device-item-row:not(:last-child) {
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.device-item-row.header-row {
+  border-bottom: 1px solid var(--primary-color);
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  color: var(--blue);
+}
+.device-item-row label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  width: 100%;
+}
+.device-item-row input[type="checkbox"] {
+  margin-right: 0.6rem;
+  cursor: pointer;
+}
+.dev-name { font-weight: bold; margin-right: 0.4rem; }
+.dev-ip { color: var(--gray); font-family: monospace; font-size: 0.85rem; margin-right: 0.5rem; }
+.dev-badge { 
+  background-color: rgba(16, 185, 129, 0.2); 
+  color: #34d399; 
+  font-size: 0.7rem; 
+  padding: 2px 6px; 
+  border-radius: 4px; 
+  border: 1px solid #059669; 
+  margin-left: auto; 
+}
+
+/* DUAL LIST STYLES (EDITOR PERFILES) */
 .full-width-input {
   width: 100%;
   padding: 0.8rem;
