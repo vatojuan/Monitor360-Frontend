@@ -1066,7 +1066,7 @@ onUnmounted(() => {
             ⏱️ Programar Tarea ({{ selectedDevices.length }})
           </button>
           <button @click="openBulkModal" class="btn-bulk btn-warning">
-            ⚡ Configurar Monitores ({{ selectedDevices.length }})
+            📡 Configurar Monitores ({{ selectedDevices.length }})
           </button>
           <button @click="handleBulkDelete" class="btn-bulk btn-danger" :disabled="isDeletingBulk">
             {{ isDeletingBulk ? 'Eliminando...' : `🗑️ Eliminar (${selectedDevices.length})` }}
