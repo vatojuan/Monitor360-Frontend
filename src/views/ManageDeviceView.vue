@@ -1936,6 +1936,24 @@ label {
   color: white;
 }
 
+/* Agrega este bloque al final de tus estilos para corregir el botón de eliminar masivo */
+
+.btn-danger {
+  background: var(--error-red) !important; /* Usamos tu variable de rojo con !important para pisar estilos por defecto */
+  color: white !important; /* Texto blanco obligatorio */
+}
+
+/* Efecto hover profesional: Se aclara un poco el rojo */
+.btn-danger:hover:not(:disabled) {
+  background: #ff8787 !important; 
+}
+
+/* Estilo para cuando el botón está deshabilitado (mientras elimina) */
+.btn-danger:disabled {
+  background: rgba(231, 76, 60, 0.5) !important; /* Rojo tenue y transparente */
+  cursor: not-allowed;
+  opacity: 0.8;
+}
 /* =========================================
    ESTILOS BARRA DE FILTROS (NUEVOS)
    ========================================= */
