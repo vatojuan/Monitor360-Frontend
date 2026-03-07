@@ -1065,7 +1065,7 @@ onUnmounted(() => {
           <button @click="openTaskModal" class="btn-bulk btn-primary">
             ⏱️ Programar Tarea ({{ selectedDevices.length }})
           </button>
-          <button @click="openBulkModal" class="btn-bulk btn-warning">
+          <button @click="openBulkModal" class="btn-bulk btn-info">
             📡 Configurar Monitores ({{ selectedDevices.length }})
           </button>
           <button @click="handleBulkDelete" class="btn-bulk btn-danger" :disabled="isDeletingBulk">
