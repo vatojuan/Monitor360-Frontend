@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import SmartTerminalModal from '@/components/SmartTerminalModal.vue'
@@ -7,7 +7,7 @@ import SmartTerminalModal from '@/components/SmartTerminalModal.vue'
 const router = useRouter()
 
 // ===== UI Estado general =====
-const currentTab = ref('add') // 'add' | 'manage'
+const currentTab = ref('add') // 'add' | 'manage' | 'tasks'
 const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- MODAL DE ERROR DE AUTENTICACIÓN ---
@@ -166,7 +166,7 @@ async function submitComment() {
 }
 
 function formatDate(isoStr) {
-  if (!isoStr) return ''
+  if (!isoStr) return '-'
   return new Date(isoStr).toLocaleString('es-ES', {
     day: '2-digit',
     month: '2-digit',
@@ -208,7 +208,7 @@ function closeTerminal() {
   fetchAllDevices()
 }
 
-// ===== NUEVO: ESTADO ROTAR CREDENCIALES =====
+// ===== ESTADO ROTAR CREDENCIALES =====
 const showRotateCredentialsModal = ref(false)
 const activeDeviceForPassword = ref(null)
 const rotateCredentialsForm = ref({ newUsername: '', newPassword: '', confirmPassword: '', credentialName: '' })
@@ -246,12 +246,10 @@ async function submitRotateCredentials() {
     
     showNotification('Credenciales rotadas exitosamente', 'success')
     showRotateCredentialsModal.value = false
-    activeDeviceForPassword.value = null // <-- CORRECCIÓN: Resetea y cierra el modal
+    activeDeviceForPassword.value = null 
     
-    // --- Refrescar el inventario y las credenciales en vivo ---
     await fetchAllDevices()
     await fetchCredentials()
-
   } catch (err) {
     showNotification(err.response?.data?.detail || 'Error al rotar credenciales', 'error')
   } finally {
@@ -298,16 +296,164 @@ function closeDropdownOnClickOutside(e) {
   }
 }
 
-onMounted(() => {
-  document.addEventListener('click', closeDropdownOnClickOutside)
+// ===== TAREAS PROGRAMADAS (RMM) =====
+const scheduledTasks = ref([])
+const isLoadingTasks = ref(false)
+const showTaskModal = ref(false)
+const isCreatingTask = ref(false)
+
+const daysOfWeek = [
+  { value: 'mon', label: 'Lu' }, { value: 'tue', label: 'Ma' },
+  { value: 'wed', label: 'Mi' }, { value: 'thu', label: 'Ju' },
+  { value: 'fri', label: 'Vi' }, { value: 'sat', label: 'Sá' },
+  { value: 'sun', label: 'Do' }
+]
+
+const newTaskForm = ref({
+  name: '',
+  action_type: 'conditional_reboot',
+  min_uptime_days: 30,
+  script_body: '',
+  time: '03:00',
+  days: [] // Vacio = Todos los dias
 })
-onUnmounted(() => {
-  document.removeEventListener('click', closeDropdownOnClickOutside)
+
+// Logs Modal
+const showTaskLogsModal = ref(false)
+const activeTaskLogs = ref([])
+const isLoadingTaskLogs = ref(false)
+const activeTaskForLogs = ref(null)
+
+// Lazy load para tareas
+watch(currentTab, (newTab) => {
+  if (newTab === 'tasks' && scheduledTasks.value.length === 0) {
+    fetchScheduledTasks()
+  }
+})
+
+async function fetchScheduledTasks() {
+  isLoadingTasks.value = true
+  try {
+    const { data } = await api.get('/devices/scheduled-tasks/')
+    scheduledTasks.value = data
+  } catch (error) {
+    console.error(error)
+    showNotification('Error cargando tareas programadas', 'error')
+  } finally {
+    isLoadingTasks.value = false
+  }
+}
+
+function openTaskModal() {
+  if (selectedDevices.value.length === 0) return
+  newTaskForm.value = {
+    name: '',
+    action_type: 'conditional_reboot',
+    min_uptime_days: 30,
+    script_body: '',
+    time: '03:00',
+    days: []
+  }
+  showTaskModal.value = true
+}
+
+function toggleDaySelection(dayValue) {
+  if (newTaskForm.value.days.includes(dayValue)) {
+    newTaskForm.value.days = newTaskForm.value.days.filter(d => d !== dayValue)
+  } else {
+    newTaskForm.value.days.push(dayValue)
+  }
+}
+
+async function submitScheduledTask() {
+  if (!newTaskForm.value.name.trim()) return showNotification('El nombre de la tarea es obligatorio', 'error')
+
+  const payload = {
+    name: newTaskForm.value.name,
+    action_type: newTaskForm.value.action_type,
+    action_payload: {},
+    schedule_config: {
+      time: newTaskForm.value.time,
+      days: newTaskForm.value.days
+    },
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    target_device_ids: selectedDevices.value
+  }
+
+  if (newTaskForm.value.action_type === 'conditional_reboot') {
+    payload.action_payload.min_uptime_days = newTaskForm.value.min_uptime_days
+  } else if (newTaskForm.value.action_type === 'custom_script') {
+    if (!newTaskForm.value.script_body.trim()) return showNotification('El script no puede estar vacío', 'error')
+    payload.action_payload.script_body = newTaskForm.value.script_body
+  }
+
+  isCreatingTask.value = true
+  try {
+    const { data } = await api.post('/devices/scheduled-tasks/', payload)
+    showNotification(`Tarea creada exitosamente. (Asignada a ${data.assigned_devices} equipos)`, 'success')
+    showTaskModal.value = false
+    selectedDevices.value = []
+    
+    // Cambiamos a la pestaña de tareas automáticamente para que vea su creación
+    currentTab.value = 'tasks'
+    await fetchScheduledTasks()
+  } catch (error) {
+    console.error(error)
+    showNotification(error.response?.data?.detail || 'Error al crear la tarea programada', 'error')
+  } finally {
+    isCreatingTask.value = false
+  }
+}
+
+async function toggleTaskState(task) {
+  try {
+    const res = await api.patch(`/devices/scheduled-tasks/${task.id}/toggle`, { is_active: !task.is_active })
+    task.is_active = res.data.is_active
+    showNotification(task.is_active ? 'Tarea reanudada' : 'Tarea pausada', 'success')
+  } catch(e) {
+    showNotification('Error al cambiar el estado de la tarea', 'error')
+  }
+}
+
+async function deleteScheduledTask(task) {
+  if (!confirm(`¿Estás seguro de eliminar la tarea "${task.name}" y todo su historial de ejecuciones?`)) return
+  try {
+    await api.delete(`/devices/scheduled-tasks/${task.id}`)
+    showNotification('Tarea programada eliminada', 'success')
+    await fetchScheduledTasks()
+  } catch(e) {
+    showNotification('Error al eliminar tarea', 'error')
+  }
+}
+
+async function openTaskLogsModal(task) {
+  activeTaskForLogs.value = task
+  showTaskLogsModal.value = true
+  isLoadingTaskLogs.value = true
+  try {
+    const { data } = await api.get(`/devices/scheduled-tasks/${task.id}/logs`)
+    activeTaskLogs.value = data
+  } catch(e) {
+    showNotification('Error cargando historial de tarea', 'error')
+  } finally {
+    isLoadingTaskLogs.value = false
+  }
+}
+
+const taskCompatibility = computed(() => {
+  const stats = selectionStats.value
+  return {
+    compatible: stats.managed,
+    skipped: stats.generic,
+    isPartial: stats.generic > 0,
+    message: stats.generic > 0
+        ? `⚠️ Atención: Se programará solo para ${stats.managed} equipos gestionados. Se omitirán ${stats.generic} equipos genéricos.`
+        : `✅ Compatible con los ${stats.managed} dispositivos gestionados seleccionados.`,
+  }
 })
 
 // ===== COMPUTADAS INTELIGENTES Y FILTROS =====
 
-// Lógica de roles helper (movida arriba para poder usarla en el computed)
 function getDeviceRole(device) {
   if (device.is_maestro) return { label: 'Maestro', class: 'maestro' }
   if (device.credential_id) return { label: 'Gestionado', class: 'managed' }
@@ -323,7 +469,7 @@ const uniqueVendors = computed(() => {
 
 const filteredDevices = computed(() => {
   return allDevices.value.filter(d => {
-    // 1. Search text (Búsqueda difusa)
+    // 1. Search text
     if (inventoryFilter.value.search) {
       const q = inventoryFilter.value.search.toLowerCase().trim()
       const match = (
@@ -343,7 +489,7 @@ const filteredDevices = computed(() => {
 
     // 3. Role
     if (inventoryFilter.value.role !== 'all') {
-      const roleClass = getDeviceRole(d).class // 'maestro', 'managed', 'device' (genérico)
+      const roleClass = getDeviceRole(d).class
       if (inventoryFilter.value.role === 'maestro' && roleClass !== 'maestro') return false
       if (inventoryFilter.value.role === 'managed' && roleClass !== 'managed') return false
       if (inventoryFilter.value.role === 'generic' && roleClass !== 'device') return false
@@ -353,7 +499,6 @@ const filteredDevices = computed(() => {
   })
 })
 
-// Helper para Label del Puerto Dinámico
 const portLabel = computed(() => {
   const v = addForm.value.vendor
   if (v === 'Mikrotik') return 'Puerto API (Winbox)'
@@ -362,7 +507,6 @@ const portLabel = computed(() => {
   return 'Puerto de Gestión'
 })
 
-// Cambio automático de puerto default al cambiar vendor
 function onVendorChange() {
   if (addForm.value.vendor === 'Mikrotik') addForm.value.api_port = 8728
   else if (addForm.value.vendor === 'Ubiquiti') addForm.value.api_port = 22
@@ -617,7 +761,7 @@ async function deleteDevice(device) {
   }
 }
 
-// ===== LÓGICA DE SELECCIÓN Y MASIVAS (ACTUALIZADO PARA FILTROS) =====
+// ===== LÓGICA DE SELECCIÓN Y MASIVAS =====
 function toggleSelection(id) {
   if (selectedDevices.value.includes(id)) {
     selectedDevices.value = selectedDevices.value.filter((d) => d !== id)
@@ -664,7 +808,7 @@ async function handleBulkDelete() {
   }
 }
 
-// ---- Modal Creación Masiva ----
+// ---- Modal Creación Masiva Monitores ----
 function openBulkModal() {
   if (selectedDevices.value.length === 0) return
   bulkPingConfig.value = createNewPingSensor()
@@ -774,11 +918,16 @@ async function submitBulkMonitors() {
 }
 
 // ===== Lifecycle =====
-onMounted(async () => {
+onMounted(() => {
+  document.addEventListener('click', closeDropdownOnClickOutside)
   fetchAllDevices()
   fetchVpnProfiles()
   fetchCredentials()
   fetchChannels()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', closeDropdownOnClickOutside)
 })
 </script>
 
@@ -792,6 +941,9 @@ onMounted(async () => {
       <button :class="{ active: currentTab === 'add' }" @click="currentTab = 'add'">Agregar</button>
       <button :class="{ active: currentTab === 'manage' }" @click="currentTab = 'manage'">
         Gestionar
+      </button>
+      <button :class="{ active: currentTab === 'tasks' }" @click="currentTab = 'tasks'" style="display: flex; align-items: center; gap: 5px;">
+        Tareas Automáticas <span class="badge" style="background: var(--blue); padding: 2px 6px;">Nuevo</span>
       </button>
     </div>
 
@@ -910,6 +1062,9 @@ onMounted(async () => {
         <h2><i class="icon">👑</i> Inventario</h2>
 
         <div v-if="selectedDevices.length > 0" class="bulk-actions-wrapper fade-in">
+          <button @click="openTaskModal" class="btn-bulk btn-primary">
+            ⏱️ Programar Tarea ({{ selectedDevices.length }})
+          </button>
           <button @click="openBulkModal" class="btn-bulk btn-warning">
             ⚡ Configurar Monitores ({{ selectedDevices.length }})
           </button>
@@ -1064,6 +1219,192 @@ onMounted(async () => {
         </table>
       </div>
     </section>
+
+    <section v-if="currentTab === 'tasks'" class="control-section fade-in">
+      <div class="manage-header">
+        <h2><i class="icon">⚙️</i> Panel de Automatización (RMM)</h2>
+        <button class="btn-primary" @click="currentTab = 'manage'">+ Nueva Tarea</button>
+      </div>
+      
+      <p class="text-dim" style="margin-bottom: 1.5rem;">
+        Aquí puedes gestionar las tareas masivas que se ejecutan automáticamente en el fondo (ej. reinicios condicionales o scripts).
+      </p>
+
+      <div v-if="isLoadingTasks" class="loading-text">Cargando tareas programadas...</div>
+      
+      <div v-else-if="scheduledTasks.length === 0" class="empty-state" style="padding: 3rem 0;">
+        <div class="empty-icon">⏳</div>
+        <p>No tienes tareas programadas activas.</p>
+        <span class="text-dim small">Selecciona equipos desde la pestaña de Gestión para crear una.</span>
+      </div>
+
+      <div v-else class="table-responsive">
+        <table class="device-table">
+          <thead>
+            <tr>
+              <th>Estado</th>
+              <th>Nombre de Tarea</th>
+              <th>Acción</th>
+              <th>Frecuencia / Hora</th>
+              <th>Equipos</th>
+              <th>Última Ejecución</th>
+              <th style="text-align: right;">Opciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="task in scheduledTasks" :key="task.id">
+              <td>
+                <label class="toggle-switch">
+                  <input type="checkbox" :checked="task.is_active" @change="toggleTaskState(task)" />
+                  <span class="slider"></span>
+                </label>
+              </td>
+              <td>
+                <strong>{{ task.name }}</strong>
+                <div class="text-dim small">ID: {{ task.id }}</div>
+              </td>
+              <td>
+                <span class="badge maestro" v-if="task.action_type === 'conditional_reboot'">Reinicio Condicional</span>
+                <span class="badge managed" v-else-if="task.action_type === 'custom_script'">Script Personalizado</span>
+                <span class="badge device" v-else>Reinicio Forzado</span>
+              </td>
+              <td>
+                <div style="font-weight: bold;">{{ task.schedule_config.time }}</div>
+                <div class="text-dim small">
+                  {{ task.schedule_config.days && task.schedule_config.days.length > 0 ? task.schedule_config.days.join(', ').toUpperCase() : 'Todos los días' }}
+                </div>
+              </td>
+              <td><span class="badge" style="background: rgba(255,255,255,0.1);">{{ task.target_count }} asignados</span></td>
+              <td>{{ formatDate(task.last_run) }}</td>
+              <td style="text-align: right;">
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                  <button class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" @click="openTaskLogsModal(task)">
+                    📋 Historial
+                  </button>
+                  <button class="btn-secondary text-danger" style="padding: 0.4rem 0.8rem; font-size: 0.85rem; border-color: rgba(255,0,0,0.3);" @click="deleteScheduledTask(task)">
+                    🗑️
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div v-if="showTaskModal" class="modal-overlay">
+      <div class="modal-content large-modal">
+        <h3>⏱️ Programar Acción Masiva</h3>
+
+        <div class="compatibility-box" :class="taskCompatibility.isPartial ? 'warning' : 'ok'">
+          {{ taskCompatibility.message }}
+        </div>
+
+        <form @submit.prevent="submitScheduledTask" class="bulk-form">
+          <div class="form-group">
+            <label>Nombre de la Tarea</label>
+            <input v-model="newTaskForm.name" type="text" placeholder="Ej: Reinicio Mensual Madrugada" required />
+          </div>
+
+          <div class="form-group">
+            <label>Tipo de Acción</label>
+            <select v-model="newTaskForm.action_type">
+              <option value="conditional_reboot">Reinicio Condicional (Seguro)</option>
+              <option value="reboot">Reinicio Forzado (Inmediato)</option>
+              <option value="custom_script">Ejecutar Script Personalizado</option>
+            </select>
+          </div>
+
+          <div class="form-group" v-if="newTaskForm.action_type === 'conditional_reboot'" style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 8px;">
+            <label>Condición: Días mínimos de encendido (Uptime)</label>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <input type="number" v-model.number="newTaskForm.min_uptime_days" min="1" required style="width: 100px;"/>
+              <span class="text-dim">días. Si el equipo tiene menos tiempo, se omitirá el reinicio.</span>
+            </div>
+          </div>
+
+          <div class="form-group" v-if="newTaskForm.action_type === 'custom_script'">
+            <label>Código del Script (RouterOS o Bash)</label>
+            <textarea 
+              v-model="newTaskForm.script_body" 
+              rows="6" 
+              class="terminal-textarea"
+              placeholder="# Escribe aquí el comando crudo. Ej:\n/system reboot"
+              required
+            ></textarea>
+            <small class="text-dim">La sintaxis dependerá del fabricante de los equipos seleccionados.</small>
+          </div>
+
+          <hr class="separator" />
+          <h4>🕒 Horario de Ejecución</h4>
+
+          <div class="grid-2" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Hora Local (HH:MM)</label>
+              <input type="time" v-model="newTaskForm.time" required />
+            </div>
+            
+            <div class="form-group">
+              <label>Días de la Semana</label>
+              <div class="day-picker">
+                <button 
+                  type="button"
+                  v-for="day in daysOfWeek" 
+                  :key="day.value"
+                  :class="['day-pill', { active: newTaskForm.days.includes(day.value) }]"
+                  @click="toggleDaySelection(day.value)"
+                >
+                  {{ day.label }}
+                </button>
+              </div>
+              <small class="text-dim" style="margin-top: 5px;">Si no seleccionas ninguno, se ejecutará <strong>todos los días</strong>.</small>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" @click="showTaskModal = false" class="btn-secondary">Cancelar</button>
+            <button type="submit" class="btn-primary" :disabled="isCreatingTask">
+              {{ isCreatingTask ? 'Programando...' : 'Guardar y Activar Tarea' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div v-if="showTaskLogsModal" class="modal-overlay" @click.self="showTaskLogsModal = false">
+      <div class="modal-content large-modal" style="max-width: 900px;">
+        <div class="manage-header">
+          <div>
+            <h3 style="margin: 0;">📋 Bitácora del Sistema</h3>
+            <span class="text-dim">{{ activeTaskForLogs?.name }}</span>
+          </div>
+          <button class="btn-secondary" @click="showTaskLogsModal = false">X</button>
+        </div>
+
+        <div class="comments-list" style="background: rgba(0,0,0,0.3);">
+          <div v-if="isLoadingTaskLogs" class="loading-text">Cargando bitácora de ejecuciones...</div>
+          <div v-else-if="activeTaskLogs.length === 0" class="empty-state">
+            <div class="empty-icon">📂</div>
+            <p>La tarea aún no se ha ejecutado.</p>
+          </div>
+
+          <div v-else class="comments-scroll" style="max-height: 50vh;">
+            <div v-for="log in activeTaskLogs" :key="log.id" class="comment-item">
+              <div class="comment-header">
+                <strong>{{ log.client_name }} ({{ log.ip_address }})</strong>
+                <span class="comment-date" style="display: flex; gap: 10px; align-items: center;">
+                  {{ formatDate(log.executed_at) }}
+                  <span :class="['status-badge', log.status]">{{ log.status.toUpperCase() }}</span>
+                </span>
+              </div>
+              <div v-if="log.output" class="comment-body terminal-output">
+                {{ log.output }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showBulkModal" class="modal-overlay">
       <div class="modal-content large-modal">
@@ -2018,4 +2359,106 @@ label {
   font-size: 2rem;
   margin-bottom: 0.5rem;
 }
+
+/* =========================================
+   NUEVOS ESTILOS RMM (TAREAS PROGRAMADAS)
+   ========================================= */
+
+/* Toggle Switch (Interruptor) */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 20px;
+}
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #555;
+  transition: .3s;
+  border-radius: 20px;
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .3s;
+  border-radius: 50%;
+}
+input:checked + .slider {
+  background-color: var(--green);
+}
+input:checked + .slider:before {
+  transform: translateX(20px);
+}
+
+/* Selector de Días (Píldoras) */
+.day-picker {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+}
+.day-pill {
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  color: var(--gray);
+  padding: 6px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: bold;
+  transition: all 0.2s;
+}
+.day-pill:hover {
+  background: rgba(255,255,255,0.05);
+  color: white;
+}
+.day-pill.active {
+  background: var(--blue);
+  color: white;
+  border-color: var(--blue);
+}
+
+/* Textarea Script Estilo Consola */
+.terminal-textarea {
+  background-color: #1e1e1e !important;
+  color: #00ff00 !important;
+  font-family: 'Courier New', Courier, monospace !important;
+  border: 1px solid #333 !important;
+  padding: 10px !important;
+  line-height: 1.4 !important;
+}
+.terminal-output {
+  background-color: #0d1117;
+  color: #c9d1d9;
+  font-family: monospace;
+  padding: 10px;
+  border-radius: 4px;
+  margin-top: 10px;
+  border: 1px solid #30363d;
+  font-size: 0.85rem;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+/* Badges de Estado de Tareas */
+.status-badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: bold;
+}
+.status-badge.success { background: rgba(46, 204, 113, 0.2); color: var(--green); border: 1px solid var(--green); }
+.status-badge.error { background: rgba(231, 76, 60, 0.2); color: var(--error-red); border: 1px solid var(--error-red); }
+.status-badge.skipped { background: rgba(243, 156, 18, 0.2); color: #f39c12; border: 1px solid #f39c12; }
 </style>
