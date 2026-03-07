@@ -1871,6 +1871,10 @@ label {
   gap: 1rem;
   margin-top: 1rem;
 }
+
+/* =========================================
+   BOTONES
+   ========================================= */
 .btn-primary {
   background: var(--green);
   color: white;
@@ -1900,6 +1904,33 @@ label {
 .btn-warning:hover:not(:disabled) {
   background: #fbbf24;
 }
+
+/* Estilo para el botón de Eliminar Masivo */
+.btn-danger {
+  background: var(--error-red) !important;
+  color: white !important;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #ff8787 !important; 
+}
+.btn-danger:disabled {
+  background: rgba(231, 76, 60, 0.5) !important;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+/* Estilo para el botón de Configurar Monitores (Celeste/Teal tecnológico) */
+.btn-info {
+  background: #0ea5e9 !important;
+  color: white !important;
+}
+.btn-info:hover:not(:disabled) {
+  background: #38bdf8 !important;
+}
+
+/* =========================================
+   ESTADO Y NOTIFICACIONES
+   ========================================= */
 .test-box {
   padding: 1rem;
   margin-top: 1rem;
@@ -1936,37 +1967,8 @@ label {
   color: white;
 }
 
-/* Agrega este bloque al final de tus estilos para corregir el botón de eliminar masivo */
-
-.btn-danger {
-  background: var(--error-red) !important; /* Usamos tu variable de rojo con !important para pisar estilos por defecto */
-  color: white !important; /* Texto blanco obligatorio */
-}
-
-/* Efecto hover profesional: Se aclara un poco el rojo */
-.btn-danger:hover:not(:disabled) {
-  background: #ff8787 !important; 
-}
-
-/* Estilo para cuando el botón está deshabilitado (mientras elimina) */
-.btn-danger:disabled {
-  background: rgba(231, 76, 60, 0.5) !important; /* Rojo tenue y transparente */
-  cursor: not-allowed;
-  opacity: 0.8;
-}
-
-/* Nuevo estilo para el botón de Configurar Monitores (Celeste/Teal tecnológico) */
-.btn-info {
-  background: #0ea5e9 !important; /* Celeste vibrante profesional */
-  color: white !important;
-}
-
-.btn-info:hover:not(:disabled) {
-  background: #38bdf8 !important; /* Brillo al pasar el mouse */
-}
-
 /* =========================================
-   ESTILOS BARRA DE FILTROS (NUEVOS)
+   ESTILOS BARRA DE FILTROS
    ========================================= */
 .filter-bar {
   display: flex;
@@ -2042,7 +2044,9 @@ label {
   font-weight: bold;
 }
 
-/* ESTILOS TABLE & BULK */
+/* =========================================
+   ESTILOS TABLE & BULK
+   ========================================= */
 .manage-header {
   display: flex;
   justify-content: space-between;
@@ -2215,7 +2219,9 @@ label {
   }
 }
 
-/* MODALES */
+/* =========================================
+   MODALES
+   ========================================= */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -2343,7 +2349,9 @@ label {
   margin-top: 2rem;
 }
 
-/* BITÁCORA STYLES */
+/* =========================================
+   BITÁCORA STYLES
+   ========================================= */
 .comments-list {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 6px;
@@ -2390,7 +2398,7 @@ label {
 }
 
 /* =========================================
-   NUEVOS ESTILOS RMM (TAREAS PROGRAMADAS)
+   NUEVOS ESTILOS TAREAS PROGRAMADAS
    ========================================= */
 
 /* Toggle Switch (Interruptor) */
