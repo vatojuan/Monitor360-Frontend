@@ -64,7 +64,7 @@ const isDeletingBulk = ref(false)
 const bulkSensorType = ref('ping')
 const bulkNameTemplate = ref('{{hostname}} - Sensor')
 
-// Modelos de configuración
+// Modelos de configuración (ACTUALIZADO PARA MENSAJES PERSONALIZADOS)
 const createNewPingSensor = () => ({
   config: {
     interval_sec: 60,
@@ -78,6 +78,10 @@ const createNewPingSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
   ui_alert_latency: {
     enabled: false,
@@ -86,6 +90,10 @@ const createNewPingSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
   is_active: true,
   alerts_paused: false,
@@ -102,6 +110,10 @@ const createNewEthernetSensor = () => ({
     cooldown_minutes: 10,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
   ui_alert_traffic: {
     enabled: false,
@@ -111,6 +123,10 @@ const createNewEthernetSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
   is_active: true,
   alerts_paused: false,
@@ -817,7 +833,7 @@ function openBulkModal() {
   showBulkModal.value = true
 }
 
-// Helper de construcción de payload
+// Helper de construcción de payload (ACTUALIZADO CON MENSAJES PERSONALIZADOS)
 function buildSensorConfig(type, data) {
   const finalConfig = { ...data.config }
   const alerts = []
@@ -829,43 +845,55 @@ function buildSensorConfig(type, data) {
 
     if (data.ui_alert_timeout.enabled) {
       const a = data.ui_alert_timeout
-      if (a.channel_id)
-        alerts.push({
+      if (a.channel_id) {
+        const alertObj = {
           type: 'timeout',
           channel_id: a.channel_id,
           cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
           tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
           notify_recovery: !!a.notify_recovery,
-        })
+        }
+        if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+        if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+        alerts.push(alertObj)
+      }
     }
     if (data.ui_alert_latency.enabled) {
       const a = data.ui_alert_latency
-      if (a.channel_id)
-        alerts.push({
+      if (a.channel_id) {
+        const alertObj = {
           type: 'high_latency',
           threshold_ms: onlyNums(a.threshold_ms, 200),
           channel_id: a.channel_id,
           cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
           tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
           notify_recovery: !!a.notify_recovery,
-        })
+        }
+        if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+        if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+        alerts.push(alertObj)
+      }
     }
   } else if (type === 'ethernet') {
     if (data.ui_alert_speed_change.enabled) {
       const a = data.ui_alert_speed_change
-      if (a.channel_id)
-        alerts.push({
+      if (a.channel_id) {
+        const alertObj = {
           type: 'speed_change',
           channel_id: a.channel_id,
           cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
           tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
           notify_recovery: !!a.notify_recovery,
-        })
+        }
+        if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+        if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+        alerts.push(alertObj)
+      }
     }
     if (data.ui_alert_traffic.enabled) {
       const a = data.ui_alert_traffic
-      if (a.channel_id)
-        alerts.push({
+      if (a.channel_id) {
+        const alertObj = {
           type: 'traffic_threshold',
           threshold_mbps: onlyNums(a.threshold_mbps, 100),
           direction: a.direction || 'any',
@@ -873,7 +901,11 @@ function buildSensorConfig(type, data) {
           cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
           tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
           notify_recovery: !!a.notify_recovery,
-        })
+        }
+        if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+        if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+        alerts.push(alertObj)
+      }
     }
   }
 
@@ -1489,7 +1521,7 @@ onUnmounted(() => {
                 <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
-                  placeholder="Tolerancia a Fallos"
+                  placeholder="Tolerancia"
                   v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
                   class="tiny-input"
                 />
@@ -1501,6 +1533,18 @@ onUnmounted(() => {
                   Recup.</label
                 >
               </div>
+              
+              <div v-if="bulkPingConfig.ui_alert_timeout.enabled" style="margin-bottom: 1.5rem; padding-left: 10px; border-left: 2px solid #555;">
+                 <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.use_custom_message" /> ✏️ Personalizar Msj. Alerta</div>
+                 <textarea v-if="bulkPingConfig.ui_alert_timeout.use_custom_message" v-model="bulkPingConfig.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} ({ip}) no responde. Estado: {status}"></textarea>
+                 
+                 <template v-if="bulkPingConfig.ui_alert_timeout.notify_recovery">
+                     <div class="chk-label" style="margin-bottom: 5px; margin-top: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" /> ✏️ Personalizar Msj. Recuperación</div>
+                     <textarea v-if="bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" v-model="bulkPingConfig.ui_alert_timeout.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} ha vuelto a la normalidad."></textarea>
+                 </template>
+                 <span v-if="bulkPingConfig.ui_alert_timeout.use_custom_message || bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" class="form-hint" style="display: block; margin-top: 5px;">Variables: {client_name}, {ip}, {status}, {sensor_name}</span>
+              </div>
+
 
               <div class="alert-row">
                 <div class="chk-label">
@@ -1517,7 +1561,7 @@ onUnmounted(() => {
                 <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
-                  placeholder="Tolerancia a Fallos"
+                  placeholder="Tolerancia"
                   v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
                   class="tiny-input"
                 />
@@ -1529,6 +1573,18 @@ onUnmounted(() => {
                   Recup.</label
                 >
               </div>
+
+              <div v-if="bulkPingConfig.ui_alert_latency.enabled" style="margin-bottom: 1.5rem; padding-left: 10px; border-left: 2px solid #555;">
+                 <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.use_custom_message" /> ✏️ Personalizar Msj. Alerta</div>
+                 <textarea v-if="bulkPingConfig.ui_alert_latency.use_custom_message" v-model="bulkPingConfig.ui_alert_latency.custom_message" class="search-input custom-textarea" placeholder="Ej: Latencia alta de {latency_ms}ms en {client_name}"></textarea>
+                 
+                 <template v-if="bulkPingConfig.ui_alert_latency.notify_recovery">
+                     <div class="chk-label" style="margin-bottom: 5px; margin-top: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.use_custom_recovery_message" /> ✏️ Personalizar Msj. Recuperación</div>
+                     <textarea v-if="bulkPingConfig.ui_alert_latency.use_custom_recovery_message" v-model="bulkPingConfig.ui_alert_latency.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 La latencia en {client_name} se estabilizó."></textarea>
+                 </template>
+                 <span v-if="bulkPingConfig.ui_alert_latency.use_custom_message || bulkPingConfig.ui_alert_latency.use_custom_recovery_message" class="form-hint" style="display: block; margin-top: 5px;">Variables: {client_name}, {ip}, {status}, {sensor_name}, {latency_ms}</span>
+              </div>
+
             </div>
           </div>
 
@@ -1563,7 +1619,7 @@ onUnmounted(() => {
                 <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
-                  placeholder="Tolerancia a Fallos"
+                  placeholder="Tolerancia"
                   v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
                   class="tiny-input"
                 />
@@ -1575,6 +1631,18 @@ onUnmounted(() => {
                   Recup.</label
                 >
               </div>
+
+              <div v-if="bulkEthernetConfig.ui_alert_speed_change.enabled" style="margin-bottom: 1.5rem; padding-left: 10px; border-left: 2px solid #555;">
+                 <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.use_custom_message" /> ✏️ Personalizar Msj. Alerta</div>
+                 <textarea v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_message" v-model="bulkEthernetConfig.ui_alert_speed_change.custom_message" class="search-input custom-textarea" placeholder="Ej: Cable desconectado en el equipo {client_name}"></textarea>
+                 
+                 <template v-if="bulkEthernetConfig.ui_alert_speed_change.notify_recovery">
+                     <div class="chk-label" style="margin-bottom: 5px; margin-top: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" /> ✏️ Personalizar Msj. Recuperación</div>
+                     <textarea v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" v-model="bulkEthernetConfig.ui_alert_speed_change.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 La interfaz en {client_name} reconectó a {speed}"></textarea>
+                 </template>
+                 <span v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_message || bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" class="form-hint" style="display: block; margin-top: 5px;">Variables: {client_name}, {ip}, {status}, {sensor_name}, {speed}</span>
+              </div>
+
 
               <div class="alert-row">
                 <div class="chk-label">
@@ -1591,7 +1659,7 @@ onUnmounted(() => {
                 <span class="small-label">Tolerancia a Fallos:</span>
                 <input
                   type="number"
-                  placeholder="Tolerancia a Fallos"
+                  placeholder="Tolerancia"
                   v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
                   class="tiny-input"
                 />
@@ -1603,6 +1671,18 @@ onUnmounted(() => {
                   Recup.</label
                 >
               </div>
+
+              <div v-if="bulkEthernetConfig.ui_alert_traffic.enabled" style="margin-bottom: 1.5rem; padding-left: 10px; border-left: 2px solid #555;">
+                 <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.use_custom_message" /> ✏️ Personalizar Msj. Alerta</div>
+                 <textarea v-if="bulkEthernetConfig.ui_alert_traffic.use_custom_message" v-model="bulkEthernetConfig.ui_alert_traffic.custom_message" class="search-input custom-textarea" placeholder="Ej: Tráfico elevado detectado en {client_name}"></textarea>
+                 
+                 <template v-if="bulkEthernetConfig.ui_alert_traffic.notify_recovery">
+                     <div class="chk-label" style="margin-bottom: 5px; margin-top: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.use_custom_recovery_message" /> ✏️ Personalizar Msj. Recuperación</div>
+                     <textarea v-if="bulkEthernetConfig.ui_alert_traffic.use_custom_recovery_message" v-model="bulkEthernetConfig.ui_alert_traffic.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 El tráfico en {client_name} se normalizó."></textarea>
+                 </template>
+                 <span v-if="bulkEthernetConfig.ui_alert_traffic.use_custom_message || bulkEthernetConfig.ui_alert_traffic.use_custom_recovery_message" class="form-hint" style="display: block; margin-top: 5px;">Variables: {client_name}, {ip}, {status}, {sensor_name}, {tx_bitrate}, {rx_bitrate}</span>
+              </div>
+
             </div>
           </div>
 
@@ -2341,6 +2421,16 @@ label {
   gap: 0.3rem;
   font-weight: normal;
   color: #ccc;
+}
+.custom-textarea { 
+  padding: 6px 10px; 
+  min-height: 45px; 
+  margin-bottom: 5px; 
+  resize: vertical; 
+}
+.form-hint {
+  font-size: 0.8rem;
+  color: var(--gray);
 }
 .modal-actions {
   display: flex;

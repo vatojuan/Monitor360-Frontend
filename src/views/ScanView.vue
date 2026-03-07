@@ -55,18 +55,18 @@ const scanConfig = ref({
   include_ethernet_sensor: false,
 })
 
-// --- ESTADO TEMPLATE SENSORES ---
+// --- ESTADO TEMPLATE SENSORES (ACTUALIZADO PARA MENSAJES PERSONALIZADOS) ---
 const bulkPingConfig = ref({
   config: { interval_sec: 60, latency_threshold_ms: 150, display_mode: 'realtime', average_count: 5, ping_type: 'device_to_external', target_ip: '8.8.8.8' },
-  ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false },
-  ui_alert_latency: { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false },
+  ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' },
+  ui_alert_latency: { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' },
   is_active: true, alerts_paused: false
 })
 
 const bulkEthernetConfig = ref({
   config: { interface_name: 'ether1', interval_sec: 30 },
-  ui_alert_speed_change: { enabled: false, channel_id: null, cooldown_minutes: 10, tolerance_count: 1, notify_recovery: false },
-  ui_alert_traffic: { enabled: false, threshold_mbps: 100, direction: 'any', channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false },
+  ui_alert_speed_change: { enabled: false, channel_id: null, cooldown_minutes: 10, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' },
+  ui_alert_traffic: { enabled: false, threshold_mbps: 100, direction: 'any', channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' },
   is_active: true, alerts_paused: false
 })
 
@@ -190,12 +190,33 @@ function buildSensorConfigPayload(type, data) {
   const alerts = []
   const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
   if (type === 'ping') {
-    if (data.ui_alert_timeout.enabled && data.ui_alert_timeout.channel_id) alerts.push({ type: 'timeout', channel_id: data.ui_alert_timeout.channel_id, cooldown_minutes: onlyNums(data.ui_alert_timeout.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_timeout.tolerance_count, 1)), notify_recovery: !!data.ui_alert_timeout.notify_recovery })
-    if (data.ui_alert_latency.enabled && data.ui_alert_latency.channel_id) alerts.push({ type: 'high_latency', threshold_ms: onlyNums(data.ui_alert_latency.threshold_ms, 200), channel_id: data.ui_alert_latency.channel_id, cooldown_minutes: onlyNums(data.ui_alert_latency.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_latency.tolerance_count, 1)), notify_recovery: !!data.ui_alert_latency.notify_recovery })
+    if (data.ui_alert_timeout.enabled && data.ui_alert_timeout.channel_id) {
+        const a = { type: 'timeout', channel_id: data.ui_alert_timeout.channel_id, cooldown_minutes: onlyNums(data.ui_alert_timeout.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_timeout.tolerance_count, 1)), notify_recovery: !!data.ui_alert_timeout.notify_recovery };
+        if (data.ui_alert_timeout.use_custom_message && data.ui_alert_timeout.custom_message?.trim()) a.custom_message = data.ui_alert_timeout.custom_message.trim();
+        if (data.ui_alert_timeout.use_custom_recovery_message && data.ui_alert_timeout.custom_recovery_message?.trim()) a.custom_recovery_message = data.ui_alert_timeout.custom_recovery_message.trim();
+        alerts.push(a);
+    }
+    if (data.ui_alert_latency.enabled && data.ui_alert_latency.channel_id) {
+        const a = { type: 'high_latency', threshold_ms: onlyNums(data.ui_alert_latency.threshold_ms, 200), channel_id: data.ui_alert_latency.channel_id, cooldown_minutes: onlyNums(data.ui_alert_latency.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_latency.tolerance_count, 1)), notify_recovery: !!data.ui_alert_latency.notify_recovery };
+        if (data.ui_alert_latency.use_custom_message && data.ui_alert_latency.custom_message?.trim()) a.custom_message = data.ui_alert_latency.custom_message.trim();
+        if (data.ui_alert_latency.use_custom_recovery_message && data.ui_alert_latency.custom_recovery_message?.trim()) a.custom_recovery_message = data.ui_alert_latency.custom_recovery_message.trim();
+        alerts.push(a);
+    }
   } else if (type === 'ethernet') {
-    if (data.ui_alert_speed_change.enabled && data.ui_alert_speed_change.channel_id) alerts.push({ type: 'speed_change', channel_id: data.ui_alert_speed_change.channel_id, cooldown_minutes: onlyNums(data.ui_alert_speed_change.cooldown_minutes, 10), tolerance_count: Math.max(1, onlyNums(data.ui_alert_speed_change.tolerance_count, 1)), notify_recovery: !!data.ui_alert_speed_change.notify_recovery })
-    if (data.ui_alert_traffic.enabled && data.ui_alert_traffic.channel_id) alerts.push({ type: 'traffic_threshold', threshold_mbps: onlyNums(data.ui_alert_traffic.threshold_mbps, 100), direction: data.ui_alert_traffic.direction || 'any', channel_id: data.ui_alert_traffic.channel_id, cooldown_minutes: onlyNums(data.ui_alert_traffic.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_traffic.tolerance_count, 1)), notify_recovery: !!data.ui_alert_traffic.notify_recovery })
+    if (data.ui_alert_speed_change.enabled && data.ui_alert_speed_change.channel_id) {
+        const a = { type: 'speed_change', channel_id: data.ui_alert_speed_change.channel_id, cooldown_minutes: onlyNums(data.ui_alert_speed_change.cooldown_minutes, 10), tolerance_count: Math.max(1, onlyNums(data.ui_alert_speed_change.tolerance_count, 1)), notify_recovery: !!data.ui_alert_speed_change.notify_recovery };
+        if (data.ui_alert_speed_change.use_custom_message && data.ui_alert_speed_change.custom_message?.trim()) a.custom_message = data.ui_alert_speed_change.custom_message.trim();
+        if (data.ui_alert_speed_change.use_custom_recovery_message && data.ui_alert_speed_change.custom_recovery_message?.trim()) a.custom_recovery_message = data.ui_alert_speed_change.custom_recovery_message.trim();
+        alerts.push(a);
+    }
+    if (data.ui_alert_traffic.enabled && data.ui_alert_traffic.channel_id) {
+        const a = { type: 'traffic_threshold', threshold_mbps: onlyNums(data.ui_alert_traffic.threshold_mbps, 100), direction: data.ui_alert_traffic.direction || 'any', channel_id: data.ui_alert_traffic.channel_id, cooldown_minutes: onlyNums(data.ui_alert_traffic.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_traffic.tolerance_count, 1)), notify_recovery: !!data.ui_alert_traffic.notify_recovery };
+        if (data.ui_alert_traffic.use_custom_message && data.ui_alert_traffic.custom_message?.trim()) a.custom_message = data.ui_alert_traffic.custom_message.trim();
+        if (data.ui_alert_traffic.use_custom_recovery_message && data.ui_alert_traffic.custom_recovery_message?.trim()) a.custom_recovery_message = data.ui_alert_traffic.custom_recovery_message.trim();
+        alerts.push(a);
+    }
   }
+  finalConfig.alerts = alerts;
   return { sensor_type: type, name_template: '{{hostname}} - Sensor', config: finalConfig, is_active: data.is_active, alerts_paused: data.alerts_paused }
 }
 
@@ -204,12 +225,18 @@ function restoreSensorConfig(sensors) {
   const pingSensor = sensors.find(s => s.sensor_type === 'ping')
   if (pingSensor) {
     scanConfig.value.include_ping_sensor = true; bulkPingConfig.value.config = { ...pingSensor.config }
-    if (pingSensor.config.alerts) pingSensor.config.alerts.forEach(a => { if (a.type === 'timeout') bulkPingConfig.value.ui_alert_timeout = { ...bulkPingConfig.value.ui_alert_timeout, ...a, enabled: true }; if (a.type === 'high_latency') bulkPingConfig.value.ui_alert_latency = { ...bulkPingConfig.value.ui_alert_latency, ...a, enabled: true } })
+    if (pingSensor.config.alerts) pingSensor.config.alerts.forEach(a => { 
+        if (a.type === 'timeout') bulkPingConfig.value.ui_alert_timeout = { ...bulkPingConfig.value.ui_alert_timeout, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }; 
+        if (a.type === 'high_latency') bulkPingConfig.value.ui_alert_latency = { ...bulkPingConfig.value.ui_alert_latency, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }; 
+    })
   }
   const ethSensor = sensors.find(s => s.sensor_type === 'ethernet')
   if (ethSensor) {
     scanConfig.value.include_ethernet_sensor = true; bulkEthernetConfig.value.config = { ...ethSensor.config }
-    if (ethSensor.config.alerts) ethSensor.config.alerts.forEach(a => { if (a.type === 'speed_change') bulkEthernetConfig.value.ui_alert_speed_change = { ...bulkEthernetConfig.value.ui_alert_speed_change, ...a, enabled: true }; if (a.type === 'traffic_threshold') bulkEthernetConfig.value.ui_alert_traffic = { ...bulkEthernetConfig.value.ui_alert_traffic, ...a, enabled: true } })
+    if (ethSensor.config.alerts) ethSensor.config.alerts.forEach(a => { 
+        if (a.type === 'speed_change') bulkEthernetConfig.value.ui_alert_speed_change = { ...bulkEthernetConfig.value.ui_alert_speed_change, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }; 
+        if (a.type === 'traffic_threshold') bulkEthernetConfig.value.ui_alert_traffic = { ...bulkEthernetConfig.value.ui_alert_traffic, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }; 
+    })
   }
 }
 
@@ -657,14 +684,46 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                         <input list="scan-target-list" type="text" v-model="bulkPingConfig.config.target_ip" placeholder="Target IP" class="search-input" />
                         <datalist id="scan-target-list"><option v-for="d in suggestedTargetDevices" :key="d.id" :value="d.ip_address">{{ d.client_name }}</option></datalist>
                      </div>
-                     <div class="chk-label"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" /> Timeout Alert</div>
+                     <div class="chk-label"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" /> Alerta Timeout</div>
+                     
+                     <div v-if="bulkPingConfig.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                        <select v-model="bulkPingConfig.ui_alert_timeout.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                           <option :value="null">-- Seleccionar Canal --</option>
+                           <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                        </select>
+                        <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.use_custom_message" /> ✏️ Msj. Alerta</div>
+                        <textarea v-if="bulkPingConfig.ui_alert_timeout.use_custom_message" v-model="bulkPingConfig.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} no responde. {status}"></textarea>
+                        
+                        <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.notify_recovery" /> 🟢 Notificar Regreso</div>
+                        <template v-if="bulkPingConfig.ui_alert_timeout.notify_recovery">
+                            <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
+                            <textarea v-if="bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" v-model="bulkPingConfig.ui_alert_timeout.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} en línea."></textarea>
+                        </template>
+                     </div>
                   </div>
+
                   <div class="checkbox-row">
                     <input type="checkbox" id="chkEther" v-model="scanConfig.include_ethernet_sensor" />
                     <label for="chkEther">Incluir ETHERNET</label>
                   </div>
                   <div v-if="scanConfig.include_ethernet_sensor" class="mini-config fade-in">
                       <input v-model="bulkEthernetConfig.config.interface_name" placeholder="Interface Name" class="tiny-input-full" />
+                      
+                      <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.enabled" /> Alerta Desconexión</div>
+                      <div v-if="bulkEthernetConfig.ui_alert_speed_change.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                         <select v-model="bulkEthernetConfig.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                            <option :value="null">-- Seleccionar Canal --</option>
+                            <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                         </select>
+                         <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.use_custom_message" /> ✏️ Msj. Alerta</div>
+                         <textarea v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_message" v-model="bulkEthernetConfig.ui_alert_speed_change.custom_message" class="search-input custom-textarea" placeholder="Ej: Cable desconectado en {client_name}"></textarea>
+                         
+                         <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.notify_recovery" /> 🟢 Notificar Regreso</div>
+                         <template v-if="bulkEthernetConfig.ui_alert_speed_change.notify_recovery">
+                             <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
+                             <textarea v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" v-model="bulkEthernetConfig.ui_alert_speed_change.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} conectado a {speed}"></textarea>
+                         </template>
+                      </div>
                   </div>
                 </div>
               </div>
@@ -846,6 +905,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .form-group input, .form-group select { width: 100%; padding: 10px; background-color: var(--bg-color); border: 1px solid var(--primary-color); color: white; border-radius: 6px; }
 .form-group select option { background-color: var(--bg-color); color: white; }
 .search-input { width: 100%; padding: 10px; background-color: var(--bg-color); border: 1px solid var(--primary-color); color: white; border-radius: 6px; font-size: 0.9rem; }
+.custom-textarea { padding: 6px 10px; min-height: 45px; margin-bottom: 5px; resize: vertical; } /* TEXTAREAS PERSONALIZADOS */
 .form-group small { display: block; margin-top: 4px; color: #777; font-size: 0.8rem; }
 .required { color: var(--error-red); font-size: 0.8rem; }
 .automation-box { background: var(--bg-color); padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px dashed var(--primary-color); }

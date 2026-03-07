@@ -90,7 +90,7 @@ const suggestedTargetDevices = computed(() => {
 })
 
 //
-// --- Plantillas de Formularios (ACTUALIZADO: notify_recovery, Wireless y System) ---
+// --- Plantillas de Formularios (ACTUALIZADO: Mensajes Personalizados) ---
 const createNewPingSensor = () => ({
   name: '',
   config: {
@@ -107,6 +107,10 @@ const createNewPingSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
   ui_alert_latency: {
     enabled: false,
@@ -115,6 +119,10 @@ const createNewPingSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
 })
 
@@ -130,6 +138,10 @@ const createNewEthernetSensor = () => ({
     cooldown_minutes: 10,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
   ui_alert_traffic: {
     enabled: false,
@@ -139,10 +151,13 @@ const createNewEthernetSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
 })
 
-// Plantilla para el Sensor Wireless con el Motor Anti-Spam y Modulación
 const createNewWirelessSensor = () => ({
   name: '',
   config: {
@@ -154,17 +169,20 @@ const createNewWirelessSensor = () => ({
       min_tx_rate_mbps: 0,
       min_rx_rate_mbps: 0,
     },
-    tolerance_checks: 3, // Tolerancia Anti-Spam gestionada por Redis
+    tolerance_checks: 3,
   },
   ui_alert_status: {
     enabled: false,
     channel_id: null,
     cooldown_minutes: 10,
     notify_recovery: true,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
 })
 
-// NUEVO: Plantilla para el Sensor System (CPU, RAM, Temperatura, Uptime)
 const createNewSystemSensor = () => ({
   name: '',
   config: {
@@ -172,9 +190,9 @@ const createNewSystemSensor = () => ({
       max_cpu_percent: 85,
       max_memory_percent: 90,
       max_temperature: 75,
-      min_voltage: null, // Null permite que sea ignorado si el input está vacío
+      min_voltage: null,
       max_voltage: null,
-      restart_uptime_seconds: 300, // 5 min
+      restart_uptime_seconds: 300,
     },
     tolerance_checks: 3,
   },
@@ -183,6 +201,10 @@ const createNewSystemSensor = () => ({
     channel_id: null,
     cooldown_minutes: 10,
     notify_recovery: true,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
   },
 })
 
@@ -267,43 +289,51 @@ function buildSensorPayload(sensorType, sensorData) {
     if (sensorData.ui_alert_timeout.enabled) {
       const a = sensorData.ui_alert_timeout
       if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Timeout.')
-      finalConfig.alerts.push({
+      const alertObj = {
         type: 'timeout',
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
         tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
         notify_recovery: !!a.notify_recovery,
-      })
+      }
+      if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+      if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      finalConfig.alerts.push(alertObj)
     }
     if (sensorData.ui_alert_latency.enabled) {
       const a = sensorData.ui_alert_latency
       if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Latencia.')
-      finalConfig.alerts.push({
+      const alertObj = {
         type: 'high_latency',
         threshold_ms: onlyNums(a.threshold_ms, 200),
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
         tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
         notify_recovery: !!a.notify_recovery,
-      })
+      }
+      if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+      if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'ethernet') {
     if (sensorData.ui_alert_speed_change.enabled) {
       const a = sensorData.ui_alert_speed_change
-      if (!a.channel_id)
-        throw new Error('Selecciona un canal para la alerta de Cambio de Velocidad.')
-      finalConfig.alerts.push({
+      if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Cambio de Velocidad.')
+      const alertObj = {
         type: 'speed_change',
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
         tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
         notify_recovery: !!a.notify_recovery,
-      })
+      }
+      if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+      if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      finalConfig.alerts.push(alertObj)
     }
     if (sensorData.ui_alert_traffic.enabled) {
       const a = sensorData.ui_alert_traffic
       if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Umbral de Tráfico.')
-      finalConfig.alerts.push({
+      const alertObj = {
         type: 'traffic_threshold',
         threshold_mbps: onlyNums(a.threshold_mbps, 100),
         direction: a.direction || 'any',
@@ -311,7 +341,10 @@ function buildSensorPayload(sensorType, sensorData) {
         cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
         tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
         notify_recovery: !!a.notify_recovery,
-      })
+      }
+      if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+      if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'wireless') {
     finalConfig.thresholds = {
@@ -326,15 +359,17 @@ function buildSensorPayload(sensorType, sensorData) {
     if (sensorData.ui_alert_status?.enabled) {
       const a = sensorData.ui_alert_status
       if (!a.channel_id) throw new Error('Selecciona un canal para la alerta Inalámbrica.')
-      finalConfig.alerts.push({
+      const alertObj = {
         type: 'wireless_status',
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
         notify_recovery: !!a.notify_recovery,
-      })
+      }
+      if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+      if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'system') {
-    // Normalización de Sensor System
     finalConfig.thresholds = {
       max_cpu_percent: onlyNums(sensorData.config.thresholds.max_cpu_percent, null),
       max_memory_percent: onlyNums(sensorData.config.thresholds.max_memory_percent, null),
@@ -348,12 +383,15 @@ function buildSensorPayload(sensorType, sensorData) {
     if (sensorData.ui_alert_status?.enabled) {
       const a = sensorData.ui_alert_status
       if (!a.channel_id) throw new Error('Selecciona un canal para la alerta de Sistema.')
-      finalConfig.alerts.push({
+      const alertObj = {
         type: 'system_status',
         channel_id: a.channel_id,
         cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
         notify_recovery: !!a.notify_recovery,
-      })
+      }
+      if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+      if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      finalConfig.alerts.push(alertObj)
     }
   }
   return { name: sensorData.name, config: finalConfig }
@@ -443,6 +481,10 @@ function openFormForEdit(sensor) {
         ...tOut,
         channel_id: tOut.channel_id ?? null,
         notify_recovery: tOut.notify_recovery ?? false,
+        use_custom_message: !!tOut.custom_message,
+        custom_message: tOut.custom_message || '',
+        use_custom_recovery_message: !!tOut.custom_recovery_message,
+        custom_recovery_message: tOut.custom_recovery_message || '',
       }
     }
 
@@ -453,6 +495,10 @@ function openFormForEdit(sensor) {
         ...tLat,
         channel_id: tLat.channel_id ?? null,
         notify_recovery: tLat.notify_recovery ?? false,
+        use_custom_message: !!tLat.custom_message,
+        custom_message: tLat.custom_message || '',
+        use_custom_recovery_message: !!tLat.custom_recovery_message,
+        custom_recovery_message: tLat.custom_recovery_message || '',
       }
     }
     newPingSensor.value = uiData
@@ -472,6 +518,10 @@ function openFormForEdit(sensor) {
         ...tSpd,
         channel_id: tSpd.channel_id ?? null,
         notify_recovery: tSpd.notify_recovery ?? false,
+        use_custom_message: !!tSpd.custom_message,
+        custom_message: tSpd.custom_message || '',
+        use_custom_recovery_message: !!tSpd.custom_recovery_message,
+        custom_recovery_message: tSpd.custom_recovery_message || '',
       }
     }
 
@@ -482,6 +532,10 @@ function openFormForEdit(sensor) {
         ...tTrf,
         channel_id: tTrf.channel_id ?? null,
         notify_recovery: tTrf.notify_recovery ?? false,
+        use_custom_message: !!tTrf.custom_message,
+        custom_message: tTrf.custom_message || '',
+        use_custom_recovery_message: !!tTrf.custom_recovery_message,
+        custom_recovery_message: tTrf.custom_recovery_message || '',
       }
     }
     newEthernetSensor.value = uiData
@@ -508,6 +562,10 @@ function openFormForEdit(sensor) {
         ...tWir,
         channel_id: tWir.channel_id ?? null,
         notify_recovery: tWir.notify_recovery ?? true,
+        use_custom_message: !!tWir.custom_message,
+        custom_message: tWir.custom_message || '',
+        use_custom_recovery_message: !!tWir.custom_recovery_message,
+        custom_recovery_message: tWir.custom_recovery_message || '',
       }
     }
     newWirelessSensor.value = uiData
@@ -534,6 +592,10 @@ function openFormForEdit(sensor) {
         ...tSys,
         channel_id: tSys.channel_id ?? null,
         notify_recovery: tSys.notify_recovery ?? true,
+        use_custom_message: !!tSys.custom_message,
+        custom_message: tSys.custom_message || '',
+        use_custom_recovery_message: !!tSys.custom_recovery_message,
+        custom_recovery_message: tSys.custom_recovery_message || '',
       }
     }
     newSystemSensor.value = uiData
@@ -848,6 +910,29 @@ watch(searchQuery, (newQuery) => {
                   />
                   <label for="pToRec">Notificar Reanudación 🟢</label>
                 </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.use_custom_message" id="pTo_cmsg" />
+                    <label for="pTo_cmsg">✏️ Personalizar texto de alerta</label>
+                  </div>
+                  <div v-if="newPingSensor.ui_alert_timeout.use_custom_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newPingSensor.ui_alert_timeout.custom_message" rows="2" class="search-input" placeholder="Ej: Nodo {client_name} ({ip}) no responde. Estado: {status}"></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}</span>
+                  </div>
+                </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;" v-if="newPingSensor.ui_alert_timeout.notify_recovery">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.use_custom_recovery_message" id="pTo_crmsg" />
+                    <label for="pTo_crmsg">✏️ Personalizar texto de reanudación</label>
+                  </div>
+                  <div v-if="newPingSensor.ui_alert_timeout.use_custom_recovery_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newPingSensor.ui_alert_timeout.custom_recovery_message" rows="2" class="search-input" placeholder="Ej: 🟢 El nodo {client_name} ha vuelto a la normalidad."></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}</span>
+                  </div>
+                </div>
+
               </template>
             </div>
 
@@ -893,6 +978,29 @@ watch(searchQuery, (newQuery) => {
                   />
                   <label for="pLatRec">Notificar Reanudación 🟢</label>
                 </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newPingSensor.ui_alert_latency.use_custom_message" id="pLat_cmsg" />
+                    <label for="pLat_cmsg">✏️ Personalizar texto de alerta</label>
+                  </div>
+                  <div v-if="newPingSensor.ui_alert_latency.use_custom_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newPingSensor.ui_alert_latency.custom_message" rows="2" class="search-input" placeholder="Ej: Latencia alta de {latency_ms}ms en el nodo {client_name}"></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}, {latency_ms}</span>
+                  </div>
+                </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;" v-if="newPingSensor.ui_alert_latency.notify_recovery">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newPingSensor.ui_alert_latency.use_custom_recovery_message" id="pLat_crmsg" />
+                    <label for="pLat_crmsg">✏️ Personalizar texto de reanudación</label>
+                  </div>
+                  <div v-if="newPingSensor.ui_alert_latency.use_custom_recovery_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newPingSensor.ui_alert_latency.custom_recovery_message" rows="2" class="search-input" placeholder="Ej: 🟢 La latencia del nodo {client_name} se ha estabilizado."></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}, {latency_ms}</span>
+                  </div>
+                </div>
+
               </template>
             </div>
           </div>
@@ -934,7 +1042,7 @@ watch(searchQuery, (newQuery) => {
                   v-model="newEthernetSensor.ui_alert_speed_change.enabled"
                   id="eSpd"
                 />
-                <label for="eSpd">Cambio de Velocidad</label>
+                <label for="eSpd">Cambio de Velocidad / Desconexión</label>
               </div>
               <template v-if="newEthernetSensor.ui_alert_speed_change.enabled">
                 <div class="form-group">
@@ -966,6 +1074,29 @@ watch(searchQuery, (newQuery) => {
                   />
                   <label for="eSpdRec">Notificar Reanudación 🟢</label>
                 </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newEthernetSensor.ui_alert_speed_change.use_custom_message" id="eSpd_cmsg" />
+                    <label for="eSpd_cmsg">✏️ Personalizar texto de alerta</label>
+                  </div>
+                  <div v-if="newEthernetSensor.ui_alert_speed_change.use_custom_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newEthernetSensor.ui_alert_speed_change.custom_message" rows="2" class="search-input" placeholder="Ej: Cable desconectado o fallo en interfaz de {client_name}"></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}, {speed}</span>
+                  </div>
+                </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;" v-if="newEthernetSensor.ui_alert_speed_change.notify_recovery">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newEthernetSensor.ui_alert_speed_change.use_custom_recovery_message" id="eSpd_crmsg" />
+                    <label for="eSpd_crmsg">✏️ Personalizar texto de reanudación</label>
+                  </div>
+                  <div v-if="newEthernetSensor.ui_alert_speed_change.use_custom_recovery_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newEthernetSensor.ui_alert_speed_change.custom_recovery_message" rows="2" class="search-input" placeholder="Ej: 🟢 La interfaz en {client_name} ha vuelto a conectar a {speed}."></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}, {speed}</span>
+                  </div>
+                </div>
+
               </template>
             </div>
 
@@ -1023,6 +1154,29 @@ watch(searchQuery, (newQuery) => {
                   />
                   <label for="eTrfRec">Notificar Reanudación 🟢</label>
                 </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newEthernetSensor.ui_alert_traffic.use_custom_message" id="eTrf_cmsg" />
+                    <label for="eTrf_cmsg">✏️ Personalizar texto de alerta</label>
+                  </div>
+                  <div v-if="newEthernetSensor.ui_alert_traffic.use_custom_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newEthernetSensor.ui_alert_traffic.custom_message" rows="2" class="search-input" placeholder="Ej: Tráfico elevado detectado en {client_name}"></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}, {tx_bitrate}, {rx_bitrate}</span>
+                  </div>
+                </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;" v-if="newEthernetSensor.ui_alert_traffic.notify_recovery">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newEthernetSensor.ui_alert_traffic.use_custom_recovery_message" id="eTrf_crmsg" />
+                    <label for="eTrf_crmsg">✏️ Personalizar texto de reanudación</label>
+                  </div>
+                  <div v-if="newEthernetSensor.ui_alert_traffic.use_custom_recovery_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newEthernetSensor.ui_alert_traffic.custom_recovery_message" rows="2" class="search-input" placeholder="Ej: 🟢 El tráfico en {client_name} ha vuelto a valores normales."></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}, {tx_bitrate}, {rx_bitrate}</span>
+                  </div>
+                </div>
+
               </template>
             </div>
           </div>
@@ -1124,6 +1278,29 @@ watch(searchQuery, (newQuery) => {
                   />
                   <label for="wRec">Notificar Reanudación 🟢</label>
                 </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newWirelessSensor.ui_alert_status.use_custom_message" id="wStat_cmsg" />
+                    <label for="wStat_cmsg">✏️ Personalizar texto de alerta</label>
+                  </div>
+                  <div v-if="newWirelessSensor.ui_alert_status.use_custom_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newWirelessSensor.ui_alert_status.custom_message" rows="2" class="search-input" placeholder="Ej: Degradación de señal detectada en {client_name}. Estado actual: {status}"></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {signal_strength}, {tx_ccq}, {rx_ccq}, {client_count}</span>
+                  </div>
+                </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;" v-if="newWirelessSensor.ui_alert_status.notify_recovery">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newWirelessSensor.ui_alert_status.use_custom_recovery_message" id="wStat_crmsg" />
+                    <label for="wStat_crmsg">✏️ Personalizar texto de reanudación</label>
+                  </div>
+                  <div v-if="newWirelessSensor.ui_alert_status.use_custom_recovery_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newWirelessSensor.ui_alert_status.custom_recovery_message" rows="2" class="search-input" placeholder="Ej: 🟢 La calidad del enlace en {client_name} se ha recuperado."></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {signal_strength}, {tx_ccq}, {rx_ccq}, {client_count}</span>
+                  </div>
+                </div>
+
               </template>
             </div>
           </div>
@@ -1222,6 +1399,29 @@ watch(searchQuery, (newQuery) => {
                   />
                   <label for="sysRec">Notificar Reanudación 🟢</label>
                 </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newSystemSensor.ui_alert_status.use_custom_message" id="sysStat_cmsg" />
+                    <label for="sysStat_cmsg">✏️ Personalizar texto de alerta</label>
+                  </div>
+                  <div v-if="newSystemSensor.ui_alert_status.use_custom_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newSystemSensor.ui_alert_status.custom_message" rows="2" class="search-input" placeholder="Ej: Equipo {client_name} con recursos al límite. CPU: {cpu_percent}%, Temp: {temperature}°C"></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}, {cpu_percent}, {memory_percent}, {temperature}, {voltage}</span>
+                  </div>
+                </div>
+
+                <div class="form-group span-3" style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;" v-if="newSystemSensor.ui_alert_status.notify_recovery">
+                  <div class="checkbox-group">
+                    <input type="checkbox" v-model="newSystemSensor.ui_alert_status.use_custom_recovery_message" id="sysStat_crmsg" />
+                    <label for="sysStat_crmsg">✏️ Personalizar texto de reanudación</label>
+                  </div>
+                  <div v-if="newSystemSensor.ui_alert_status.use_custom_recovery_message" style="margin-top: 0.8rem;">
+                    <textarea v-model="newSystemSensor.ui_alert_status.custom_recovery_message" rows="2" class="search-input" placeholder="Ej: 🟢 Los recursos de {client_name} han vuelto a niveles normales."></textarea>
+                    <span class="form-hint">Variables: {client_name}, {ip}, {status}, {sensor_name}, {cpu_percent}, {memory_percent}, {temperature}, {voltage}</span>
+                  </div>
+                </div>
+
               </template>
             </div>
           </div>
@@ -1242,6 +1442,12 @@ watch(searchQuery, (newQuery) => {
 .search-input option {
   background-color: var(--surface-color); /* Fondo oscuro para las opciones */
   color: white; /* Texto blanco */
+}
+
+/* Permitir cambiar el alto manualmente del área de texto personalizado */
+textarea.search-input {
+  resize: vertical;
+  min-height: 60px;
 }
 
 /* Resto de estilos */
