@@ -942,8 +942,8 @@ onUnmounted(() => {
       <button :class="{ active: currentTab === 'manage' }" @click="currentTab = 'manage'">
         Gestionar
       </button>
-      <button :class="{ active: currentTab === 'tasks' }" @click="currentTab = 'tasks'" style="display: flex; align-items: center; gap: 5px;">
-        Tareas Automáticas <span class="badge" style="background: var(--blue); padding: 2px 6px;">Nuevo</span>
+      <button :class="{ active: currentTab === 'tasks' }" @click="currentTab = 'tasks'">
+        Tareas Automáticas
       </button>
     </div>
 
@@ -1222,7 +1222,7 @@ onUnmounted(() => {
 
     <section v-if="currentTab === 'tasks'" class="control-section fade-in">
       <div class="manage-header">
-        <h2><i class="icon">⚙️</i> Panel de Automatización (RMM)</h2>
+        <h2><i class="icon">⚙️</i> Panel de Automatización</h2>
         <button class="btn-primary" @click="currentTab = 'manage'">+ Nueva Tarea</button>
       </div>
       
