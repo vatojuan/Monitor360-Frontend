@@ -1954,6 +1954,17 @@ label {
   cursor: not-allowed;
   opacity: 0.8;
 }
+
+/* Nuevo estilo para el botón de Configurar Monitores (Celeste/Teal tecnológico) */
+.btn-info {
+  background: #0ea5e9 !important; /* Celeste vibrante profesional */
+  color: white !important;
+}
+
+.btn-info:hover:not(:disabled) {
+  background: #38bdf8 !important; /* Brillo al pasar el mouse */
+}
+
 /* =========================================
    ESTILOS BARRA DE FILTROS (NUEVOS)
    ========================================= */
