@@ -9,6 +9,7 @@ import ChannelsView from '../views/ChannelsView.vue'
 import VpnsView from '../views/VpnsView.vue'
 import ScanView from '../views/ScanView.vue'
 import LoginView from '../views/LoginView.vue'
+import ReportsView from '../views/ReportsView.vue' // <--- NUEVA IMPORTACIÓN
 import { getSession } from '@/lib/supabase'
 
 const routes = [
@@ -42,6 +43,14 @@ const routes = [
   },
   { path: '/channels', name: 'channels', component: ChannelsView, meta: { requiresAuth: true } },
   { path: '/vpns', name: 'vpns', component: VpnsView, meta: { requiresAuth: true } },
+  
+  // ✅ NUEVO: Ruta de Reportes IA
+  { 
+    path: '/reports', 
+    name: 'reports', 
+    component: ReportsView, 
+    meta: { requiresAuth: true } 
+  },
 
   // ✅ CORREGIDO: Ruta de escáner interna (protegida y con menú)
   {
