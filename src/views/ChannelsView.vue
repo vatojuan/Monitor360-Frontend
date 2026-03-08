@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import api from '@/lib/api' // 👈 cliente central con Authorization automático
+import api from '@/lib/api' // cliente central con Authorization automático
 
 const currentTab = ref('channels')
 const notification = ref({ show: false, message: '', type: 'success' })
@@ -30,12 +30,11 @@ const newChannel = ref({
   name: '',
   timezone: 'America/Argentina/Buenos_Aires', // Valor por defecto
   webhook: { url: '' },
-  telegram: { bot_token: '', chat_id: '' },
+  telegram: { bot_token: '' }, // Simplificado, ya no pide chat_id al crear
 })
 
-const availableChats = ref([])
-const isFetchingChats = ref(false)
-const isTestingChannel = ref(false) // NUEVO: Estado para evitar multiclics rápidos al probar
+const isTestingChannel = ref(false)
+const expandedChannelId = ref(null) // Para abrir/cerrar panel de accesos Telegram
 
 onMounted(() => {
   fetchChannels()
@@ -92,35 +91,9 @@ async function fetchHistory() {
   }
 }
 
-async function handleFetchChats() {
-  if (!newChannel.value.telegram.bot_token) {
-    return showNotification('Por favor, introduce primero el Bot Token.', 'error')
-  }
-  isFetchingChats.value = true
-  availableChats.value = []
-  newChannel.value.telegram.chat_id = ''
-  try {
-    const { data } = await api.post('/channels/telegram/get_chats', {
-      bot_token: newChannel.value.telegram.bot_token,
-    })
-    if (!Array.isArray(data) || data.length === 0) {
-      showNotification(
-        'No se encontraron chats recientes. Asegúrate de que tu bot esté en un grupo o hayas iniciado una conversación con él.',
-        'error',
-      )
-    }
-    availableChats.value = data || []
-  } catch (err) {
-    console.error('Error al buscar chats:', err)
-    showNotification(err.response?.data?.detail || 'Error al buscar chats.', 'error')
-  } finally {
-    isFetchingChats.value = false
-  }
-}
-
 async function handleAddChannel() {
   let payload
-  // Construcción del payload incluyendo la TIMEZONE en config
+  
   if (newChannelType.value === 'webhook') {
     if (!newChannel.value.name.trim() || !newChannel.value.webhook.url.trim()) {
       return showNotification('Nombre y URL son obligatorios.', 'error')
@@ -130,41 +103,36 @@ async function handleAddChannel() {
       type: 'webhook',
       config: {
         url: newChannel.value.webhook.url.trim(),
-        timezone: newChannel.value.timezone, // <--- Guardamos la zona horaria
+        timezone: newChannel.value.timezone,
       },
     }
   } else {
-    // telegram
-    if (
-      !newChannel.value.name.trim() ||
-      !newChannel.value.telegram.bot_token.trim() ||
-      !newChannel.value.telegram.chat_id
-    ) {
-      return showNotification('Todos los campos de Telegram son obligatorios.', 'error')
+    // telegram (SIMPLIFICADO)
+    if (!newChannel.value.name.trim() || !newChannel.value.telegram.bot_token.trim()) {
+      return showNotification('Nombre y Bot Token son obligatorios.', 'error')
     }
     payload = {
       name: newChannel.value.name.trim(),
       type: 'telegram',
       config: {
         bot_token: newChannel.value.telegram.bot_token.trim(),
-        chat_id: newChannel.value.telegram.chat_id,
-        timezone: newChannel.value.timezone, // <--- Guardamos la zona horaria
+        timezone: newChannel.value.timezone,
+        authorized_chats: [], // Se inicializa vacío, la gente pide acceso por el bot
+        pending_requests: []
       },
     }
   }
 
   try {
     await api.post('/channels', payload)
-    showNotification('Canal añadido.', 'success')
-    // reset manteniendo la zona horaria por defecto si se quiere
+    showNotification('Canal añadido correctamente.', 'success')
+    // Reset
     newChannel.value = {
       name: '',
       timezone: 'America/Argentina/Buenos_Aires',
       webhook: { url: '' },
-      telegram: { bot_token: '', chat_id: '' },
+      telegram: { bot_token: '' },
     }
-    newChannelType.value = 'webhook'
-    availableChats.value = []
     fetchChannels()
   } catch (err) {
     console.error('Error al añadir canal:', err)
@@ -173,7 +141,7 @@ async function handleAddChannel() {
 }
 
 async function handleDeleteChannel(id) {
-  if (!confirm('¿Seguro? Los sensores que usen este canal dejarán de notificar.')) return
+  if (!confirm('¿Seguro? Los sensores que usen este canal dejarán de notificar y los operadores de Telegram perderán acceso.')) return
   try {
     await api.delete(`/channels/${id}`)
     showNotification('Canal eliminado.', 'success')
@@ -184,7 +152,6 @@ async function handleDeleteChannel(id) {
   }
 }
 
-// NUEVA FUNCIÓN: Probar Conectividad
 async function handleTestChannel(id) {
   if (isTestingChannel.value) return
   isTestingChannel.value = true
@@ -195,9 +162,39 @@ async function handleTestChannel(id) {
     showNotification(data.message || 'Prueba enviada correctamente.', 'success')
   } catch (err) {
     console.error('Error al probar canal:', err)
-    showNotification(err.response?.data?.detail || 'Error al enviar el mensaje de prueba. Revisa la configuración.', 'error')
+    showNotification(err.response?.data?.detail || 'Error al enviar el mensaje de prueba. Verifica la configuración.', 'error')
   } finally {
     isTestingChannel.value = false
+  }
+}
+
+// --- NUEVO: Gestión de Accesos de Telegram ---
+function toggleAccessPanel(channelId) {
+  expandedChannelId.value = expandedChannelId.value === channelId ? null : channelId
+}
+
+async function approveAccess(channelId, requestObj) {
+  try {
+    await api.post(`/channels/${channelId}/approve_chat`, {
+      chat_id: requestObj.chat_id,
+      name: requestObj.name,
+      username: requestObj.username
+    })
+    showNotification(`Acceso concedido a ${requestObj.name}`, 'success')
+    fetchChannels()
+  } catch (err) {
+    showNotification(err.response?.data?.detail || 'Error al aprobar.', 'error')
+  }
+}
+
+async function revokeAccess(channelId, chatId) {
+  if (!confirm('¿Seguro que deseas revocar el acceso a este usuario/grupo?')) return
+  try {
+    await api.post(`/channels/${channelId}/revoke_chat`, { chat_id: chatId })
+    showNotification('Acceso revocado.', 'success')
+    fetchChannels()
+  } catch (err) {
+    showNotification(err.response?.data?.detail || 'Error al revocar.', 'error')
   }
 }
 
@@ -267,7 +264,7 @@ function formatHistoryDetails(details) {
               required
             />
 
-            <label>Zona Horaria (para las alertas)</label>
+            <label>Zona Horaria</label>
             <select v-model="newChannel.timezone" required>
               <option v-for="tz in commonTimezones" :key="tz" :value="tz">{{ tz }}</option>
             </select>
@@ -280,16 +277,16 @@ function formatHistoryDetails(details) {
             @submit.prevent="handleAddChannel"
             class="form-layout"
           >
-            <p>Envía alertas a un chat de Telegram a través de un bot.</p>
+            <p>Conecta tu bot de Telegram para notificaciones y consultas en tiempo real.</p>
             <label>Nombre del Canal</label>
             <input
               type="text"
               v-model="newChannel.name"
-              placeholder="Ej: Alertas Telegram"
+              placeholder="Ej: NOC Telegram"
               required
             />
 
-            <label>Zona Horaria (para las alertas)</label>
+            <label>Zona Horaria</label>
             <select v-model="newChannel.timezone" required>
               <option v-for="tz in commonTimezones" :key="tz" :value="tz">{{ tz }}</option>
             </select>
@@ -298,64 +295,85 @@ function formatHistoryDetails(details) {
             <input
               type="text"
               v-model="newChannel.telegram.bot_token"
-              placeholder="Obtenido de BotFather"
-              required
-            />
-
-            <button
-              type="button"
-              @click="handleFetchChats"
-              :disabled="isFetchingChats"
-              class="btn-secondary"
-            >
-              <span v-if="!isFetchingChats">Buscar Chats</span>
-              <span v-else>Buscando...</span>
-            </button>
-
-            <label>Chat ID</label>
-            <select v-if="availableChats.length > 0" v-model="newChannel.telegram.chat_id" required>
-              <option value="" disabled>-- Selecciona un chat --</option>
-              <option v-for="chat in availableChats" :key="chat.id" :value="chat.id">
-                {{ chat.title }} (ID: {{ chat.id }})
-              </option>
-            </select>
-            <input
-              v-else
-              type="text"
-              v-model="newChannel.telegram.chat_id"
-              placeholder="ID del usuario o grupo"
+              placeholder="Ej: 123456:ABC-DEF1234ghIkl-zyx..."
               required
             />
 
             <div class="form-hint-box">
-              <strong>Instrucciones:</strong>
+              <strong>Nuevo Flujo de Seguridad:</strong>
               <ol>
-                <li>Introduce el Token de tu bot.</li>
-                <li>
-                  Asegúrate de que el bot haya sido añadido a un grupo o que le hayas hablado en
-                  privado.
-                </li>
-                <li>Pulsa "Buscar Chats" para ver la lista.</li>
+                <li>Crea tu bot con BotFather y pega el Token arriba.</li>
+                <li>Guarda este canal.</li>
+                <li>Abre Telegram, busca tu bot y envíale <b>/start</b>.</li>
+                <li>El bot te pedirá identificarte. Tras hacerlo, vuelve aquí para aprobar tu propio acceso.</li>
               </ol>
             </div>
-            <button type="submit">Añadir Canal de Telegram</button>
+            <button type="submit">Guardar y Habilitar Bot</button>
           </form>
         </div>
 
         <div class="control-section">
           <h2><i class="icon">📡</i> Canales Guardados</h2>
           <ul v-if="channels.length > 0" class="item-list">
-            <li v-for="channel in channels" :key="channel.id">
-              <div class="item-info">
-                <strong>{{ channel.name }}</strong>
-                <span class="channel-type-badge" :class="channel.type">{{ channel.type }}</span>
-                <span style="font-size: 0.8rem; color: #888; margin-left: 0.5rem">
-                  ({{ channel.config?.timezone || 'UTC' }})
-                </span>
+            <li v-for="channel in channels" :key="channel.id" class="channel-card">
+              <div class="channel-header">
+                <div class="item-info">
+                  <strong>{{ channel.name }}</strong>
+                  <span class="channel-type-badge" :class="channel.type">{{ channel.type }}</span>
+                  <span style="font-size: 0.8rem; color: #888; margin-left: 0.5rem">
+                    ({{ channel.config?.timezone || 'UTC' }})
+                  </span>
+                  
+                  <span v-if="channel.type === 'telegram' && channel.config?.pending_requests?.length > 0" class="pending-badge">
+                    {{ channel.config.pending_requests.length }} sol.
+                  </span>
+                </div>
+                
+                <div class="item-actions">
+                  <button v-if="channel.type === 'telegram'" @click="toggleAccessPanel(channel.id)" class="access-btn" title="Gestionar Accesos">
+                    👥
+                  </button>
+                  <button @click="handleTestChannel(channel.id)" class="test-btn" :disabled="isTestingChannel" title="Probar conexión">🔔</button>
+                  <button @click="handleDeleteChannel(channel.id)" class="delete-btn" title="Eliminar Canal">×</button>
+                </div>
               </div>
-              <div class="item-actions">
-                <button @click="handleTestChannel(channel.id)" class="test-btn" :disabled="isTestingChannel" title="Probar conexión">🔔 Probar</button>
-                <button @click="handleDeleteChannel(channel.id)" class="delete-btn" title="Eliminar Canal">×</button>
+
+              <div v-if="expandedChannelId === channel.id && channel.type === 'telegram'" class="access-panel">
+                <div class="access-column">
+                  <h4>Pendientes de Aprobación</h4>
+                  <div v-if="!channel.config?.pending_requests || channel.config.pending_requests.length === 0" class="empty-mini">
+                    No hay solicitudes
+                  </div>
+                  <ul v-else class="mini-list">
+                    <li v-for="req in channel.config.pending_requests" :key="req.chat_id">
+                      <div>
+                        <b>{{ req.name }}</b><br>
+                        <small>@{{ req.username || 'Sin_alias' }} (ID: {{ req.chat_id }})</small>
+                      </div>
+                      <div class="mini-actions">
+                        <button @click="approveAccess(channel.id, req)" class="btn-approve">✓</button>
+                        <button @click="revokeAccess(channel.id, req.chat_id)" class="btn-reject">✕</button>
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+
+                <div class="access-column">
+                  <h4>Operadores / Grupos Autorizados</h4>
+                  <div v-if="!channel.config?.authorized_chats || channel.config.authorized_chats.length === 0" class="empty-mini">
+                    Ningún usuario autorizado
+                  </div>
+                  <ul v-else class="mini-list">
+                    <li v-for="chat in channel.config.authorized_chats" :key="chat.chat_id || chat">
+                      <div>
+                        <b>{{ chat.name || 'Chat ID:' }}</b>
+                        <small v-if="chat.chat_id">{{ chat.chat_id }}</small>
+                        <small v-else>{{ chat }}</small>
+                      </div>
+                      <button @click="revokeAccess(channel.id, chat.chat_id || chat)" class="btn-reject" title="Revocar Acceso">✕</button>
+                    </li>
+                  </ul>
+                </div>
               </div>
             </li>
           </ul>
@@ -385,10 +403,6 @@ function formatHistoryDetails(details) {
         </table>
         <div v-else class="empty-list">No se han registrado alertas.</div>
       </section>
-    </div>
-
-    <div v-if="notification.show" :class="['notification', notification.type]">
-      {{ notification.message }}
     </div>
   </div>
 </template>
@@ -467,10 +481,6 @@ function formatHistoryDetails(details) {
   font-weight: bold;
   cursor: pointer;
 }
-.btn-secondary {
-  background-color: var(--primary-color) !important;
-  margin-top: 0 !important;
-}
 .empty-list {
   color: var(--gray);
   text-align: center;
@@ -486,13 +496,18 @@ function formatHistoryDetails(details) {
   flex-direction: column;
   gap: 0.8rem;
 }
-.item-list li {
+.channel-card {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.channel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: var(--bg-color);
   padding: 1rem;
-  border-radius: 8px;
 }
 .item-info {
   display: flex;
@@ -503,26 +518,22 @@ function formatHistoryDetails(details) {
 .item-info strong {
   color: white;
 }
-/* NUEVO: Contenedor para alinear los botones de acción */
 .item-actions {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
+  gap: 0.5rem;
   flex-shrink: 0;
 }
-/* NUEVO: Estilos para el botón de prueba */
-.test-btn {
+.test-btn, .access-btn {
   background-color: transparent;
   border: 1px solid var(--primary-color);
   color: white;
-  padding: 0.4rem 0.8rem;
+  padding: 0.4rem 0.6rem;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: bold;
   transition: all 0.2s ease;
 }
-.test-btn:hover:not(:disabled) {
+.test-btn:hover:not(:disabled), .access-btn:hover {
   background-color: var(--primary-color);
 }
 .test-btn:disabled {
@@ -533,7 +544,7 @@ function formatHistoryDetails(details) {
   background: none;
   border: none;
   color: var(--gray);
-  font-size: 1.8rem;
+  font-size: 1.5rem;
   cursor: pointer;
   padding: 0 0.5rem;
   transition: color 0.2s ease;
@@ -541,6 +552,67 @@ function formatHistoryDetails(details) {
 .delete-btn:hover {
   color: var(--error-red);
 }
+
+/* --- ESTILOS PANEL DE ACCESOS --- */
+.pending-badge {
+  background-color: var(--error-red);
+  color: white;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 10px;
+  font-weight: bold;
+}
+.access-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 1rem;
+  background-color: rgba(0,0,0,0.2);
+  border-top: 1px solid var(--primary-color);
+}
+.access-column h4 {
+  margin: 0 0 0.8rem 0;
+  color: var(--gray);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+.mini-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.mini-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--surface-color);
+  padding: 0.6rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.mini-list b { color: white; }
+.mini-list small { color: var(--gray); display: block; }
+.mini-actions { display: flex; gap: 0.3rem; }
+.btn-approve, .btn-reject {
+  border: none;
+  border-radius: 4px;
+  color: white;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  font-weight: bold;
+}
+.btn-approve { background-color: var(--green); }
+.btn-reject { background-color: var(--error-red); }
+.empty-mini {
+  font-size: 0.85rem;
+  color: var(--gray);
+  font-style: italic;
+}
+
+/* --- TABLAS --- */
 .history-table {
   width: 100%;
   border-collapse: collapse;
@@ -557,6 +629,8 @@ function formatHistoryDetails(details) {
 .nowrap {
   white-space: nowrap;
 }
+
+/* --- OTROS --- */
 .notification {
   position: fixed;
   top: 90px;
@@ -567,12 +641,9 @@ function formatHistoryDetails(details) {
   font-weight: bold;
   z-index: 1000;
 }
-.notification.success {
-  background-color: var(--green);
-}
-.notification.error {
-  background-color: var(--error-red);
-}
+.notification.success { background-color: var(--green); }
+.notification.error { background-color: var(--error-red); }
+
 .channel-type-selector {
   display: flex;
   gap: 0.5rem;
@@ -605,12 +676,9 @@ function formatHistoryDetails(details) {
   color: white;
   width: fit-content;
 }
-.channel-type-badge.webhook {
-  background-color: var(--blue);
-}
-.channel-type-badge.telegram {
-  background-color: #34a8de;
-}
+.channel-type-badge.webhook { background-color: var(--blue); }
+.channel-type-badge.telegram { background-color: #34a8de; }
+
 .form-hint-box {
   background-color: var(--bg-color);
   border: 1px solid var(--primary-color);
