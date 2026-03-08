@@ -149,6 +149,9 @@
           <router-link to="/scan" class="m360-item" role="menuitem" @click="closeMenu"
             >📡 Escáner de Red</router-link
           >
+          <router-link to="/reports" class="m360-item" role="menuitem" @click="closeMenu"
+            >🤖 Reportes IA</router-link
+          >
           <router-link to="/credentials" class="m360-item" role="menuitem" @click="closeMenu"
             >🔐 Credenciales</router-link
           >
@@ -192,6 +195,9 @@
           >➕ Añadir</router-link
         >
         <router-link to="/scan" class="m360-fab-item" @click="closeFab">📡 Escáner</router-link>
+        <router-link to="/reports" class="m360-fab-item" @click="closeFab"
+          >🤖 Reportes IA</router-link
+        >
         <router-link to="/devices" class="m360-fab-item" @click="closeFab"
           >⚙️ Dispositivos</router-link
         >
@@ -243,6 +249,7 @@ const breadcrumb = computed(() => {
     '/monitor-builder': 'Añadir monitor',
     '/scan': 'Descubrimiento',
     '/devices': 'Dispositivos',
+    '/reports': 'Reportes IA',
     '/credentials': 'Credenciales',
     '/channels': 'Canales',
     '/vpns': 'VPNs',
