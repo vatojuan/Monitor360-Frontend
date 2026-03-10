@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import api from '@/lib/api'
 
 // --- ESTADO GLOBAL ---
@@ -18,6 +18,10 @@ const ignoredDevices = ref([]) // Lista Negra
 const scanProfiles = ref([])
 const channels = ref([]) 
 const groups = ref([])
+
+// --- NUEVO ESTADO PARA INTERFACES ---
+const maestroInterfaces = ref([])
+const isLoadingInterfaces = ref(false)
 
 // --- ESTADO FILTROS INBOX ---
 const inboxFilter = ref({
@@ -86,6 +90,29 @@ const suggestedTargetDevices = computed(() => {
     return d.vpn_profile_id === currentVpnId
   })
 })
+
+// =============================================================================
+// LÓGICA DE INTERFACES (NUEVA)
+// =============================================================================
+watch(() => scanConfig.value.maestro_id, async (newMaestroId) => {
+  if (!newMaestroId) {
+    maestroInterfaces.value = [];
+    return;
+  }
+  
+  isLoadingInterfaces.value = true;
+  try {
+    const { data } = await api.get(`/devices/${newMaestroId}/interfaces`);
+    maestroInterfaces.value = data || [];
+  } catch (e) {
+    console.error('Error cargando interfaces del maestro:', e);
+    maestroInterfaces.value = [];
+    showNotification('No se pudieron cargar las interfaces del Router', 'error');
+  } finally {
+    isLoadingInterfaces.value = false;
+  }
+});
+
 
 // =============================================================================
 // LÓGICA DE FILTRADO (REFINADA)
@@ -460,7 +487,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
             {{ selectedPending.length }} seleccionados
           </span>
           <span class="selection-count" v-else> 
-             Mostrando {{ filteredPendingDevices.length }} de {{ pendingDevices.length }}
+              Mostrando {{ filteredPendingDevices.length }} de {{ pendingDevices.length }}
           </span>
         </div>
         <div class="toolbar-right">
@@ -625,10 +652,23 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
             <label>Red Objetivo (CIDR)</label>
             <input type="text" v-model="scanConfig.network_cidr" placeholder="Ej: 192.168.88.0/24" />
           </div>
+          
           <div class="form-group">
-            <label>Interfaz</label>
-            <input type="text" v-model="scanConfig.interface" placeholder="Auto-detectar (Recomendado)" />
+            <label style="display: flex; justify-content: space-between; align-items: center;">
+                Interfaz
+                <span v-if="isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
+            </label>
+            <select v-model="scanConfig.interface" :disabled="isLoadingInterfaces || (!maestroInterfaces.length && !scanConfig.interface)">
+                <option value="">Auto-detectar (Recomendado)</option>
+                <option v-if="scanConfig.interface && !maestroInterfaces.some(i => i.name === scanConfig.interface)" :value="scanConfig.interface">
+                    {{ scanConfig.interface }} (Manual)
+                </option>
+                <option v-for="iface in maestroInterfaces" :key="iface.name" :value="iface.name">
+                    {{ iface.name }} {{ iface.type !== 'unknown' ? `[${iface.type}]` : '' }} {{ iface.disabled ? '(Inactiva)' : '' }}
+                </option>
+            </select>
           </div>
+
           <div class="form-group">
             <label>Puertos</label>
             <input type="text" v-model="scanConfig.scan_ports" placeholder="8728, 80, 22" />

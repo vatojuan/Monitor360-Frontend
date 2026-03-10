@@ -27,6 +27,10 @@ const isEditMode = ref(false)
 // --- Estado para Selector de Destino (Ping) ---
 const allDevicesList = ref([]) // Lista completa para el selector de destino
 
+// --- NUEVO ESTADO PARA INTERFACES ---
+const deviceInterfaces = ref([])
+const isLoadingInterfaces = ref(false)
+
 // --- COMPUTADO: Validación de Maestro ---
 const hasParentMaestro = computed(() => {
   return !!selectedDevice.value?.maestro_id
@@ -161,7 +165,7 @@ const createNewEthernetSensor = () => ({
 const createNewWirelessSensor = () => ({
   name: '',
   config: {
-    interface_name: 'wlan1',
+    interface_name: '', // Lo dejamos vacío para obligar a seleccionar de la lista si está disponible
     thresholds: {
       min_signal_dbm: -80,
       min_ccq_percent: 75,
@@ -264,6 +268,21 @@ async function fetchAllDevices() {
     allDevicesList.value = Array.isArray(data) ? data : []
   } catch (err) {
     console.error('Error fetching devices list:', err)
+  }
+}
+
+// --- NUEVO: Obtener Interfaces del Dispositivo Activo ---
+async function fetchDeviceInterfaces(deviceId) {
+  isLoadingInterfaces.value = true;
+  deviceInterfaces.value = [];
+  try {
+    const { data } = await api.get(`/devices/${deviceId}/interfaces`);
+    deviceInterfaces.value = data || [];
+  } catch (e) {
+    console.warn(`No se pudieron cargar las interfaces para el equipo ${deviceId}. Fallback a input manual.`);
+    deviceInterfaces.value = []; // Queda vacío para activar el fallback manual
+  } finally {
+    isLoadingInterfaces.value = false;
   }
 }
 
@@ -544,7 +563,7 @@ function openFormForEdit(sensor) {
     const uiData = createNewWirelessSensor()
     uiData.name = sensor.name
     uiData.config = {
-      interface_name: cfg.interface_name || 'wlan1',
+      interface_name: cfg.interface_name || '',
       tolerance_checks: cfg.tolerance_checks ?? 3,
       thresholds: {
         min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
@@ -626,6 +645,9 @@ async function selectDevice(device) {
   selectedGroupOption.value = ''
   customGroupName.value = ''
 
+  // Despachamos la carga de interfaces en background
+  fetchDeviceInterfaces(device.id);
+
   await fetchAllMonitors()
   const monitor = allMonitors.value.find((m) => m.device_id === device.id)
   if (monitor) {
@@ -646,6 +668,7 @@ function clearSelectedDevice() {
   selectedDevice.value = null
   currentMonitor.value = null
   activeSensors.value = []
+  deviceInterfaces.value = [] // Limpiamos las interfaces en cache
   closeForm()
 }
 
@@ -1018,15 +1041,29 @@ watch(searchQuery, (newQuery) => {
           <div class="form-group span-2">
             <label>Nombre</label><input type="text" v-model="newEthernetSensor.name" required />
           </div>
+          
           <div class="form-group">
-            <label>Interfaz</label>
-            <input
-              type="text"
-              v-model="newEthernetSensor.config.interface_name"
-              required
-              placeholder="ether1"
-            />
+            <label style="display: flex; justify-content: space-between; align-items: center;">
+                Interfaz
+                <span v-if="isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
+                <span v-else-if="!deviceInterfaces.length" style="font-size: 0.8rem; color: var(--error-red);">⚠️ Falló detección</span>
+            </label>
+            <template v-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
+                <select v-model="newEthernetSensor.config.interface_name" required :disabled="isLoadingInterfaces">
+                    <option value="" disabled>Seleccione una interfaz</option>
+                    <option v-if="newEthernetSensor.config.interface_name && !deviceInterfaces.some(i => i.name === newEthernetSensor.config.interface_name)" :value="newEthernetSensor.config.interface_name">
+                        {{ newEthernetSensor.config.interface_name }} (Actual)
+                    </option>
+                    <option v-for="iface in deviceInterfaces" :key="iface.name" :value="iface.name">
+                        {{ iface.name }} {{ iface.type !== 'unknown' ? `[${iface.type}]` : '' }} {{ iface.disabled ? '(Inactiva)' : '' }}
+                    </option>
+                </select>
+            </template>
+            <template v-else>
+                <input type="text" v-model="newEthernetSensor.config.interface_name" required placeholder="Ej: ether1" />
+            </template>
           </div>
+
           <div class="form-group span-3">
             <label>Intervalo (s)</label>
             <input type="number" v-model.number="newEthernetSensor.config.interval_sec" required />
@@ -1195,14 +1232,27 @@ watch(searchQuery, (newQuery) => {
             <label>Nombre del Sensor</label>
             <input type="text" v-model="newWirelessSensor.name" required />
           </div>
+          
           <div class="form-group">
-            <label>Interfaz Inalámbrica</label>
-            <input
-              type="text"
-              v-model="newWirelessSensor.config.interface_name"
-              required
-              placeholder="wlan1 / ath0"
-            />
+            <label style="display: flex; justify-content: space-between; align-items: center;">
+                Interfaz Inalámbrica
+                <span v-if="isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
+                <span v-else-if="!deviceInterfaces.length" style="font-size: 0.8rem; color: var(--error-red);">⚠️ Falló detección</span>
+            </label>
+            <template v-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
+                <select v-model="newWirelessSensor.config.interface_name" required :disabled="isLoadingInterfaces">
+                    <option value="" disabled>Seleccione una interfaz</option>
+                    <option v-if="newWirelessSensor.config.interface_name && !deviceInterfaces.some(i => i.name === newWirelessSensor.config.interface_name)" :value="newWirelessSensor.config.interface_name">
+                        {{ newWirelessSensor.config.interface_name }} (Actual)
+                    </option>
+                    <option v-for="iface in deviceInterfaces" :key="iface.name" :value="iface.name">
+                        {{ iface.name }} {{ iface.type !== 'unknown' ? `[${iface.type}]` : '' }} {{ iface.disabled ? '(Inactiva)' : '' }}
+                    </option>
+                </select>
+            </template>
+            <template v-else>
+                <input type="text" v-model="newWirelessSensor.config.interface_name" required placeholder="Ej: wlan1" />
+            </template>
           </div>
 
           <div class="sub-section span-3">
