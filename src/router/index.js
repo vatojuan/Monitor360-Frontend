@@ -9,7 +9,8 @@ import ChannelsView from '../views/ChannelsView.vue'
 import VpnsView from '../views/VpnsView.vue'
 import ScanView from '../views/ScanView.vue'
 import LoginView from '../views/LoginView.vue'
-import ReportsView from '../views/ReportsView.vue' // <--- NUEVA IMPORTACIÓN
+import ReportsView from '../views/ReportsView.vue'
+import BillingView from '../views/BillingView.vue' // ✅ NUEVO: Importación de la vista de facturación
 import { getSession } from '@/lib/supabase'
 
 const routes = [
@@ -44,7 +45,7 @@ const routes = [
   { path: '/channels', name: 'channels', component: ChannelsView, meta: { requiresAuth: true } },
   { path: '/vpns', name: 'vpns', component: VpnsView, meta: { requiresAuth: true } },
   
-  // ✅ NUEVO: Ruta de Reportes IA
+  // Ruta de Reportes IA
   { 
     path: '/reports', 
     name: 'reports', 
@@ -52,11 +53,19 @@ const routes = [
     meta: { requiresAuth: true } 
   },
 
-  // ✅ CORREGIDO: Ruta de escáner interna (protegida y con menú)
+  // Ruta de escáner interna (protegida y con menú)
   {
     path: '/scan',
     name: 'scan',
     component: ScanView,
+    meta: { requiresAuth: true },
+  },
+
+  // ✅ NUEVO: Ruta del panel de suscripciones/pagos
+  {
+    path: '/billing',
+    name: 'billing',
+    component: BillingView,
     meta: { requiresAuth: true },
   },
 
