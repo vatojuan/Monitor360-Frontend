@@ -6,7 +6,7 @@ import api from '@/lib/api'
 const activeTab = ref('inbox')
 const isLoading = ref(false)
 const isScanning = ref(false)
-const isAdopting = ref(false) // [NUEVO] Estado de carga para la adopción asíncrona
+const isAdopting = ref(false)
 const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- DATOS ---
@@ -40,7 +40,7 @@ const ignoredFilter = ref({
 // --- ESTADO SELECCIÓN ---
 const selectedPending = ref([])
 const selectedIgnored = ref([])
-const adoptCredentialId = ref(null)
+
 
 // --- ESTADO CONFIGURACIÓN (SCAN) ---
 const scanConfig = ref({
@@ -57,11 +57,20 @@ const scanConfig = ref({
   adopt_only_managed: false,
 })
 
-// --- NUEVO ESTADO: LISTA DINÁMICA DE SENSORES PARA LA RECETA ---
+// --- NUEVO ESTADO: LISTA DINÁMICA DE SENSORES PARA LA RECETA (SCANNER) ---
 const sensorsTemplateList = ref([])
-const newSensorType = ref('ping')
 
-const hasSystemSensor = computed(() => sensorsTemplateList.value.some(s => s.sensor_type === 'system'))
+// --- NUEVO ESTADO: MODAL DE ADOPCIÓN MANUAL ---
+const showAdoptModal = ref(false)
+const adoptCredentialId = ref(null)
+const adoptTargetGroup = ref('General')
+const adoptSensorsList = ref([]) // Receta de sensores para adopción manual
+
+const newSensorType = ref('ping') // Usado tanto por Scanner como por Modal
+
+const hasSystemSensorScanner = computed(() => sensorsTemplateList.value.some(s => s.sensor_type === 'system'))
+const hasSystemSensorModal = computed(() => adoptSensorsList.value.some(s => s.sensor_type === 'system'))
+
 
 // --- COMPUTADA: Dispositivos Sugeridos ---
 const suggestedTargetDevices = computed(() => {
@@ -190,7 +199,7 @@ async function fetchChannels() { try { const { data } = await api.get('/channels
 async function fetchGroups() { try { const { data } = await api.get('/groups'); groups.value = (data || []).map((g) => g.name) } catch (e) {} }
 
 // =============================================================================
-// NUEVO: GESTIÓN DINÁMICA DE SENSORES (RECETA)
+// NUEVO: GESTIÓN DINÁMICA DE SENSORES (RECETA REUTILIZABLE)
 // =============================================================================
 
 function createDefaultSensor(type) {
@@ -222,13 +231,14 @@ function createDefaultSensor(type) {
   return base
 }
 
-function addSensorToRecipe() {
-    if (newSensorType.value === 'system' && hasSystemSensor.value) return;
-    sensorsTemplateList.value.push(createDefaultSensor(newSensorType.value))
+// Modificado para aceptar la lista objetivo como parámetro
+function addSensorToRecipe(targetList, hasSystemFn) {
+    if (newSensorType.value === 'system' && hasSystemFn) return;
+    targetList.push(createDefaultSensor(newSensorType.value))
 }
 
-function removeSensor(index) {
-    sensorsTemplateList.value.splice(index, 1)
+function removeSensor(targetList, index) {
+    targetList.splice(index, 1)
 }
 
 function getSensorIcon(type) {
@@ -387,13 +397,36 @@ function selectAll() {
   }
 }
 
-async function adoptSelected() {
-  if (selectedPending.value.length === 0) return
-  isAdopting.value = true
+function openAdoptModal() {
+  if (selectedPending.value.length === 0) return;
+  adoptSensorsList.value = []; // Resetear receta al abrir
+  adoptTargetGroup.value = 'General';
+  showAdoptModal.value = true;
+}
+
+function cancelAdoption() {
+  showAdoptModal.value = false;
+}
+
+// LÓGICA CONFIRMADA DESDE EL MODAL
+async function confirmAdoption() {
+  showAdoptModal.value = false;
+  isAdopting.value = true;
 
   try {
-    const devicesToAdopt = pendingDevices.value.filter((d) => selectedPending.value.includes(d.mac_address))
-    const payload = { maestro_id: devicesToAdopt[0].maestro_id, credential_profile_id: adoptCredentialId.value, devices: devicesToAdopt, naming_strategy: 'hostname' }
+    const devicesToAdopt = pendingDevices.value.filter((d) => selectedPending.value.includes(d.mac_address));
+    
+    // Procesar la receta de sensores del modal
+    const finalSensorsPayload = adoptSensorsList.value.map(s => buildSensorConfigPayload(s));
+
+    const payload = { 
+        maestro_id: devicesToAdopt[0].maestro_id, 
+        credential_profile_id: adoptCredentialId.value, 
+        target_group: adoptTargetGroup.value,
+        sensors_config: finalSensorsPayload.length > 0 ? finalSensorsPayload : null,
+        devices: devicesToAdopt, 
+        naming_strategy: 'hostname' 
+    };
     
     const { data } = await api.post('/discovery/adopt', payload); 
     
@@ -545,16 +578,11 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 🚫 Ignorar ({{ selectedPending.length }})
             </button>
 
-            <div class="adopt-control">
-                <select v-model="adoptCredentialId" class="credential-select" :disabled="selectedPending.length === 0 || isAdopting">
-                <option :value="null">Sin Credenciales</option>
-                <option v-for="p in credentialProfiles" :key="p.id" :value="p.id">🔐 {{ p.name }}</option>
-                </select>
-                <button @click="adoptSelected" class="btn-adopt" :disabled="selectedPending.length === 0 || isAdopting">
-                {{ isAdopting ? '⏳ Adoptando...' : '✅ Adoptar' }}
-                </button>
-            </div>
-            <button @click="loadGlobalData" class="btn-icon" title="Recargar Lista">🔄</button>
+            <button v-if="selectedPending.length > 0" @click="openAdoptModal" class="btn-adopt" :disabled="isAdopting">
+                {{ isAdopting ? '⏳ Adoptando...' : '✅ Adoptar Seleccionados' }}
+            </button>
+
+            <button @click="loadGlobalData" class="btn-icon" title="Recargar Lista" style="margin-left: 15px;">🔄</button>
         </div>
       </div>
 
@@ -603,19 +631,16 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     </div>
 
     <div v-if="activeTab === 'ignored'" class="content-panel fade-in">
-        
         <div class="filter-bar filter-bar-ignored">
             <div class="search-group">
                 <span class="icon">🔍</span>
                 <input type="text" v-model="ignoredFilter.search" placeholder="Buscar en Ignorados..." class="filter-input" />
             </div>
-            
             <div class="filter-controls">
                 <select v-model="ignoredFilter.vendor" class="filter-select">
                     <option value="">Todo Fabricante</option>
                     <option v-for="v in ignoredVendors" :key="v" :value="v">{{ v }}</option>
                 </select>
-
                 <div class="toggle-group">
                     <button :class="{ active: ignoredFilter.type === 'all' }" @click="ignoredFilter.type = 'all'">Todos</button>
                     <button :class="{ active: ignoredFilter.type === 'infra' }" @click="ignoredFilter.type = 'infra'">Infra</button>
@@ -623,7 +648,6 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 </div>
             </div>
         </div>
-
         <div class="toolbar" style="background: rgba(255,50,50,0.1); border-color: var(--error-red);">
             <div class="toolbar-left">
                 <span class="selection-count" style="color: white; font-weight: bold;" v-if="selectedIgnored.length > 0">
@@ -641,40 +665,21 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 <button @click="fetchIgnoredDevices" class="btn-icon" title="Recargar Lista">🔄</button>
             </div>
         </div>
-
         <div class="table-container">
             <table class="devices-table">
                 <thead>
                     <tr>
-                        <th width="40">
-                            <input type="checkbox" @change="selectAllIgnored" 
-                                   :checked="selectedIgnored.length > 0 && filteredIgnoredDevices.length > 0 && filteredIgnoredDevices.every(d => selectedIgnored.includes(d.mac_address))" />
-                        </th>
-                        <th>IP Address</th>
-                        <th>MAC Address</th>
-                        <th>Identity</th>
-                        <th>Fabricante</th>
-                        <th>Plataforma</th>
-                        <th>Hostname</th>
-                        <th style="text-align: right;">Acciones</th>
+                        <th width="40"><input type="checkbox" @change="selectAllIgnored" :checked="selectedIgnored.length > 0 && filteredIgnoredDevices.length > 0 && filteredIgnoredDevices.every(d => selectedIgnored.includes(d.mac_address))" /></th>
+                        <th>IP Address</th><th>MAC Address</th><th>Identity</th><th>Fabricante</th><th>Plataforma</th><th>Hostname</th><th style="text-align: right;">Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-if="filteredIgnoredDevices.length === 0">
-                        <td colspan="8" class="empty-row">
-                            {{ ignoredDevices.length === 0 ? '✅ No hay dispositivos ignorados.' : '🔍 No se encontraron dispositivos con los filtros actuales.' }}
-                        </td>
+                        <td colspan="8" class="empty-row">{{ ignoredDevices.length === 0 ? '✅ No hay dispositivos ignorados.' : '🔍 No se encontraron dispositivos con los filtros actuales.' }}</td>
                     </tr>
                     <tr v-for="dev in filteredIgnoredDevices" :key="dev.mac_address" class="ignored-row" :class="{ selected: selectedIgnored.includes(dev.mac_address) }">
-                        <td>
-                            <input type="checkbox" :checked="selectedIgnored.includes(dev.mac_address)" @click="toggleIgnoredSelection(dev.mac_address)" />
-                        </td>
-                        <td class="font-mono text-dim">{{ dev.ip_address }}</td>
-                        <td class="font-mono text-dim">{{ dev.mac_address }}</td>
-                        <td class="text-dim">{{ dev.identity || '-' }}</td>
-                        <td class="text-dim">{{ dev.vendor || 'Desconocido' }}</td>
-                        <td class="text-dim">{{ dev.platform || '-' }}</td>
-                        <td class="text-dim">{{ dev.hostname || '-' }}</td>
+                        <td><input type="checkbox" :checked="selectedIgnored.includes(dev.mac_address)" @click="toggleIgnoredSelection(dev.mac_address)" /></td>
+                        <td class="font-mono text-dim">{{ dev.ip_address }}</td><td class="font-mono text-dim">{{ dev.mac_address }}</td><td class="text-dim">{{ dev.identity || '-' }}</td><td class="text-dim">{{ dev.vendor || 'Desconocido' }}</td><td class="text-dim">{{ dev.platform || '-' }}</td><td class="text-dim">{{ dev.hostname || '-' }}</td>
                         <td style="text-align: right;">
                             <button @click="restoreDevice(dev.mac_address)" class="btn-sm btn-restore" title="Restaurar" style="margin-right: 10px;">♻️</button>
                             <button @click="hardDeleteDevice(dev.mac_address)" class="btn-sm btn-del" title="Olvidar Definitivamente">💀</button>
@@ -702,7 +707,6 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
             <label>Red Objetivo (CIDR)</label>
             <input type="text" v-model="scanConfig.network_cidr" placeholder="Ej: 192.168.88.0/24" />
           </div>
-          
           <div class="form-group">
             <label style="display: flex; justify-content: space-between; align-items: center;">
                 Interfaz
@@ -710,15 +714,10 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
             </label>
             <select v-model="scanConfig.interface" :disabled="isLoadingInterfaces || (!maestroInterfaces.length && !scanConfig.interface)">
                 <option value="">Auto-detectar (Recomendado)</option>
-                <option v-if="scanConfig.interface && !maestroInterfaces.some(i => i.name === scanConfig.interface)" :value="scanConfig.interface">
-                    {{ scanConfig.interface }} (Manual)
-                </option>
-                <option v-for="iface in maestroInterfaces" :key="iface.name" :value="iface.name">
-                    {{ iface.name }} {{ iface.type !== 'unknown' ? `[${iface.type}]` : '' }} {{ iface.disabled ? '(Inactiva)' : '' }}
-                </option>
+                <option v-if="scanConfig.interface && !maestroInterfaces.some(i => i.name === scanConfig.interface)" :value="scanConfig.interface">{{ scanConfig.interface }} (Manual)</option>
+                <option v-for="iface in maestroInterfaces" :key="iface.name" :value="iface.name">{{ iface.name }} {{ iface.type !== 'unknown' ? `[${iface.type}]` : '' }} {{ iface.disabled ? '(Inactiva)' : '' }}</option>
             </select>
           </div>
-
           <div class="form-group">
             <label>Puertos</label>
             <input type="text" v-model="scanConfig.scan_ports" placeholder="8728, 80, 22" />
@@ -749,8 +748,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 <label><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Notificar</label>
                 <label><input type="radio" v-model="scanConfig.scan_mode" value="auto" /> Auto-Adoptar</label>
               </div>
-               <div v-if="scanConfig.scan_mode === 'notify' || (scanConfig.scan_mode === 'auto' && sensorsTemplateList.length === 0)" 
-                    class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
+               <div v-if="scanConfig.scan_mode === 'notify' || (scanConfig.scan_mode === 'auto' && sensorsTemplateList.length === 0)" class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
                    <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
                    <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">Solo Gestionados (Credenciales)</label>
               </div>
@@ -771,19 +769,16 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                             <option value="ping">📡 Ping</option>
                             <option value="ethernet">🔌 Ethernet</option>
                             <option value="wireless">📶 Wireless</option>
-                            <option value="system" :disabled="hasSystemSensor">🖥️ Sistema</option>
+                            <option value="system" :disabled="hasSystemSensorScanner">🖥️ Sistema</option>
                         </select>
-                        <button @click="addSensorToRecipe" class="btn-sm btn-action-restore" style="margin-left: 10px;">➕ Añadir Sensor</button>
+                        <button @click="addSensorToRecipe(sensorsTemplateList, hasSystemSensorScanner)" class="btn-sm btn-action-restore" style="margin-left: 10px;">➕ Añadir Sensor</button>
                     </div>
 
                     <div class="sensor-cards-list">
                         <div v-for="(sensor, index) in sensorsTemplateList" :key="sensor.id" class="sensor-card fade-in">
                             <div class="sensor-card-header">
-                                <div>
-                                    <span class="sensor-icon">{{ getSensorIcon(sensor.sensor_type) }}</span>
-                                    <strong>{{ sensor.sensor_type.toUpperCase() }}</strong>
-                                </div>
-                                <button @click="removeSensor(index)" class="btn-sm btn-del btn-remove-sensor" title="Eliminar Sensor">🗑️</button>
+                                <div><span class="sensor-icon">{{ getSensorIcon(sensor.sensor_type) }}</span><strong>{{ sensor.sensor_type.toUpperCase() }}</strong></div>
+                                <button @click="removeSensor(sensorsTemplateList, index)" class="btn-sm btn-del btn-remove-sensor" title="Eliminar Sensor">🗑️</button>
                             </div>
 
                             <div v-if="sensor.sensor_type === 'ping'" class="mini-config">
@@ -800,16 +795,11 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     <input type="checkbox" :checked="sensor.attach_to === 'maestro'" @change="sensor.attach_to = $event.target.checked ? 'maestro' : 'device'" />
                                     <span class="text-highlight font-weight-bold" style="font-size: 0.8rem;">📍 Ejecutar Ping desde el Maestro hacia este equipo</span>
                                 </div>
-                                
                                 <div class="chk-label"><input type="checkbox" v-model="sensor.ui_alert_timeout.enabled" /> Alerta Timeout</div>
                                 <div v-if="sensor.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
-                                    <select v-model="sensor.ui_alert_timeout.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
-                                        <option :value="null">-- Seleccionar Canal --</option>
-                                        <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                                    </select>
+                                    <select v-model="sensor.ui_alert_timeout.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
                                     <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_custom_message" /> ✏️ Msj. Alerta</div>
                                     <textarea v-if="sensor.ui_alert_timeout.use_custom_message" v-model="sensor.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} no responde. {status}"></textarea>
-                                    
                                     <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.notify_recovery" /> 🟢 Notificar Regreso</div>
                                     <template v-if="sensor.ui_alert_timeout.notify_recovery">
                                         <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
@@ -822,13 +812,9 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <input list="default-interfaces" v-model="sensor.config.interface_name" placeholder="Ej: ether1, bridge, eth0..." class="tiny-input-full" />
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.enabled" /> Alerta Desconexión</div>
                                 <div v-if="sensor.ui_alert_speed_change.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
-                                   <select v-model="sensor.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
-                                      <option :value="null">-- Seleccionar Canal --</option>
-                                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                                   </select>
+                                   <select v-model="sensor.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
                                    <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_custom_message" /> ✏️ Msj. Alerta</div>
                                    <textarea v-if="sensor.ui_alert_speed_change.use_custom_message" v-model="sensor.ui_alert_speed_change.custom_message" class="search-input custom-textarea" placeholder="Ej: Cable desconectado en {client_name}"></textarea>
-                                   
                                    <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.notify_recovery" /> 🟢 Notificar Regreso</div>
                                    <template v-if="sensor.ui_alert_speed_change.notify_recovery">
                                        <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
@@ -841,37 +827,19 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <input v-model="sensor.config.interface_name" placeholder="wlan1" class="tiny-input-full" />
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_wireless.enabled" /> Alerta Estado Degradado/Caído</div>
                                 <div v-if="sensor.ui_alert_wireless.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
-                                   <select v-model="sensor.ui_alert_wireless.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
-                                      <option :value="null">-- Seleccionar Canal --</option>
-                                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                                   </select>
+                                   <select v-model="sensor.ui_alert_wireless.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
                                 </div>
                             </div>
 
                             <div v-if="sensor.sensor_type === 'system'" class="mini-config">
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_system.enabled" /> Alerta Recursos Elevados/Reinicio</div>
                                 <div v-if="sensor.ui_alert_system.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
-                                   <select v-model="sensor.ui_alert_system.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
-                                      <option :value="null">-- Seleccionar Canal --</option>
-                                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                                   </select>
+                                   <select v-model="sensor.ui_alert_system.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
                                 </div>
                             </div>
-
                         </div>
-                        
-                        <datalist id="default-interfaces">
-                            <option value="ether1"></option>
-                            <option value="ether2"></option>
-                            <option value="bridge"></option>
-                            <option value="lan"></option>
-                            <option value="eth0"></option>
-                            <option value="wlan1"></option>
-                        </datalist>
-
                     </div>
                 </div>
-
               </div>
             </template>
           </div>
@@ -907,6 +875,113 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
         </div>
       </section>
     </div>
+
+    <div v-if="showAdoptModal" class="modal-overlay fade-in">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🚀 Adoptar Dispositivos ({{ selectedPending.length }})</h3>
+                <button @click="cancelAdoption" class="btn-icon">✖️</button>
+            </div>
+            
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <p style="color: #aaa; margin-bottom: 20px; font-size: 0.9rem;">
+                    Configura las credenciales, el grupo y la receta de monitoreo que se aplicará a todos los equipos seleccionados.
+                </p>
+
+                <div class="form-group">
+                    <label>🔐 Credenciales Globales (Opcional)</label>
+                    <select v-model="adoptCredentialId" class="search-input">
+                        <option :value="null">-- Usar Credenciales del Escaneo / Ninguna --</option>
+                        <option v-for="p in credentialProfiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>🗂️ Grupo de Destino</label>
+                    <select v-model="adoptTargetGroup" class="search-input">
+                        <option value="General">General</option>
+                        <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
+                    </select>
+                </div>
+
+                <hr class="separator" style="margin: 20px 0;" />
+                
+                <h4 class="mini-title">🏗️ Receta de Sensores (Opcional)</h4>
+                
+                <div class="sensors-recipe-container" style="margin-top: 10px;">
+                    <div class="add-sensor-controls">
+                        <select v-model="newSensorType" class="mini-select" style="width: auto;">
+                            <option value="ping">📡 Ping</option>
+                            <option value="ethernet">🔌 Ethernet</option>
+                            <option value="wireless">📶 Wireless</option>
+                            <option value="system" :disabled="hasSystemSensorModal">🖥️ Sistema</option>
+                        </select>
+                        <button @click="addSensorToRecipe(adoptSensorsList, hasSystemSensorModal)" class="btn-sm btn-action-restore" style="margin-left: 10px;">➕ Añadir Sensor</button>
+                    </div>
+
+                    <div class="sensor-cards-list">
+                        <div v-for="(sensor, index) in adoptSensorsList" :key="sensor.id" class="sensor-card fade-in">
+                            <div class="sensor-card-header">
+                                <div><span class="sensor-icon">{{ getSensorIcon(sensor.sensor_type) }}</span><strong>{{ sensor.sensor_type.toUpperCase() }}</strong></div>
+                                <button @click="removeSensor(adoptSensorsList, index)" class="btn-sm btn-del btn-remove-sensor" title="Eliminar Sensor">🗑️</button>
+                            </div>
+
+                            <div v-if="sensor.sensor_type === 'ping'" class="mini-config">
+                                <div class="form-group" style="margin-bottom: 5px;">
+                                    <template v-if="sensor.attach_to === 'maestro'">
+                                        <div class="search-input auto-ip-text">🎯 Target IP: [Auto-asignada al equipo adoptado]</div>
+                                    </template>
+                                    <template v-else>
+                                        <input type="text" v-model="sensor.config.target_ip" placeholder="Target IP (dynamic_ip para auto)" class="search-input" />
+                                    </template>
+                                </div>
+                                <div class="chk-label attach-toggle" style="margin-bottom: 10px; padding: 5px; background: rgba(100, 200, 255, 0.1); border-radius: 4px; border: 1px solid var(--blue);">
+                                    <input type="checkbox" :checked="sensor.attach_to === 'maestro'" @change="sensor.attach_to = $event.target.checked ? 'maestro' : 'device'" />
+                                    <span class="text-highlight font-weight-bold" style="font-size: 0.8rem;">📍 Ejecutar Ping desde el Maestro hacia este equipo</span>
+                                </div>
+                                <div class="chk-label"><input type="checkbox" v-model="sensor.ui_alert_timeout.enabled" /> Alerta Timeout</div>
+                                <div v-if="sensor.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                                    <select v-model="sensor.ui_alert_timeout.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                    <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_custom_message" /> ✏️ Msj. Alerta</div>
+                                    <textarea v-if="sensor.ui_alert_timeout.use_custom_message" v-model="sensor.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} no responde. {status}"></textarea>
+                                </div>
+                            </div>
+
+                            <div v-if="sensor.sensor_type === 'ethernet'" class="mini-config">
+                                <input list="default-interfaces" v-model="sensor.config.interface_name" placeholder="Ej: ether1, bridge, eth0..." class="tiny-input-full" />
+                                <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.enabled" /> Alerta Desconexión</div>
+                                <div v-if="sensor.ui_alert_speed_change.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                                   <select v-model="sensor.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                </div>
+                            </div>
+
+                            <div v-if="sensor.sensor_type === 'wireless'" class="mini-config">
+                                <input v-model="sensor.config.interface_name" placeholder="wlan1" class="tiny-input-full" />
+                                <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_wireless.enabled" /> Alerta Estado Degradado/Caído</div>
+                                <div v-if="sensor.ui_alert_wireless.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                                   <select v-model="sensor.ui_alert_wireless.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                </div>
+                            </div>
+
+                            <div v-if="sensor.sensor_type === 'system'" class="mini-config">
+                                <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_system.enabled" /> Alerta Recursos Elevados/Reinicio</div>
+                                <div v-if="sensor.ui_alert_system.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                                   <select v-model="sensor.ui_alert_system.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+                <button @click="cancelAdoption" class="btn-cancel">Cancelar</button>
+                <button @click="confirmAdoption" class="btn-scan" style="flex: none; padding: 10px 20px;">🚀 Confirmar Adopción</button>
+            </div>
+        </div>
+    </div>
+
   </div>
 </template>
 
@@ -982,8 +1057,9 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .adopt-control { display: flex; gap: 10px; background: var(--bg-color); padding: 5px; border-radius: 6px; border: 1px solid var(--primary-color); }
 .credential-select { background: transparent; border: none; color: white; padding: 5px; outline: none; }
 .credential-select option { background-color: var(--bg-color); color: white; }
-.btn-adopt { background: var(--green); color: white; border: none; padding: 5px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-.btn-adopt:disabled { background: var(--bg-color); color: var(--gray); cursor: not-allowed; opacity: 0.5; }
+.btn-adopt { background: var(--green); color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: all 0.2s; }
+.btn-adopt:hover { background: #28a745; transform: scale(1.02); }
+.btn-adopt:disabled { background: var(--bg-color); color: var(--gray); cursor: not-allowed; opacity: 0.5; transform: none; }
 .btn-icon { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--gray); }
 
 /* BOTONES MASIVOS NUEVOS */
@@ -1095,5 +1171,62 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     display: flex;
     align-items: center;
     user-select: none;
+}
+
+/* ========================================================================= */
+/* ESTILOS DEL MODAL */
+/* ========================================================================= */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(5px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.modal-content {
+    background: var(--surface-color);
+    border: 1px solid var(--primary-color);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    padding: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: var(--blue);
+}
+
+/* Scrollbar estilizada para el modal */
+.modal-body::-webkit-scrollbar {
+    width: 8px;
+}
+.modal-body::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.05);
+    border-radius: 4px;
+}
+.modal-body::-webkit-scrollbar-thumb {
+    background: var(--primary-color);
+    border-radius: 4px;
+}
+.modal-body::-webkit-scrollbar-thumb:hover {
+    background: var(--blue);
 }
 </style>

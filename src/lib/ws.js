@@ -157,6 +157,11 @@ async function openAppWebSocket() {
       } else if (msg?.type === 'qr_config') {
         // ✅ Reenviamos el resultado del escaneo remoto
         notifyAll(msg)
+      } else if (msg?.type === 'bulk_rename_completed') {
+        // ✅ EVENTO NUEVO: Actualización Masiva de Nombres (Bulk Rename)
+        wsLog('Evento de bulk_rename_completed recibido.', msg)
+        window.dispatchEvent(new CustomEvent('bulk_rename_completed', { detail: msg }))
+        notifyAll(msg)
       }
     } catch (err) {
       if (DEV) console.debug('[WS] parse skip:', err?.message || err)
