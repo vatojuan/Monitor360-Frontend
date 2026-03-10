@@ -3,6 +3,7 @@ import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import SmartTerminalModal from '@/components/SmartTerminalModal.vue'
+import * as XLSX from 'xlsx' // <-- NUEVA DEPENDENCIA PARA LEER EXCEL
 
 const router = useRouter()
 
@@ -59,6 +60,20 @@ const selectedDevices = ref([])
 const showBulkModal = ref(false)
 const isBulking = ref(false)
 const isDeletingBulk = ref(false)
+
+// ===== NUEVO: ESTADO ACTUALIZACIÓN MASIVA EXCEL (RENAME) =====
+const showBulkRenameModal = ref(false)
+const isUploadingExcel = ref(false)
+const isSubmittingBulkRename = ref(false)
+const bulkRenameData = ref([])
+const bulkRenameHeaders = ref([])
+const bulkRenamePreview = ref([])
+
+const bulkRenameForm = ref({
+  vpn_profile_id: null,
+  ip_column: '',
+  name_column: ''
+})
 
 // Estado del Modal Masivo
 const bulkSensorType = ref('ping')
@@ -590,6 +605,134 @@ const suggestedTargetDevicesForBulk = computed(() => {
   })
 })
 
+// ===== FUNCIONES ACTUALIZACIÓN MASIVA NOMBRES (NUEVO) =====
+function openBulkRenameModal() {
+  showBulkRenameModal.value = true
+  bulkRenameFile.value = null
+  bulkRenameData.value = []
+  bulkRenameHeaders.value = []
+  bulkRenamePreview.value = []
+  bulkRenameForm.value = { vpn_profile_id: null, ip_column: '', name_column: '' }
+  // Limpiamos el input de archivo si existe
+  const fileInput = document.getElementById('excelFileInput')
+  if (fileInput) fileInput.value = ''
+}
+
+function closeBulkRenameModal() {
+  showBulkRenameModal.value = false
+  bulkRenameData.value = []
+  bulkRenameHeaders.value = []
+  bulkRenamePreview.value = []
+}
+
+async function handleFileUpload(event) {
+  const file = event.target.files[0]
+  if (!file) return
+
+  isUploadingExcel.value = true
+  try {
+    const data = await file.arrayBuffer()
+    const workbook = XLSX.read(data)
+    const firstSheetName = workbook.SheetNames[0]
+    const worksheet = workbook.Sheets[firstSheetName]
+    
+    // Convertir la hoja a JSON donde las claves son la cabecera
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+    
+    if (jsonData.length > 0) {
+      bulkRenameData.value = jsonData
+      bulkRenameHeaders.value = Object.keys(jsonData[0])
+      
+      // Auto-detectar columnas por el nombre
+      const lowerHeaders = bulkRenameHeaders.value.map(h => h.toLowerCase())
+      
+      const ipMatchIndex = lowerHeaders.findIndex(h => h.includes('ip') || h === 'direccion' || h === 'address')
+      if (ipMatchIndex !== -1) bulkRenameForm.value.ip_column = bulkRenameHeaders.value[ipMatchIndex]
+
+      const nameMatchIndex = lowerHeaders.findIndex(h => h.includes('nombre') || h.includes('name') || h.includes('cliente'))
+      if (nameMatchIndex !== -1) bulkRenameForm.value.name_column = bulkRenameHeaders.value[nameMatchIndex]
+      
+      updateBulkRenamePreview()
+    } else {
+      showNotification('El archivo Excel parece estar vacío.', 'warning')
+    }
+  } catch (error) {
+    console.error('Error leyendo Excel:', error)
+    showNotification('Error al procesar el archivo. Asegúrate de que sea un Excel válido.', 'error')
+  } finally {
+    isUploadingExcel.value = false
+  }
+}
+
+function updateBulkRenamePreview() {
+  if (!bulkRenameForm.value.ip_column || !bulkRenameForm.value.name_column) {
+    bulkRenamePreview.value = []
+    return
+  }
+  
+  // Extraemos y filtramos solo los registros que tengan ambos campos
+  bulkRenamePreview.value = bulkRenameData.value
+    .map(row => ({
+      ip_address: String(row[bulkRenameForm.value.ip_column]).trim(),
+      new_client_name: String(row[bulkRenameForm.value.name_column]).trim()
+    }))
+    .filter(item => item.ip_address && item.new_client_name)
+    .slice(0, 5) // Mostramos solo 5 de ejemplo
+}
+
+// Escuchamos cambios en los selectores para actualizar la vista previa
+watch([() => bulkRenameForm.value.ip_column, () => bulkRenameForm.value.name_column], () => {
+  updateBulkRenamePreview()
+})
+
+async function submitBulkRename() {
+  if (!bulkRenameForm.value.ip_column || !bulkRenameForm.value.name_column) {
+    return showNotification('Debes seleccionar las columnas de IP y Nombre.', 'error')
+  }
+
+  // Filtrar y preparar la lista completa
+  const finalDevicesList = bulkRenameData.value
+    .map(row => ({
+      ip_address: String(row[bulkRenameForm.value.ip_column] || '').trim(),
+      new_client_name: String(row[bulkRenameForm.value.name_column] || '').trim()
+    }))
+    .filter(item => item.ip_address && item.new_client_name)
+
+  if (finalDevicesList.length === 0) {
+    return showNotification('No se encontraron registros válidos para enviar.', 'error')
+  }
+
+  isSubmittingBulkRename.value = true
+  try {
+    const payload = {
+      vpn_profile_id: bulkRenameForm.value.vpn_profile_id,
+      devices: finalDevicesList
+    }
+
+    const { data } = await api.post('/devices/bulk-rename', payload)
+    showNotification(data.message || 'Proceso encolado correctamente.', 'success')
+    closeBulkRenameModal()
+  } catch (error) {
+    console.error('Error al enviar actualización masiva:', error)
+    showNotification(error.response?.data?.detail || 'Error al iniciar actualización masiva.', 'error')
+  } finally {
+    isSubmittingBulkRename.value = false
+  }
+}
+
+// Escuchar evento global si el backend emite al terminar (Opcional, depende del setup del WS global)
+// Asumiendo que el cliente WS despacha eventos al window
+onMounted(() => {
+  const handleRenameComplete = () => {
+    fetchAllDevices()
+  }
+  window.addEventListener('bulk_rename_completed', handleRenameComplete)
+  
+  onUnmounted(() => {
+    window.removeEventListener('bulk_rename_completed', handleRenameComplete)
+  })
+})
+
 // ===== CARGA DE DATOS =====
 async function fetchAllDevices() {
   isLoadingDevices.value = true
@@ -1091,7 +1234,12 @@ onUnmounted(() => {
 
     <section v-if="currentTab === 'manage'" class="control-section fade-in">
       <div class="manage-header">
-        <h2><i class="icon">👑</i> Inventario</h2>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+          <h2><i class="icon">👑</i> Inventario</h2>
+          <button class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" @click="openBulkRenameModal">
+            📂 Importar Excel (Renombrar)
+          </button>
+        </div>
 
         <div v-if="selectedDevices.length > 0" class="bulk-actions-wrapper fade-in">
           <button @click="openTaskModal" class="btn-bulk btn-primary">
@@ -1323,6 +1471,84 @@ onUnmounted(() => {
         </table>
       </div>
     </section>
+
+    <div v-if="showBulkRenameModal" class="modal-overlay" @click.self="closeBulkRenameModal">
+      <div class="modal-content large-modal">
+        <div class="manage-header">
+          <h3>📂 Actualización Masiva desde Excel</h3>
+          <button class="btn-secondary" @click="closeBulkRenameModal">X</button>
+        </div>
+
+        <p class="text-dim" style="margin-bottom: 1rem;">
+          Sube un archivo Excel (.xlsx, .csv) extraído de otro sistema (Ej: MikroWisp) para actualizar los nombres de los dispositivos asociándolos por su dirección IP.
+        </p>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+          <label>1. Selecciona a qué VPN pertenecen las IPs (Opcional, pero recomendado)</label>
+          <select v-model="bulkRenameForm.vpn_profile_id" class="filter-select" style="width: 100%; margin-top: 0.5rem;">
+            <option :value="null">Todas las VPN (Cuidado si hay IPs repetidas)</option>
+            <option v-for="vpn in vpnProfiles" :key="vpn.id" :value="vpn.id">
+              {{ vpn.name }}
+            </option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>2. Carga tu archivo</label>
+          <input 
+            type="file" 
+            id="excelFileInput"
+            accept=".xlsx, .xls, .csv" 
+            @change="handleFileUpload" 
+            style="display: block; padding: 10px 0;"
+          />
+          <small v-if="isUploadingExcel" class="text-warning">Procesando archivo...</small>
+        </div>
+
+        <div v-if="bulkRenameHeaders.length > 0" class="config-grid" style="margin-top: 1rem; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">
+          <div class="form-group">
+            <label style="color: var(--blue);">3. Columna de la IP</label>
+            <select v-model="bulkRenameForm.ip_column" class="filter-select">
+              <option value="" disabled>Selecciona la columna...</option>
+              <option v-for="col in bulkRenameHeaders" :key="col" :value="col">{{ col }}</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label style="color: var(--green);">4. Columna del Nuevo Nombre</label>
+            <select v-model="bulkRenameForm.name_column" class="filter-select">
+              <option value="" disabled>Selecciona la columna...</option>
+              <option v-for="col in bulkRenameHeaders" :key="col" :value="col">{{ col }}</option>
+            </select>
+          </div>
+        </div>
+
+        <div v-if="bulkRenamePreview.length > 0" style="margin-top: 1.5rem;">
+          <h4>Vista Previa (Primeros 5 registros)</h4>
+          <table class="device-table" style="font-size: 0.85rem;">
+            <thead>
+              <tr>
+                <th style="color: var(--blue);">IP a Buscar</th>
+                <th style="color: var(--green);">Nuevo Nombre Asignado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, i) in bulkRenamePreview" :key="i">
+                <td class="font-mono">{{ item.ip_address }}</td>
+                <td><strong>{{ item.new_client_name }}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 2rem;">
+          <button @click="closeBulkRenameModal" class="btn-secondary" :disabled="isSubmittingBulkRename">Cancelar</button>
+          <button @click="submitBulkRename" class="btn-primary" :disabled="isSubmittingBulkRename || !bulkRenameForm.ip_column || !bulkRenameForm.name_column">
+            {{ isSubmittingBulkRename ? 'Enviando...' : 'Iniciar Actualización Masiva' }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showTaskModal" class="modal-overlay">
       <div class="modal-content large-modal">
