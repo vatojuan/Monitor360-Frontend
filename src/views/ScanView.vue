@@ -788,8 +788,13 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 
                             <div v-if="sensor.sensor_type === 'ping'" class="mini-config">
                                 <div class="form-group" style="margin-bottom: 5px;">
-                                    <input :list="`scan-target-list-${sensor.id}`" type="text" v-model="sensor.config.target_ip" placeholder="Target IP" class="search-input" />
-                                    <datalist :id="`scan-target-list-${sensor.id}`"><option v-for="d in suggestedTargetDevices" :key="d.id" :value="d.ip_address">{{ d.client_name }}</option></datalist>
+                                    <template v-if="sensor.attach_to === 'maestro'">
+                                        <div class="search-input auto-ip-text">🎯 Target IP: [Auto-asignada al equipo adoptado]</div>
+                                    </template>
+                                    <template v-else>
+                                        <input :list="`scan-target-list-${sensor.id}`" type="text" v-model="sensor.config.target_ip" placeholder="Target IP" class="search-input" />
+                                        <datalist :id="`scan-target-list-${sensor.id}`"><option v-for="d in suggestedTargetDevices" :key="d.id" :value="d.ip_address">{{ d.client_name }}</option></datalist>
+                                    </template>
                                 </div>
                                 <div class="chk-label attach-toggle" style="margin-bottom: 10px; padding: 5px; background: rgba(100, 200, 255, 0.1); border-radius: 4px; border: 1px solid var(--blue);">
                                     <input type="checkbox" :checked="sensor.attach_to === 'maestro'" @change="sensor.attach_to = $event.target.checked ? 'maestro' : 'device'" />
@@ -814,7 +819,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                             </div>
 
                             <div v-if="sensor.sensor_type === 'ethernet'" class="mini-config">
-                                <input v-model="sensor.config.interface_name" placeholder="Interface Name" class="tiny-input-full" />
+                                <input list="default-interfaces" v-model="sensor.config.interface_name" placeholder="Ej: ether1, bridge, eth0..." class="tiny-input-full" />
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.enabled" /> Alerta Desconexión</div>
                                 <div v-if="sensor.ui_alert_speed_change.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                    <select v-model="sensor.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
@@ -854,6 +859,16 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                             </div>
 
                         </div>
+                        
+                        <datalist id="default-interfaces">
+                            <option value="ether1"></option>
+                            <option value="ether2"></option>
+                            <option value="bridge"></option>
+                            <option value="lan"></option>
+                            <option value="eth0"></option>
+                            <option value="wlan1"></option>
+                        </datalist>
+
                     </div>
                 </div>
 
@@ -1069,4 +1084,16 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .btn-icon-action { background: none; border: 1px solid var(--primary-color); border-radius: 50%; width: 32px; height: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1rem; color: white; transition: all 0.2s; margin-right: 5px; }
 .btn-icon-action:hover { background: rgba(255,255,255,0.1); }
 .btn-edit:hover { border-color: var(--blue); color: var(--blue); }
+
+/* ESTILO NUEVO PARA PING AUTO-TARGET */
+.auto-ip-text {
+    color: #aaa;
+    font-style: italic;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+    cursor: not-allowed;
+    border-color: #555 !important;
+    display: flex;
+    align-items: center;
+    user-select: none;
+}
 </style>
