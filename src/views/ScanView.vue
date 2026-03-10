@@ -55,24 +55,13 @@ const scanConfig = ref({
   scan_interval_minutes: 60, 
   target_group: 'General',
   adopt_only_managed: false,
-  include_ping_sensor: false,
-  include_ethernet_sensor: false,
 })
 
-// --- ESTADO TEMPLATE SENSORES (ACTUALIZADO PARA MENSAJES PERSONALIZADOS) ---
-const bulkPingConfig = ref({
-  config: { interval_sec: 60, latency_threshold_ms: 150, display_mode: 'realtime', average_count: 5, ping_type: 'device_to_external', target_ip: '8.8.8.8' },
-  ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' },
-  ui_alert_latency: { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' },
-  is_active: true, alerts_paused: false
-})
+// --- NUEVO ESTADO: LISTA DINÁMICA DE SENSORES PARA LA RECETA ---
+const sensorsTemplateList = ref([])
+const newSensorType = ref('ping')
 
-const bulkEthernetConfig = ref({
-  config: { interface_name: 'ether1', interval_sec: 30 },
-  ui_alert_speed_change: { enabled: false, channel_id: null, cooldown_minutes: 10, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' },
-  ui_alert_traffic: { enabled: false, threshold_mbps: 100, direction: 'any', channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' },
-  is_active: true, alerts_paused: false
-})
+const hasSystemSensor = computed(() => sensorsTemplateList.value.some(s => s.sensor_type === 'system'))
 
 // --- COMPUTADA: Dispositivos Sugeridos ---
 const suggestedTargetDevices = computed(() => {
@@ -92,7 +81,7 @@ const suggestedTargetDevices = computed(() => {
 })
 
 // =============================================================================
-// LÓGICA DE INTERFACES (NUEVA)
+// LÓGICA DE INTERFACES
 // =============================================================================
 watch(() => scanConfig.value.maestro_id, async (newMaestroId) => {
   if (!newMaestroId) {
@@ -113,12 +102,10 @@ watch(() => scanConfig.value.maestro_id, async (newMaestroId) => {
   }
 });
 
-
 // =============================================================================
 // LÓGICA DE FILTRADO (REFINADA)
 // =============================================================================
 
-// Helper para detectar si es infraestructura (Gestionable)
 function isInfra(dev) {
     const v = (dev.vendor || '').toLowerCase();
     const p = (dev.platform || '').toLowerCase();
@@ -126,10 +113,8 @@ function isInfra(dev) {
     return managedVendors.some(mv => v.includes(mv)) || p.length > 0 || !!dev.identity;
 }
 
-// Filtro Genérico Reutilizable
 function filterDevicesList(list, filters) {
     return list.filter(d => {
-        // 1. Search Text (Refinado con .trim() para evitar errores humanos de espacios)
         if (filters.search) {
             const q = filters.search.toLowerCase().trim();
             const textMatch = (
@@ -141,11 +126,9 @@ function filterDevicesList(list, filters) {
             );
             if (!textMatch) return false;
         }
-        // 2. Vendor Dropdown
         if (filters.vendor && filters.vendor !== '') {
             if ((d.vendor || 'Desconocido') !== filters.vendor) return false;
         }
-        // 3. Type Toggle
         if (filters.type === 'infra') {
             if (!isInfra(d)) return false;
         } else if (filters.type === 'generic') {
@@ -155,11 +138,8 @@ function filterDevicesList(list, filters) {
     });
 }
 
-// Computed: Listas Filtradas
 const filteredPendingDevices = computed(() => filterDevicesList(pendingDevices.value, inboxFilter.value));
 const filteredIgnoredDevices = computed(() => filterDevicesList(ignoredDevices.value, ignoredFilter.value));
-
-// Computed: Listas de Vendors Únicos (para los selects)
 const pendingVendors = computed(() => [...new Set(pendingDevices.value.map(d => d.vendor || 'Desconocido'))].sort());
 const ignoredVendors = computed(() => [...new Set(ignoredDevices.value.map(d => d.vendor || 'Desconocido'))].sort());
 
@@ -168,17 +148,15 @@ const ignoredVendors = computed(() => [...new Set(ignoredDevices.value.map(d => 
 // LIFECYCLE & API
 // =============================================================================
 
-// MANEJADOR GLOBAL DE EVENTOS (Para escuchar al WebSocket)
 const handleDiscoveryRefresh = async () => {
   console.log("WebSocket dice: ¡Refrescar Bandeja de Descubrimiento!");
-  isScanning.value = false; // Detiene el spinner si estaba escaneando
+  isScanning.value = false; 
   await fetchPendingDevices();
   await fetchIgnoredDevices();
 };
 
 onMounted(async () => { 
   await loadGlobalData();
-  // Escuchar el evento que dispara el WebSocket (Layout)
   window.addEventListener('discovery-refresh', handleDiscoveryRefresh);
 })
 
@@ -211,94 +189,172 @@ async function fetchScanProfiles() { try { const { data } = await api.get('/disc
 async function fetchChannels() { try { const { data } = await api.get('/channels'); channels.value = data || [] } catch (e) {} }
 async function fetchGroups() { try { const { data } = await api.get('/groups'); groups.value = (data || []).map((g) => g.name) } catch (e) {} }
 
-// --- ACTIONS CONFIG ---
-function buildSensorConfigPayload(type, data) { 
-  const finalConfig = { ...data.config }
+// =============================================================================
+// NUEVO: GESTIÓN DINÁMICA DE SENSORES (RECETA)
+// =============================================================================
+
+function createDefaultSensor(type) {
+  const base = {
+      id: Date.now() + Math.random(), // ID temporal para el v-for loop
+      sensor_type: type,
+      name_template: '{{hostname}} - Sensor',
+      is_active: true,
+      alerts_paused: false,
+      attach_to: 'device', // Por defecto se vincula al equipo adoptado
+      config: {}
+  }
+
+  if (type === 'ping') {
+      base.config = { interval_sec: 60, latency_threshold_ms: 150, display_mode: 'realtime', average_count: 5, ping_type: 'device_to_external', target_ip: 'dynamic_ip' }
+      base.ui_alert_timeout = { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+      base.ui_alert_latency = { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+  } else if (type === 'ethernet') {
+      base.config = { interface_name: 'ether1', interval_sec: 30 }
+      base.ui_alert_speed_change = { enabled: false, channel_id: null, cooldown_minutes: 10, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+      base.ui_alert_traffic = { enabled: false, threshold_mbps: 100, direction: 'any', channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+  } else if (type === 'wireless') {
+      base.config = { interface_name: 'wlan1', interval_sec: 60, thresholds: { min_signal_dbm: -80, min_ccq_percent: 75, min_tx_rate_mbps: 0, min_rx_rate_mbps: 0, min_client_count: 0 }, tolerance_checks: 3 }
+      base.ui_alert_wireless = { enabled: false, channel_id: null, cooldown_minutes: 5, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+  } else if (type === 'system') {
+      base.config = { interval_sec: 60, thresholds: { max_cpu_percent: 90, max_memory_percent: 90, restart_uptime_seconds: 300 }, tolerance_checks: 3 }
+      base.ui_alert_system = { enabled: false, channel_id: null, cooldown_minutes: 5, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+  }
+  return base
+}
+
+function addSensorToRecipe() {
+    if (newSensorType.value === 'system' && hasSystemSensor.value) return;
+    sensorsTemplateList.value.push(createDefaultSensor(newSensorType.value))
+}
+
+function removeSensor(index) {
+    sensorsTemplateList.value.splice(index, 1)
+}
+
+function getSensorIcon(type) {
+    const icons = { 'ping': '📡', 'ethernet': '🔌', 'wireless': '📶', 'system': '🖥️' }
+    return icons[type] || '⚙️'
+}
+
+function buildSensorConfigPayload(sensorData) { 
+  const finalConfig = { ...sensorData.config }
   const alerts = []
   const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
-  if (type === 'ping') {
-    if (data.ui_alert_timeout.enabled && data.ui_alert_timeout.channel_id) {
-        const a = { type: 'timeout', channel_id: data.ui_alert_timeout.channel_id, cooldown_minutes: onlyNums(data.ui_alert_timeout.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_timeout.tolerance_count, 1)), notify_recovery: !!data.ui_alert_timeout.notify_recovery };
-        if (data.ui_alert_timeout.use_custom_message && data.ui_alert_timeout.custom_message?.trim()) a.custom_message = data.ui_alert_timeout.custom_message.trim();
-        if (data.ui_alert_timeout.use_custom_recovery_message && data.ui_alert_timeout.custom_recovery_message?.trim()) a.custom_recovery_message = data.ui_alert_timeout.custom_recovery_message.trim();
+  const sType = sensorData.sensor_type
+
+  if (sType === 'ping') {
+    if (sensorData.ui_alert_timeout?.enabled && sensorData.ui_alert_timeout?.channel_id) {
+        const a = { type: 'timeout', channel_id: sensorData.ui_alert_timeout.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_timeout.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_timeout.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_timeout.notify_recovery };
+        if (sensorData.ui_alert_timeout.use_custom_message && sensorData.ui_alert_timeout.custom_message?.trim()) a.custom_message = sensorData.ui_alert_timeout.custom_message.trim();
+        if (sensorData.ui_alert_timeout.use_custom_recovery_message && sensorData.ui_alert_timeout.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_timeout.custom_recovery_message.trim();
         alerts.push(a);
     }
-    if (data.ui_alert_latency.enabled && data.ui_alert_latency.channel_id) {
-        const a = { type: 'high_latency', threshold_ms: onlyNums(data.ui_alert_latency.threshold_ms, 200), channel_id: data.ui_alert_latency.channel_id, cooldown_minutes: onlyNums(data.ui_alert_latency.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_latency.tolerance_count, 1)), notify_recovery: !!data.ui_alert_latency.notify_recovery };
-        if (data.ui_alert_latency.use_custom_message && data.ui_alert_latency.custom_message?.trim()) a.custom_message = data.ui_alert_latency.custom_message.trim();
-        if (data.ui_alert_latency.use_custom_recovery_message && data.ui_alert_latency.custom_recovery_message?.trim()) a.custom_recovery_message = data.ui_alert_latency.custom_recovery_message.trim();
+    if (sensorData.ui_alert_latency?.enabled && sensorData.ui_alert_latency?.channel_id) {
+        const a = { type: 'high_latency', threshold_ms: onlyNums(sensorData.ui_alert_latency.threshold_ms, 200), channel_id: sensorData.ui_alert_latency.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_latency.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_latency.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_latency.notify_recovery };
+        if (sensorData.ui_alert_latency.use_custom_message && sensorData.ui_alert_latency.custom_message?.trim()) a.custom_message = sensorData.ui_alert_latency.custom_message.trim();
+        if (sensorData.ui_alert_latency.use_custom_recovery_message && sensorData.ui_alert_latency.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_latency.custom_recovery_message.trim();
         alerts.push(a);
     }
-  } else if (type === 'ethernet') {
-    if (data.ui_alert_speed_change.enabled && data.ui_alert_speed_change.channel_id) {
-        const a = { type: 'speed_change', channel_id: data.ui_alert_speed_change.channel_id, cooldown_minutes: onlyNums(data.ui_alert_speed_change.cooldown_minutes, 10), tolerance_count: Math.max(1, onlyNums(data.ui_alert_speed_change.tolerance_count, 1)), notify_recovery: !!data.ui_alert_speed_change.notify_recovery };
-        if (data.ui_alert_speed_change.use_custom_message && data.ui_alert_speed_change.custom_message?.trim()) a.custom_message = data.ui_alert_speed_change.custom_message.trim();
-        if (data.ui_alert_speed_change.use_custom_recovery_message && data.ui_alert_speed_change.custom_recovery_message?.trim()) a.custom_recovery_message = data.ui_alert_speed_change.custom_recovery_message.trim();
+  } else if (sType === 'ethernet') {
+    if (sensorData.ui_alert_speed_change?.enabled && sensorData.ui_alert_speed_change?.channel_id) {
+        const a = { type: 'speed_change', channel_id: sensorData.ui_alert_speed_change.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_speed_change.cooldown_minutes, 10), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_speed_change.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_speed_change.notify_recovery };
+        if (sensorData.ui_alert_speed_change.use_custom_message && sensorData.ui_alert_speed_change.custom_message?.trim()) a.custom_message = sensorData.ui_alert_speed_change.custom_message.trim();
+        if (sensorData.ui_alert_speed_change.use_custom_recovery_message && sensorData.ui_alert_speed_change.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_speed_change.custom_recovery_message.trim();
         alerts.push(a);
     }
-    if (data.ui_alert_traffic.enabled && data.ui_alert_traffic.channel_id) {
-        const a = { type: 'traffic_threshold', threshold_mbps: onlyNums(data.ui_alert_traffic.threshold_mbps, 100), direction: data.ui_alert_traffic.direction || 'any', channel_id: data.ui_alert_traffic.channel_id, cooldown_minutes: onlyNums(data.ui_alert_traffic.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(data.ui_alert_traffic.tolerance_count, 1)), notify_recovery: !!data.ui_alert_traffic.notify_recovery };
-        if (data.ui_alert_traffic.use_custom_message && data.ui_alert_traffic.custom_message?.trim()) a.custom_message = data.ui_alert_traffic.custom_message.trim();
-        if (data.ui_alert_traffic.use_custom_recovery_message && data.ui_alert_traffic.custom_recovery_message?.trim()) a.custom_recovery_message = data.ui_alert_traffic.custom_recovery_message.trim();
+    if (sensorData.ui_alert_traffic?.enabled && sensorData.ui_alert_traffic?.channel_id) {
+        const a = { type: 'traffic_threshold', threshold_mbps: onlyNums(sensorData.ui_alert_traffic.threshold_mbps, 100), direction: sensorData.ui_alert_traffic.direction || 'any', channel_id: sensorData.ui_alert_traffic.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_traffic.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_traffic.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_traffic.notify_recovery };
+        if (sensorData.ui_alert_traffic.use_custom_message && sensorData.ui_alert_traffic.custom_message?.trim()) a.custom_message = sensorData.ui_alert_traffic.custom_message.trim();
+        if (sensorData.ui_alert_traffic.use_custom_recovery_message && sensorData.ui_alert_traffic.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_traffic.custom_recovery_message.trim();
+        alerts.push(a);
+    }
+  } else if (sType === 'wireless') {
+    if (sensorData.ui_alert_wireless?.enabled && sensorData.ui_alert_wireless?.channel_id) {
+        const a = { type: 'wireless_status', channel_id: sensorData.ui_alert_wireless.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_wireless.cooldown_minutes, 5), notify_recovery: !!sensorData.ui_alert_wireless.notify_recovery };
+        if (sensorData.ui_alert_wireless.use_custom_message && sensorData.ui_alert_wireless.custom_message?.trim()) a.custom_message = sensorData.ui_alert_wireless.custom_message.trim();
+        if (sensorData.ui_alert_wireless.use_custom_recovery_message && sensorData.ui_alert_wireless.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_wireless.custom_recovery_message.trim();
+        alerts.push(a);
+    }
+  } else if (sType === 'system') {
+    if (sensorData.ui_alert_system?.enabled && sensorData.ui_alert_system?.channel_id) {
+        const a = { type: 'system_status', channel_id: sensorData.ui_alert_system.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_system.cooldown_minutes, 5), notify_recovery: !!sensorData.ui_alert_system.notify_recovery };
+        if (sensorData.ui_alert_system.use_custom_message && sensorData.ui_alert_system.custom_message?.trim()) a.custom_message = sensorData.ui_alert_system.custom_message.trim();
+        if (sensorData.ui_alert_system.use_custom_recovery_message && sensorData.ui_alert_system.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_system.custom_recovery_message.trim();
         alerts.push(a);
     }
   }
+
   finalConfig.alerts = alerts;
-  return { sensor_type: type, name_template: '{{hostname}} - Sensor', config: finalConfig, is_active: data.is_active, alerts_paused: data.alerts_paused }
+  return { 
+      sensor_type: sType, 
+      name_template: sensorData.name_template || '{{hostname}} - Sensor', 
+      config: finalConfig, 
+      is_active: sensorData.is_active ?? true, 
+      alerts_paused: sensorData.alerts_paused ?? false,
+      attach_to: sensorData.attach_to || 'device'
+  }
 }
 
 function restoreSensorConfig(sensors) { 
-  if (!sensors || !Array.isArray(sensors)) { scanConfig.value.include_ping_sensor = false; scanConfig.value.include_ethernet_sensor = false; return }
-  const pingSensor = sensors.find(s => s.sensor_type === 'ping')
-  if (pingSensor) {
-    scanConfig.value.include_ping_sensor = true; bulkPingConfig.value.config = { ...pingSensor.config }
-    if (pingSensor.config.alerts) pingSensor.config.alerts.forEach(a => { 
-        if (a.type === 'timeout') bulkPingConfig.value.ui_alert_timeout = { ...bulkPingConfig.value.ui_alert_timeout, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }; 
-        if (a.type === 'high_latency') bulkPingConfig.value.ui_alert_latency = { ...bulkPingConfig.value.ui_alert_latency, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }; 
-    })
-  }
-  const ethSensor = sensors.find(s => s.sensor_type === 'ethernet')
-  if (ethSensor) {
-    scanConfig.value.include_ethernet_sensor = true; bulkEthernetConfig.value.config = { ...ethSensor.config }
-    if (ethSensor.config.alerts) ethSensor.config.alerts.forEach(a => { 
-        if (a.type === 'speed_change') bulkEthernetConfig.value.ui_alert_speed_change = { ...bulkEthernetConfig.value.ui_alert_speed_change, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }; 
-        if (a.type === 'traffic_threshold') bulkEthernetConfig.value.ui_alert_traffic = { ...bulkEthernetConfig.value.ui_alert_traffic, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }; 
-    })
-  }
+  sensorsTemplateList.value = []
+  if (!sensors || !Array.isArray(sensors)) return
+
+  sensors.forEach(backendSensor => {
+      const s = createDefaultSensor(backendSensor.sensor_type)
+      s.name_template = backendSensor.name_template || s.name_template
+      s.is_active = backendSensor.is_active ?? true
+      s.alerts_paused = backendSensor.alerts_paused ?? false
+      s.attach_to = backendSensor.attach_to || 'device'
+      s.config = { ...s.config, ...backendSensor.config }
+
+      if (backendSensor.config && backendSensor.config.alerts) {
+          backendSensor.config.alerts.forEach(a => {
+              if (s.sensor_type === 'ping') {
+                 if (a.type === 'timeout') s.ui_alert_timeout = { ...s.ui_alert_timeout, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+                 if (a.type === 'high_latency') s.ui_alert_latency = { ...s.ui_alert_latency, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+              } else if (s.sensor_type === 'ethernet') {
+                 if (a.type === 'speed_change') s.ui_alert_speed_change = { ...s.ui_alert_speed_change, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+                 if (a.type === 'traffic_threshold') s.ui_alert_traffic = { ...s.ui_alert_traffic, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+              } else if (s.sensor_type === 'wireless') {
+                 if (a.type === 'wireless_status') s.ui_alert_wireless = { ...s.ui_alert_wireless, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+              } else if (s.sensor_type === 'system') {
+                 if (a.type === 'system_status') s.ui_alert_system = { ...s.ui_alert_system, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+              }
+          })
+      }
+      sensorsTemplateList.value.push(s)
+  })
 }
 
-// [MODIFICADO] Escaneo Asíncrono con Polling y Bloqueo
+// =============================================================================
+// ACCIONES DE ESCANEO
+// =============================================================================
+
 async function runScan() {
   if (!scanConfig.value.maestro_id) return showNotification('Selecciona un Router Maestro', 'error')
   
-  isScanning.value = true // Activa el botón "⏳ Escaneando red..." y lo bloquea
+  isScanning.value = true 
   try {
     const payload = { ...scanConfig.value }
     if (scanConfig.value.is_active && scanConfig.value.scan_mode === 'auto') {
-      const sensorsToCreate = []
-      if (scanConfig.value.include_ping_sensor) sensorsToCreate.push(buildSensorConfigPayload('ping', bulkPingConfig.value))
-      if (scanConfig.value.include_ethernet_sensor) sensorsToCreate.push(buildSensorConfigPayload('ethernet', bulkEthernetConfig.value))
-      payload.sensors_config = sensorsToCreate
+      payload.sensors_config = sensorsTemplateList.value.map(s => buildSensorConfigPayload(s))
     }
 
     if (scanConfig.value.is_active) {
        await api.post('/discovery/config', payload); 
        showNotification(scanConfig.value.id ? '✅ Tarea actualizada' : '✅ Nueva tarea creada', 'success'); 
        resetConfigForm();
-       isScanning.value = false; // Tarea guardada, liberamos botón
+       isScanning.value = false;
     } else {
-        // Escaneo Manual Asíncrono
         const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload); 
         if (data.status === 'started') {
           showNotification('🚀 Escaneo iniciado en segundo plano.', 'info');
           
-          // Polling de Respaldo: 
-          // Si el WebSocket falla o se desconecta, recargamos la tabla a los 6s y 12s para asegurar que aparezcan
           [6000, 12000].forEach(delay => {
             setTimeout(async () => {
-              if (isScanning.value) { // Si el WS ya lo apagó, no hacemos nada
+              if (isScanning.value) { 
                 await fetchPendingDevices();
-                if (delay === 12000) isScanning.value = false; // Liberar por timeout (Fallback)
+                if (delay === 12000) isScanning.value = false; 
               }
             }, delay);
           });
@@ -312,31 +368,28 @@ async function runScan() {
 }
 
 function resetConfigForm() {
-    scanConfig.value = { id: null, maestro_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 80, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false, include_ping_sensor: false, include_ethernet_sensor: false }
+    scanConfig.value = { id: null, maestro_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 80, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false }
+    sensorsTemplateList.value = []
 }
 
 // --- ACTIONS INBOX ---
 function toggleSelection(mac) { selectedPending.value.includes(mac) ? selectedPending.value = selectedPending.value.filter(m => m !== mac) : selectedPending.value.push(mac) }
 
-// [CORREGIDO] Selección Inteligente y Segura
 function selectAll() {
   const visibleMacs = filteredPendingDevices.value.map(d => d.mac_address);
   const allVisibleSelected = visibleMacs.every(mac => selectedPending.value.includes(mac));
   
   if (allVisibleSelected) {
-      // Si todos los visibles están seleccionados, quita SOLO los visibles de la selección
       selectedPending.value = selectedPending.value.filter(mac => !visibleMacs.includes(mac));
   } else {
-      // Selecciona los visibles que falten sin perder los que ya estaban
       const newSelections = visibleMacs.filter(mac => !selectedPending.value.includes(mac));
       selectedPending.value.push(...newSelections);
   }
 }
 
-// Lógica de adopción asíncrona
 async function adoptSelected() {
   if (selectedPending.value.length === 0) return
-  isAdopting.value = true // Activa estado de carga
+  isAdopting.value = true
 
   try {
     const devicesToAdopt = pendingDevices.value.filter((d) => selectedPending.value.includes(d.mac_address))
@@ -347,11 +400,9 @@ async function adoptSelected() {
     if (data.status === 'processing') {
       showNotification('⏳ ' + data.message, 'info');
       
-      // ACTUALIZACIÓN OPTIMISTA
       pendingDevices.value = pendingDevices.value.filter(d => !selectedPending.value.includes(d.mac_address));
       selectedPending.value = [];
 
-      // Polling Secuencial
       [4000, 10000].forEach(delay => {
         setTimeout(async () => {
           await fetchPendingDevices();
@@ -390,7 +441,6 @@ async function deletePending(mac) {
 // --- ACTIONS IGNORED ---
 function toggleIgnoredSelection(mac) { selectedIgnored.value.includes(mac) ? selectedIgnored.value = selectedIgnored.value.filter(m => m !== mac) : selectedIgnored.value.push(mac) }
 
-// [CORREGIDO] Selección Inteligente y Segura
 function selectAllIgnored() {
     const visibleMacs = filteredIgnoredDevices.value.map(d => d.mac_address);
     const allVisibleSelected = visibleMacs.every(mac => selectedIgnored.value.includes(mac));
@@ -424,7 +474,7 @@ async function hardDeleteDevice(mac) { if(!confirm('¿Eliminar DEFINITIVAMENTE?'
 async function deleteScanProfile(id) { if (!confirm('¿Eliminar tarea?')) return; try { await api.delete(`/discovery/profiles/${id}`); await fetchScanProfiles(); showNotification('Eliminada', 'success') } catch (e) {} }
 function editScanProfile(profile) { 
     scanConfig.value = { ...scanConfig.value, id: profile.id, maestro_id: profile.maestro_id, network_cidr: profile.network_cidr, interface: profile.interface, scan_ports: profile.scan_ports, scan_mode: profile.scan_mode, credential_profile_id: profile.credential_profile_id, is_active: profile.is_active, scan_interval_minutes: profile.scan_interval_minutes, target_group: profile.target_group || 'General', adopt_only_managed: profile.adopt_only_managed || false }
-    if (profile.sensors_template) restoreSensorConfig(profile.sensors_template); else { scanConfig.value.include_ping_sensor = false; scanConfig.value.include_ethernet_sensor = false }
+    if (profile.sensors_template) restoreSensorConfig(profile.sensors_template); else { sensorsTemplateList.value = [] }
     window.scrollTo({ top: 0, behavior: 'smooth' }); showNotification(`✏️ Editando: ${profile.network_cidr}`, 'info') 
 }
 function showNotification(msg, type) { notification.value = { show: true, message: msg, type }; setTimeout(() => (notification.value.show = false), 5000) }
@@ -699,7 +749,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 <label><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Notificar</label>
                 <label><input type="radio" v-model="scanConfig.scan_mode" value="auto" /> Auto-Adoptar</label>
               </div>
-               <div v-if="scanConfig.scan_mode === 'notify' || (scanConfig.scan_mode === 'auto' && !scanConfig.include_ping_sensor && !scanConfig.include_ethernet_sensor)" 
+               <div v-if="scanConfig.scan_mode === 'notify' || (scanConfig.scan_mode === 'auto' && sensorsTemplateList.length === 0)" 
                     class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
                    <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
                    <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">Solo Gestionados (Credenciales)</label>
@@ -708,64 +758,105 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 <hr class="separator" />
                 <h4 class="mini-title">🏗️ Receta</h4>
                 <div class="form-group">
-                  <label>Grupo</label>
+                  <label>Grupo de Dispositivos Nuevos</label>
                   <select v-model="scanConfig.target_group">
                     <option value="General">General</option>
                     <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
                   </select>
                 </div>
-                <div class="sensor-selection-group">
-                  <div class="checkbox-row">
-                    <input type="checkbox" id="chkPing" v-model="scanConfig.include_ping_sensor" />
-                    <label for="chkPing">Incluir PING</label>
-                  </div>
-                  <div v-if="scanConfig.include_ping_sensor" class="mini-config fade-in">
-                     <div class="form-group">
-                        <input list="scan-target-list" type="text" v-model="bulkPingConfig.config.target_ip" placeholder="Target IP" class="search-input" />
-                        <datalist id="scan-target-list"><option v-for="d in suggestedTargetDevices" :key="d.id" :value="d.ip_address">{{ d.client_name }}</option></datalist>
-                     </div>
-                     <div class="chk-label"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" /> Alerta Timeout</div>
-                     
-                     <div v-if="bulkPingConfig.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
-                        <select v-model="bulkPingConfig.ui_alert_timeout.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
-                           <option :value="null">-- Seleccionar Canal --</option>
-                           <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                
+                <div class="sensors-recipe-container">
+                    <div class="add-sensor-controls">
+                        <select v-model="newSensorType" class="mini-select" style="width: auto;">
+                            <option value="ping">📡 Ping</option>
+                            <option value="ethernet">🔌 Ethernet</option>
+                            <option value="wireless">📶 Wireless</option>
+                            <option value="system" :disabled="hasSystemSensor">🖥️ Sistema</option>
                         </select>
-                        <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.use_custom_message" /> ✏️ Msj. Alerta</div>
-                        <textarea v-if="bulkPingConfig.ui_alert_timeout.use_custom_message" v-model="bulkPingConfig.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} no responde. {status}"></textarea>
-                        
-                        <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.notify_recovery" /> 🟢 Notificar Regreso</div>
-                        <template v-if="bulkPingConfig.ui_alert_timeout.notify_recovery">
-                            <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
-                            <textarea v-if="bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" v-model="bulkPingConfig.ui_alert_timeout.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} en línea."></textarea>
-                        </template>
-                     </div>
-                  </div>
+                        <button @click="addSensorToRecipe" class="btn-sm btn-action-restore" style="margin-left: 10px;">➕ Añadir Sensor</button>
+                    </div>
 
-                  <div class="checkbox-row">
-                    <input type="checkbox" id="chkEther" v-model="scanConfig.include_ethernet_sensor" />
-                    <label for="chkEther">Incluir ETHERNET</label>
-                  </div>
-                  <div v-if="scanConfig.include_ethernet_sensor" class="mini-config fade-in">
-                      <input v-model="bulkEthernetConfig.config.interface_name" placeholder="Interface Name" class="tiny-input-full" />
-                      
-                      <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.enabled" /> Alerta Desconexión</div>
-                      <div v-if="bulkEthernetConfig.ui_alert_speed_change.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
-                         <select v-model="bulkEthernetConfig.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
-                            <option :value="null">-- Seleccionar Canal --</option>
-                            <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                         </select>
-                         <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.use_custom_message" /> ✏️ Msj. Alerta</div>
-                         <textarea v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_message" v-model="bulkEthernetConfig.ui_alert_speed_change.custom_message" class="search-input custom-textarea" placeholder="Ej: Cable desconectado en {client_name}"></textarea>
-                         
-                         <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.notify_recovery" /> 🟢 Notificar Regreso</div>
-                         <template v-if="bulkEthernetConfig.ui_alert_speed_change.notify_recovery">
-                             <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
-                             <textarea v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" v-model="bulkEthernetConfig.ui_alert_speed_change.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} conectado a {speed}"></textarea>
-                         </template>
-                      </div>
-                  </div>
+                    <div class="sensor-cards-list">
+                        <div v-for="(sensor, index) in sensorsTemplateList" :key="sensor.id" class="sensor-card fade-in">
+                            <div class="sensor-card-header">
+                                <div>
+                                    <span class="sensor-icon">{{ getSensorIcon(sensor.sensor_type) }}</span>
+                                    <strong>{{ sensor.sensor_type.toUpperCase() }}</strong>
+                                </div>
+                                <button @click="removeSensor(index)" class="btn-sm btn-del btn-remove-sensor" title="Eliminar Sensor">🗑️</button>
+                            </div>
+
+                            <div v-if="sensor.sensor_type === 'ping'" class="mini-config">
+                                <div class="form-group" style="margin-bottom: 5px;">
+                                    <input :list="`scan-target-list-${sensor.id}`" type="text" v-model="sensor.config.target_ip" placeholder="Target IP" class="search-input" />
+                                    <datalist :id="`scan-target-list-${sensor.id}`"><option v-for="d in suggestedTargetDevices" :key="d.id" :value="d.ip_address">{{ d.client_name }}</option></datalist>
+                                </div>
+                                <div class="chk-label attach-toggle" style="margin-bottom: 10px; padding: 5px; background: rgba(100, 200, 255, 0.1); border-radius: 4px; border: 1px solid var(--blue);">
+                                    <input type="checkbox" :checked="sensor.attach_to === 'maestro'" @change="sensor.attach_to = $event.target.checked ? 'maestro' : 'device'" />
+                                    <span class="text-highlight font-weight-bold" style="font-size: 0.8rem;">📍 Ejecutar Ping desde el Maestro hacia este equipo</span>
+                                </div>
+                                
+                                <div class="chk-label"><input type="checkbox" v-model="sensor.ui_alert_timeout.enabled" /> Alerta Timeout</div>
+                                <div v-if="sensor.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                                    <select v-model="sensor.ui_alert_timeout.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                        <option :value="null">-- Seleccionar Canal --</option>
+                                        <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                                    </select>
+                                    <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_custom_message" /> ✏️ Msj. Alerta</div>
+                                    <textarea v-if="sensor.ui_alert_timeout.use_custom_message" v-model="sensor.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} no responde. {status}"></textarea>
+                                    
+                                    <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.notify_recovery" /> 🟢 Notificar Regreso</div>
+                                    <template v-if="sensor.ui_alert_timeout.notify_recovery">
+                                        <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
+                                        <textarea v-if="sensor.ui_alert_timeout.use_custom_recovery_message" v-model="sensor.ui_alert_timeout.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} en línea."></textarea>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <div v-if="sensor.sensor_type === 'ethernet'" class="mini-config">
+                                <input v-model="sensor.config.interface_name" placeholder="Interface Name" class="tiny-input-full" />
+                                <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.enabled" /> Alerta Desconexión</div>
+                                <div v-if="sensor.ui_alert_speed_change.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                                   <select v-model="sensor.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                      <option :value="null">-- Seleccionar Canal --</option>
+                                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                                   </select>
+                                   <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_custom_message" /> ✏️ Msj. Alerta</div>
+                                   <textarea v-if="sensor.ui_alert_speed_change.use_custom_message" v-model="sensor.ui_alert_speed_change.custom_message" class="search-input custom-textarea" placeholder="Ej: Cable desconectado en {client_name}"></textarea>
+                                   
+                                   <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.notify_recovery" /> 🟢 Notificar Regreso</div>
+                                   <template v-if="sensor.ui_alert_speed_change.notify_recovery">
+                                       <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
+                                       <textarea v-if="sensor.ui_alert_speed_change.use_custom_recovery_message" v-model="sensor.ui_alert_speed_change.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} conectado a {speed}"></textarea>
+                                   </template>
+                                </div>
+                            </div>
+
+                            <div v-if="sensor.sensor_type === 'wireless'" class="mini-config">
+                                <input v-model="sensor.config.interface_name" placeholder="wlan1" class="tiny-input-full" />
+                                <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_wireless.enabled" /> Alerta Estado Degradado/Caído</div>
+                                <div v-if="sensor.ui_alert_wireless.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                                   <select v-model="sensor.ui_alert_wireless.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                      <option :value="null">-- Seleccionar Canal --</option>
+                                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                                   </select>
+                                </div>
+                            </div>
+
+                            <div v-if="sensor.sensor_type === 'system'" class="mini-config">
+                                <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_system.enabled" /> Alerta Recursos Elevados/Reinicio</div>
+                                <div v-if="sensor.ui_alert_system.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
+                                   <select v-model="sensor.ui_alert_system.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                      <option :value="null">-- Seleccionar Canal --</option>
+                                      <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+                                   </select>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
                 </div>
+
               </div>
             </template>
           </div>
@@ -829,9 +920,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     flex-wrap: wrap;
     gap: 15px;
 }
-.filter-bar-ignored {
-    background: rgba(255, 50, 50, 0.05); /* Tinte rojo sutil para ignorados */
-}
+.filter-bar-ignored { background: rgba(255, 50, 50, 0.05); }
 .search-group {
     display: flex;
     align-items: center;
@@ -853,12 +942,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     width: 100%;
     outline: none;
 }
-.filter-controls {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    flex-wrap: wrap;
-}
+.filter-controls { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
 .filter-select {
     background: var(--bg-color) !important;
     color: white;
@@ -870,30 +954,11 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     font-size: 0.9rem;
     min-width: 150px;
 }
-.toggle-group {
-    display: flex;
-    background: var(--bg-color);
-    border-radius: 6px;
-    border: 1px solid #444;
-    overflow: hidden;
-}
-.toggle-group button {
-    background: transparent;
-    border: none;
-    color: #aaa;
-    padding: 6px 12px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: all 0.2s;
-    border-right: 1px solid #444;
-}
+.toggle-group { display: flex; background: var(--bg-color); border-radius: 6px; border: 1px solid #444; overflow: hidden; }
+.toggle-group button { background: transparent; border: none; color: #aaa; padding: 6px 12px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; border-right: 1px solid #444; }
 .toggle-group button:last-child { border-right: none; }
 .toggle-group button:hover { color: white; background: rgba(255,255,255,0.05); }
-.toggle-group button.active {
-    background: var(--primary-color);
-    color: white;
-    font-weight: bold;
-}
+.toggle-group button.active { background: var(--primary-color); color: white; font-weight: bold; }
 
 /* TOOLBAR & ACTIONS */
 .toolbar { background: var(--surface-color); padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.05); }
@@ -902,7 +967,6 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .adopt-control { display: flex; gap: 10px; background: var(--bg-color); padding: 5px; border-radius: 6px; border: 1px solid var(--primary-color); }
 .credential-select { background: transparent; border: none; color: white; padding: 5px; outline: none; }
 .credential-select option { background-color: var(--bg-color); color: white; }
-
 .btn-adopt { background: var(--green); color: white; border: none; padding: 5px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
 .btn-adopt:disabled { background: var(--bg-color); color: var(--gray); cursor: not-allowed; opacity: 0.5; }
 .btn-icon { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--gray); }
@@ -945,7 +1009,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .form-group input, .form-group select { width: 100%; padding: 10px; background-color: var(--bg-color); border: 1px solid var(--primary-color); color: white; border-radius: 6px; }
 .form-group select option { background-color: var(--bg-color); color: white; }
 .search-input { width: 100%; padding: 10px; background-color: var(--bg-color); border: 1px solid var(--primary-color); color: white; border-radius: 6px; font-size: 0.9rem; }
-.custom-textarea { padding: 6px 10px; min-height: 45px; margin-bottom: 5px; resize: vertical; } /* TEXTAREAS PERSONALIZADOS */
+.custom-textarea { padding: 6px 10px; min-height: 45px; margin-bottom: 5px; resize: vertical; } 
 .form-group small { display: block; margin-top: 4px; color: #777; font-size: 0.8rem; }
 .required { color: var(--error-red); font-size: 0.8rem; }
 .automation-box { background: var(--bg-color); padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px dashed var(--primary-color); }
@@ -956,8 +1020,18 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .separator { border: 0; border-top: 1px solid var(--primary-color); margin: 10px 0; opacity: 0.5; }
 .separator-light { border: 0; border-top: 1px dashed #555; margin: 8px 0; }
 .mini-title { color: var(--blue); font-size: 0.9rem; margin-bottom: 10px; }
-.sensor-selection-group { margin-top: 10px; }
-.mini-config { background: rgba(0, 0, 0, 0.2); padding: 10px; border-radius: 4px; margin-top: 5px; margin-bottom: 15px; }
+
+/* NUEVOS ESTILOS DE RECETA DE SENSORES */
+.sensors-recipe-container { margin-top: 15px; }
+.add-sensor-controls { display: flex; align-items: center; margin-bottom: 15px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 6px; }
+.sensor-cards-list { display: flex; flex-direction: column; gap: 10px; }
+.sensor-card { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--primary-color); border-radius: 6px; overflow: hidden; }
+.sensor-card-header { background: rgba(0, 0, 0, 0.2); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.sensor-icon { margin-right: 8px; font-size: 1.1rem; }
+.btn-remove-sensor { opacity: 0.7; }
+.btn-remove-sensor:hover { opacity: 1; }
+
+.mini-config { padding: 10px; margin-top: 0; margin-bottom: 0; background: transparent; }
 .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .chk-label { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #ccc; margin-top: 8px; }
 .alert-details { display: flex; gap: 5px; margin-top: 5px; margin-left: 10px; flex-wrap: wrap; align-items: center; }
