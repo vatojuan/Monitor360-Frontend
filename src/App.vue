@@ -1,4 +1,3 @@
-<!-- src/App.vue -->
 <script setup>
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
@@ -158,7 +157,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div id="app-layout">
-    <!-- Topbar Pro (oculta en páginas con meta.hideChrome) -->
     <TopbarPro
       v-if="!hideChrome"
       :realtime="live.connected"
@@ -167,16 +165,26 @@ onBeforeUnmount(() => {
       @logout="onLogout"
     />
 
-    <!-- Contenido -->
     <main class="main-content">
       <RouterView />
     </main>
+
+    <footer class="main-footer">
+      <div class="footer-content">
+        <p class="copyright">&copy; 2026 Monitor360. Todos los derechos reservados.</p>
+        <div class="footer-links">
+          <router-link to="/terms">Términos y Condiciones</router-link>
+          <router-link to="/privacy">Política de Privacidad</router-link>
+          <a href="mailto:soporte@monitor360.media">Soporte Técnico</a>
+        </div>
+      </div>
+    </footer>
   </div>
 </template>
 
 <style>
 :root {
-  --m360-bg: #0b1220; /* base del efecto glass del Topbar */
+  --m360-bg: #0b1220;
   --bg-color: #1a1a2e;
   --surface-color: #16213e;
   --primary-color: #0f3460;
@@ -213,11 +221,56 @@ body {
   min-height: 100vh;
 }
 
-/* TopbarPro es sticky; padding sobrio en contenido */
 .main-content {
   width: 100%;
   padding: 16px;
   flex-grow: 1;
+}
+
+/* ESTILOS DEL FOOTER */
+.main-footer {
+  background: var(--m360-bg);
+  border-top: 1px solid var(--primary-color);
+  padding: 1.5rem 2rem;
+  color: var(--gray);
+  font-size: 0.85rem;
+  margin-top: auto; /* Empuja el footer hacia abajo */
+}
+
+.footer-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.footer-links {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.footer-links a {
+  color: var(--blue);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.footer-links a:hover {
+  color: var(--green);
+}
+
+.copyright {
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .footer-content {
+    flex-direction: column;
+    text-align: center;
+  }
 }
 
 @media (max-width: 480px) {

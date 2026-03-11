@@ -10,12 +10,29 @@ import VpnsView from '../views/VpnsView.vue'
 import ScanView from '../views/ScanView.vue'
 import LoginView from '../views/LoginView.vue'
 import ReportsView from '../views/ReportsView.vue'
-import BillingView from '../views/BillingView.vue' // ✅ NUEVO: Importación de la vista de facturación
+import BillingView from '../views/BillingView.vue'
+// ✅ NUEVAS IMPORTACIONES PARA LEGALES
+import TermsView from '../views/TermsView.vue'
+import PrivacyView from '../views/PrivacyView.vue'
 import { getSession } from '@/lib/supabase'
 
 const routes = [
   // Login oculta el chrome
   { path: '/login', name: 'login', component: LoginView, meta: { hideChrome: true } },
+
+  // ✅ RUTAS PÚBLICAS (Para verificación de Google y Lemon Squeezy)
+  { 
+    path: '/terms', 
+    name: 'terms', 
+    component: TermsView, 
+    meta: { hideChrome: true } 
+  },
+  { 
+    path: '/privacy', 
+    name: 'privacy', 
+    component: PrivacyView, 
+    meta: { hideChrome: true } 
+  },
 
   { path: '/', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true } },
   {
@@ -61,7 +78,7 @@ const routes = [
     meta: { requiresAuth: true },
   },
 
-  // ✅ NUEVO: Ruta del panel de suscripciones/pagos
+  // Ruta del panel de suscripciones/pagos
   {
     path: '/billing',
     name: 'billing',
