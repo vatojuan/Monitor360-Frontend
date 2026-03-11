@@ -1,7 +1,10 @@
 <script setup>
 import { ref, onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router' // <-- NUEVO: Para redirigir a facturación
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
+
+const router = useRouter() // Instancia del router
 
 /* ====== Helpers ====== */
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
@@ -120,9 +123,19 @@ function downloadConfFile(name, content) {
 /* ====== Estado UI ====== */
 const newProfile = ref({ name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null })
 const vpnProfiles = ref([])
-const channels = ref([]) // <-- NUEVO: Almacena canales de notificación
+const channels = ref([]) 
 const isLoading = ref(false)
 const isCreating = ref(false)
+
+// --- MODAL DE LÍMITES DE FACTURACIÓN ---
+const showLimitModal = ref(false)
+const limitMessage = ref('')
+
+function goToBilling() {
+  showLimitModal.value = false
+  router.push('/billing')
+}
+// ---------------------------------------
 
 /* ====== Inspector de Estado (Polling) ====== */
 const inspector = ref({
@@ -221,8 +234,15 @@ async function createAutoProfile() {
     vpnProfiles.value.unshift({ ...savedProfile, _expanded: true })
     newProfile.value = { name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null }
     showNotification('Perfil creado y activado.', 'success')
+
   } catch (err) {
-    showNotification(getAxiosErr(err), 'error')
+    // CAPTURAMOS EL ERROR 403 o 402 DE LÍMITES
+    if (err?.response?.status === 403 || err?.response?.status === 402) {
+      limitMessage.value = err?.response?.data?.detail || 'Has alcanzado el límite de VPNs de tu plan actual.'
+      showLimitModal.value = true
+    } else {
+      showNotification(getAxiosErr(err), 'error')
+    }
   } finally {
     isCreating.value = false
   }
@@ -308,7 +328,7 @@ function proposeProfileName(iniText) {
 }
 
 onMounted(async () => {
-  await fetchChannels() // <-- NUEVO: Cargamos los canales de alerta
+  await fetchChannels() 
   await fetchVpnProfiles()
 
   // Watch para autocompletar nombre
@@ -521,6 +541,18 @@ onMounted(async () => {
         No hay perfiles VPN creados.
       </div>
     </section>
+
+    <div v-if="showLimitModal" class="modal-overlay" @click="showLimitModal = false">
+      <div class="limit-modal" @click.stop>
+        <div class="limit-icon">🛑</div>
+        <h3>Límite Alcanzado</h3>
+        <p>{{ limitMessage }}</p>
+        <div class="limit-actions">
+          <button class="btn-secondary" @click="showLimitModal = false">Entendido</button>
+          <button class="btn-primary" @click="goToBilling">Ampliar mi Plan</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="notification.show" class="notification" :class="notification.type">
       {{ notification.message }}
@@ -924,6 +956,46 @@ textarea {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* --- MODAL DE LÍMITES --- */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+.limit-modal {
+  background: var(--surface-color);
+  border: 1px solid var(--red, #ef4444);
+  padding: 2.5rem 2rem;
+  border-radius: 16px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+}
+.limit-modal h3 {
+  color: var(--red, #ef4444);
+  margin-bottom: 0.5rem;
+  font-size: 1.4rem;
+}
+.limit-modal p {
+  color: #d1d5db;
+  line-height: 1.5;
+}
+.limit-icon {
+  font-size: 3.5rem;
+  margin-bottom: 1rem;
+}
+.limit-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
 }
 
 /* NOTIFICACION */

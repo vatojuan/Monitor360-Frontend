@@ -15,9 +15,18 @@ const notification = ref({ show: false, message: '', type: 'success' })
 const showAuthErrorModal = ref(false)
 const authErrorMessage = ref('')
 
+// --- MODAL DE LÍMITES DE FACTURACIÓN ---
+const showLimitModal = ref(false)
+const limitMessage = ref('')
+
 function showNotification(message, type = 'success') {
   notification.value = { show: true, message, type }
   setTimeout(() => (notification.value.show = false), 4000)
+}
+
+function goToBilling() {
+  showLimitModal.value = false
+  router.push('/billing')
 }
 
 // ===== Alta en un paso =====
@@ -822,8 +831,13 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
   } catch (error) {
     console.error('Error creando dispositivo:', error)
     const detail = error.response?.data?.detail || ''
-
-    if (detail.includes('AUTH_FAILED') && !isForced) {
+    
+    // CAPTURAMOS EL ERROR DE LÍMITES DE PLAN (402 o 403)
+    if (error?.response?.status === 403 || error?.response?.status === 402) {
+      limitMessage.value = detail || 'Has alcanzado el límite de dispositivos de tu plan actual.'
+      showLimitModal.value = true
+    } 
+    else if (detail.includes('AUTH_FAILED') && !isForced) {
       authErrorMessage.value = detail.replace('AUTH_FAILED: ', '')
       showAuthErrorModal.value = true
     } else {
@@ -1471,6 +1485,18 @@ onUnmounted(() => {
         </table>
       </div>
     </section>
+
+    <div v-if="showLimitModal" class="modal-overlay" @click="showLimitModal = false" style="z-index: 9999;">
+      <div class="limit-modal" @click.stop>
+        <div class="limit-icon">🛑</div>
+        <h3>Límite Alcanzado</h3>
+        <p>{{ limitMessage }}</p>
+        <div class="limit-actions">
+          <button class="btn-secondary" @click="showLimitModal = false">Entendido</button>
+          <button class="btn-primary" @click="goToBilling">Ampliar mi Plan</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showBulkRenameModal" class="modal-overlay" @click.self="closeBulkRenameModal">
       <div class="modal-content large-modal">
@@ -2539,6 +2565,7 @@ label {
   align-items: center;
   justify-content: center;
   z-index: 3000;
+  backdrop-filter: blur(4px);
 }
 .modal-content {
   background: var(--surface-color);
@@ -2814,4 +2841,34 @@ input:checked + .slider:before {
 .status-badge.success { background: rgba(46, 204, 113, 0.2); color: var(--green); border: 1px solid var(--green); }
 .status-badge.error { background: rgba(231, 76, 60, 0.2); color: var(--error-red); border: 1px solid var(--error-red); }
 .status-badge.skipped { background: rgba(243, 156, 18, 0.2); color: #f39c12; border: 1px solid #f39c12; }
+
+/* --- MODAL DE LÍMITES --- */
+.limit-modal {
+  background: var(--surface-color);
+  border: 1px solid var(--red, #ef4444);
+  padding: 2.5rem 2rem;
+  border-radius: 16px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+}
+.limit-modal h3 {
+  color: var(--red, #ef4444);
+  margin-bottom: 0.5rem;
+  font-size: 1.4rem;
+}
+.limit-modal p {
+  color: #d1d5db;
+  line-height: 1.5;
+}
+.limit-icon {
+  font-size: 3.5rem;
+  margin-bottom: 1rem;
+}
+.limit-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
+}
 </style>
