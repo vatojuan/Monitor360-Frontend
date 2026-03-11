@@ -15,7 +15,7 @@
 
         <ul class="features">
           <li><span>✔️</span> Monitoreo y automatizaciones IA</li>
-          <li><span>✔️</span> Alertas por Telegram y Email</li>
+          <li><span>✔️</span> Alertas por Telegram</li>
           <li><span>✔️</span> Soporte prioritario</li>
         </ul>
 
