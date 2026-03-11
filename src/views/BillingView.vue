@@ -2,31 +2,73 @@
   <div class="billing-container">
     <header class="billing-header">
       <h1>Suscripción y Límites</h1>
-      <p>Mejorá tu plan para monitorear más dispositivos en tu red WISP.</p>
+      <p>Ajustá tu plan para monitorear todos los dispositivos de tu red WISP.</p>
     </header>
 
     <div class="plans-grid">
       <div class="plan-card featured">
-        <div class="badge">RECOMENDADO</div>
-        <h3>Plan WISP Pro</h3>
-        <div class="price">$29<span> USD/mes</span></div>
+        <div class="badge">PLAN WISP PRO</div>
+        
+        <div class="price-display">
+          <div class="price">${{ totalPrice }}<span> USD/mes</span></div>
+        </div>
+
         <ul class="features">
-          <li><span>✔️</span> <b>1000 dispositivos</b> incluidos</li>
-          <li><span>✔️</span> <b>1 VPN</b> dedicada incluida</li>
-          <li><span>✔️</span> Expande equipos y VPNs a medida en el pago</li>
           <li><span>✔️</span> Monitoreo y automatizaciones IA</li>
+          <li><span>✔️</span> Alertas por Telegram y Email</li>
           <li><span>✔️</span> Soporte prioritario</li>
         </ul>
+
+        <div class="sliders-section">
+          <div class="slider-group">
+            <div class="slider-header">
+              <label>Límite de Dispositivos</label>
+              <span class="slider-value">{{ formatDevices(totalDevices) }} equipos</span>
+            </div>
+            <input 
+              type="range" 
+              class="styled-slider"
+              min="0" 
+              max="10" 
+              step="1" 
+              v-model.number="extraDevices"
+            />
+            <div class="slider-marks">
+              <span>1K (Base)</span>
+              <span>11K (Máx)</span>
+            </div>
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-header">
+              <label>Túneles VPN Dedicados</label>
+              <span class="slider-value">{{ totalVpns }} VPN{{ totalVpns > 1 ? 's' : '' }}</span>
+            </div>
+            <input 
+              type="range" 
+              class="styled-slider vpn-slider"
+              min="0" 
+              max="5" 
+              step="1" 
+              v-model.number="extraVpns"
+            />
+            <div class="slider-marks">
+              <span>1 (Base)</span>
+              <span>6 (Máx)</span>
+            </div>
+          </div>
+        </div>
+
         <button @click="checkoutPlan('1389240')" class="subscribe-btn" :disabled="isLoading">
           <span v-if="isLoading" class="loader"></span>
-          {{ isLoading ? 'Conectando...' : 'Suscribirse al Plan Pro' }}
+          {{ isLoading ? 'Generando Pago Seguro...' : 'Suscribirse Ahora' }}
         </button>
       </div>
     </div>
     
     <div class="manage-section">
       <h3>¿Ya tenés una suscripción activa?</h3>
-      <p>Gestioná tus facturas y métodos de pago de forma segura.</p>
+      <p>Gestioná tus facturas, métodos de pago y descarga tus comprobantes.</p>
       <button @click="openCustomerPortal" class="portal-btn">
         Ir al Portal de Facturación
       </button>
@@ -39,11 +81,29 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { supabase } from '@/lib/supabase'
 
 const isLoading = ref(false)
 const notification = reactive({ show: false, message: '', type: 'success' })
+
+// Lógica de cálculo dinámico
+const extraDevices = ref(0) // 0 significa solo el plan base
+const extraVpns = ref(0)    // 0 significa solo el plan base
+
+const totalDevices = computed(() => 1000 + (extraDevices.value * 1000))
+const totalVpns = computed(() => 1 + extraVpns.value)
+
+const totalPrice = computed(() => {
+  const base = 29
+  const addonsDev = extraDevices.value * 15
+  const addonsVpn = extraVpns.value * 10
+  return base + addonsDev + addonsVpn
+})
+
+const formatDevices = (num) => {
+  return new Intl.NumberFormat('es-AR').format(num)
+}
 
 const showNotify = (msg, type = 'success') => {
   notification.message = msg
@@ -64,7 +124,7 @@ const getAuthHeaders = async () => {
 }
 
 const checkoutPlan = async (variantId) => {
-  if (variantId === '12345') {
+  if (variantId === '883079') {
     showNotify('Error: Debes configurar el Variant ID real de Lemon Squeezy.', 'error')
     return
   }
@@ -73,11 +133,14 @@ const checkoutPlan = async (variantId) => {
   try {
     const headers = await getAuthHeaders()
     
-    // ✅ CORRECCIÓN: Agregamos "/billing" a la ruta
     const res = await fetch(`${API_BASE}/billing/checkout`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ plan_id: String(variantId) })
+      body: JSON.stringify({ 
+        plan_id: String(variantId),
+        extra_devices: extraDevices.value,
+        extra_vpns: extraVpns.value
+      })
     })
     
     if (!res.ok) {
@@ -105,7 +168,6 @@ const openCustomerPortal = async () => {
   try {
     const headers = await getAuthHeaders()
     
-    // ✅ CORRECCIÓN: Agregamos "/billing" a la ruta
     const res = await fetch(`${API_BASE}/billing/portal`, {
       method: 'GET',
       headers
@@ -134,7 +196,6 @@ const openCustomerPortal = async () => {
   text-align: center;
   margin-bottom: 3rem;
 }
-
 .billing-header h1 {
   font-size: 2.5rem;
   color: var(--green, #3ddc84);
@@ -144,7 +205,6 @@ const openCustomerPortal = async () => {
 .plans-grid {
   display: flex;
   justify-content: center;
-  gap: 2rem;
   margin-bottom: 4rem;
 }
 
@@ -153,17 +213,11 @@ const openCustomerPortal = async () => {
   border: 1px solid var(--primary-color, #0f3460);
   padding: 2.5rem;
   border-radius: 16px;
-  text-align: center;
   width: 100%;
-  max-width: 400px;
+  max-width: 480px;
   position: relative;
   transition: transform 0.3s ease;
 }
-
-.plan-card:hover {
-  transform: translateY(-5px);
-}
-
 .plan-card.featured {
   border-color: var(--green, #3ddc84);
   box-shadow: 0 10px 30px rgba(61, 220, 132, 0.1);
@@ -176,38 +230,117 @@ const openCustomerPortal = async () => {
   transform: translateX(-50%);
   background: var(--green, #3ddc84);
   color: #0b1220;
-  padding: 4px 12px;
+  padding: 4px 16px;
   border-radius: 20px;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-weight: bold;
+  letter-spacing: 0.5px;
 }
 
+.price-display {
+  text-align: center;
+  padding-bottom: 1.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  margin-top: 1rem;
+}
 .price {
-  font-size: 3rem;
+  font-size: 3.5rem;
   font-weight: 800;
-  margin: 1.5rem 0;
   color: white;
+  line-height: 1;
 }
-
 .price span {
   font-size: 1.2rem;
   color: var(--gray, #8d8d8d);
+  font-weight: 600;
 }
 
 .features {
   list-style: none;
   padding: 0;
-  text-align: left;
-  margin: 2rem 0;
+  margin: 0 0 2rem 0;
 }
-
 .features li {
-  margin-bottom: 1rem;
+  margin-bottom: 0.8rem;
   display: flex;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   font-size: 1rem;
+  color: #d1d5db;
 }
 
+/* --- SLIDERS INTERACTIVOS --- */
+.sliders-section {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.slider-group {
+  margin-bottom: 1.5rem;
+}
+.slider-group:last-child {
+  margin-bottom: 0;
+}
+
+.slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.slider-header label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #9ca3af;
+}
+.slider-value {
+  background: var(--blue, #5372f0);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.styled-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 5px;
+  background: #374151;
+  outline: none;
+  margin-bottom: 8px;
+}
+.styled-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--green, #3ddc84);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.styled-slider.vpn-slider::-webkit-slider-thumb {
+  background: #a78bfa; /* Color distinto para diferenciar la VPN */
+}
+.styled-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.slider-marks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+/* Botones */
 .subscribe-btn {
   background-color: var(--green, #3ddc84);
   color: #0b1220;
@@ -218,16 +351,21 @@ const openCustomerPortal = async () => {
   cursor: pointer;
   font-weight: 700;
   font-size: 1.1rem;
-  transition: opacity 0.2s;
+  transition: all 0.2s;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
 }
-
 .subscribe-btn:hover:not(:disabled) {
   opacity: 0.9;
+  transform: translateY(-2px);
 }
-
 .subscribe-btn:disabled {
-  background-color: var(--gray, #8d8d8d);
+  background-color: #374151;
+  color: #9ca3af;
   cursor: not-allowed;
+  transform: none;
 }
 
 .manage-section {
@@ -237,7 +375,6 @@ const openCustomerPortal = async () => {
   text-align: center;
   border: 1px dashed var(--primary-color, #0f3460);
 }
-
 .portal-btn {
   margin-top: 1rem;
   background-color: transparent;
@@ -247,8 +384,8 @@ const openCustomerPortal = async () => {
   border-radius: 8px;
   cursor: pointer;
   font-weight: 600;
+  transition: background 0.2s;
 }
-
 .portal-btn:hover {
   background: rgba(83, 114, 240, 0.1);
 }
@@ -263,11 +400,12 @@ const openCustomerPortal = async () => {
   font-weight: bold;
   z-index: 9999;
 }
-.notification.error { background: #f87171; }
-.notification.success { background: #3ddc84; }
+.notification.error { background: #ef4444; }
+.notification.success { background: #10b981; }
 
 @media (max-width: 600px) {
   .billing-container { padding: 1rem; }
   .plan-card { padding: 1.5rem; }
+  .price { font-size: 2.8rem; }
 }
 </style>
