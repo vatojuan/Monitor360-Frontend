@@ -52,7 +52,6 @@ const showNotify = (msg, type = 'success') => {
   setTimeout(() => notification.show = false, 4000)
 }
 
-// Lógica inteligente para usar localhost si estás programando, o el dominio si está en producción
 const isProd = import.meta.env.PROD || window.location.hostname !== 'localhost'
 const API_BASE = isProd ? 'https://api.monitor360.media' : 'http://localhost:8000'
 
@@ -74,8 +73,8 @@ const checkoutPlan = async (variantId) => {
   try {
     const headers = await getAuthHeaders()
     
-    // ⚠️ ATENCIÓN: El backend (FastAPI) espera "plan_id", no "variant_id"
-    const res = await fetch(`${API_BASE}/checkout`, {
+    // ✅ CORRECCIÓN: Agregamos "/billing" a la ruta
+    const res = await fetch(`${API_BASE}/billing/checkout`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ plan_id: String(variantId) })
@@ -90,7 +89,6 @@ const checkoutPlan = async (variantId) => {
     const data = await res.json()
     
     if (data.checkout_url) {
-      // REDIRECCIÓN EXTERNA
       window.location.href = data.checkout_url
     } else {
       throw new Error('No se recibió la URL de pago desde el backend')
@@ -106,7 +104,9 @@ const checkoutPlan = async (variantId) => {
 const openCustomerPortal = async () => {
   try {
     const headers = await getAuthHeaders()
-    const res = await fetch(`${API_BASE}/portal`, {
+    
+    // ✅ CORRECCIÓN: Agregamos "/billing" a la ruta
+    const res = await fetch(`${API_BASE}/billing/portal`, {
       method: 'GET',
       headers
     })
