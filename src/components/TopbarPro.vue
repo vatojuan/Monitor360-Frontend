@@ -161,6 +161,10 @@
           <router-link to="/vpns" class="m360-item" role="menuitem" @click="closeMenu"
             >🛡️ VPNs</router-link
           >
+          
+          <router-link to="/billing" class="m360-item" role="menuitem" @click="closeMenu"
+            >💳 Facturación y Límites</router-link
+          >
 
           <button class="m360-item logout" type="button" role="menuitem" @click="onLogout">
             ⎋ Cerrar sesión
@@ -253,6 +257,7 @@ const breadcrumb = computed(() => {
     '/credentials': 'Credenciales',
     '/channels': 'Canales',
     '/vpns': 'VPNs',
+    '/billing': 'Facturación y Límites', // AÑADIDO PARA LA VISTA DE BILLING
   }
   return map[route.path] ?? ''
 })

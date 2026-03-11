@@ -9,12 +9,12 @@
       <div class="plan-card featured">
         <div class="badge">RECOMENDADO</div>
         <h3>Plan WISP Pro</h3>
-        <div class="price">$29<span>/mes</span></div>
+        <div class="price">$29<span> USD/mes</span></div>
         <ul class="features">
-          <li><span>✔️</span> Hasta 500 dispositivos</li>
-          <li><span>✔️</span> Monitoreo cada 1 minuto</li>
-          <li><span>✔️</span> Alertas por Telegram y Email</li>
-          <li><span>✔️</span> Acceso a Terminal Remota</li>
+          <li><span>✔️</span> <b>1000 dispositivos</b> incluidos</li>
+          <li><span>✔️</span> <b>1 VPN</b> dedicada incluida</li>
+          <li><span>✔️</span> Expande equipos y VPNs a medida en el pago</li>
+          <li><span>✔️</span> Monitoreo y automatizaciones IA</li>
           <li><span>✔️</span> Soporte prioritario</li>
         </ul>
         <button @click="checkoutPlan('1389240')" class="subscribe-btn" :disabled="isLoading">
