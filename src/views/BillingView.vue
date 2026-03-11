@@ -59,7 +59,7 @@
           </div>
         </div>
 
-        <button @click="checkoutPlan('1389240')" class="subscribe-btn" :disabled="isLoading">
+        <button @click="checkoutPlan('1390296')" class="subscribe-btn" :disabled="isLoading">
           <span v-if="isLoading" class="loader"></span>
           {{ isLoading ? 'Generando Pago Seguro...' : 'Suscribirse Ahora' }}
         </button>
