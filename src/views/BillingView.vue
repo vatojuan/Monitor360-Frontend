@@ -17,7 +17,7 @@
           <li><span>✔️</span> Acceso a Terminal Remota</li>
           <li><span>✔️</span> Soporte prioritario</li>
         </ul>
-        <button @click="checkoutPlan(1389240)" class="subscribe-btn" :disabled="isLoading">
+        <button @click="checkoutPlan('1389240')" class="subscribe-btn" :disabled="isLoading">
           <span v-if="isLoading" class="loader"></span>
           {{ isLoading ? 'Conectando...' : 'Suscribirse al Plan Pro' }}
         </button>
@@ -52,8 +52,9 @@ const showNotify = (msg, type = 'success') => {
   setTimeout(() => notification.show = false, 4000)
 }
 
-// Cambia esta URL por la IP o dominio de tu backend en Hetzner
-const API_BASE = 'https://api.monitor360.media' 
+// Lógica inteligente para usar localhost si estás programando, o el dominio si está en producción
+const isProd = import.meta.env.PROD || window.location.hostname !== 'localhost'
+const API_BASE = isProd ? 'https://api.monitor360.media' : 'http://localhost:8000'
 
 const getAuthHeaders = async () => {
   const { data: { session } } = await supabase.auth.getSession()
@@ -72,14 +73,19 @@ const checkoutPlan = async (variantId) => {
   isLoading.value = true
   try {
     const headers = await getAuthHeaders()
-    // ⚠️ USAMOS API_BASE EN LUGAR DE LOCALHOST
+    
+    // ⚠️ ATENCIÓN: El backend (FastAPI) espera "plan_id", no "variant_id"
     const res = await fetch(`${API_BASE}/checkout`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ variant_id: variantId })
+      body: JSON.stringify({ plan_id: String(variantId) })
     })
     
-    if (!res.ok) throw new Error('Error al generar el link de pago')
+    if (!res.ok) {
+        const errText = await res.text()
+        console.error("Error del backend:", errText)
+        throw new Error(`Error ${res.status}: ${res.statusText}`)
+    }
     
     const data = await res.json()
     
@@ -87,11 +93,11 @@ const checkoutPlan = async (variantId) => {
       // REDIRECCIÓN EXTERNA
       window.location.href = data.checkout_url
     } else {
-      throw new Error('No se recibió la URL de pago')
+      throw new Error('No se recibió la URL de pago desde el backend')
     }
   } catch (err) {
-    console.error('[Billing]', err)
-    showNotify('No se pudo conectar con la pasarela de pagos.', 'error')
+    console.error('[Billing Error]', err)
+    showNotify('No se pudo conectar con la pasarela de pagos. Verifica la consola.', 'error')
   } finally {
     isLoading.value = false
   }
