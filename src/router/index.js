@@ -11,16 +11,18 @@ import ScanView from '../views/ScanView.vue'
 import LoginView from '../views/LoginView.vue'
 import ReportsView from '../views/ReportsView.vue'
 import BillingView from '../views/BillingView.vue'
-// ✅ NUEVAS IMPORTACIONES PARA LEGALES
+// ✅ IMPORTACIONES PARA LEGALES
 import TermsView from '../views/TermsView.vue'
 import PrivacyView from '../views/PrivacyView.vue'
-import { getSession } from '@/lib/supabase'
+
+// ✅ IMPORTANTE: Agregamos "supabase" a la importación para poder consultar la base de datos
+import { getSession, supabase } from '@/lib/supabase'
 
 const routes = [
   // Login oculta el chrome
   { path: '/login', name: 'login', component: LoginView, meta: { hideChrome: true } },
 
-  // ✅ RUTAS PÚBLICAS (Para verificación de Google y Lemon Squeezy)
+  // RUTAS PÚBLICAS
   { 
     path: '/terms', 
     name: 'terms', 
@@ -70,7 +72,7 @@ const routes = [
     meta: { requiresAuth: true } 
   },
 
-  // Ruta de escáner interna (protegida y con menú)
+  // Ruta de escáner interna
   {
     path: '/scan',
     name: 'scan',
@@ -86,7 +88,7 @@ const routes = [
     meta: { requiresAuth: true },
   },
 
-  // Fallback: lo mandamos al dashboard (el guard decidirá si hay que ir a login)
+  // Fallback
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
@@ -105,10 +107,10 @@ async function waitSupabaseWarmup(ms = 0) {
 router.beforeEach(async (to) => {
   await waitSupabaseWarmup(0)
 
-  const { data } = await getSession()
-  const hasSession = !!data?.session
+  const { data: sessionData } = await getSession()
+  const hasSession = !!sessionData?.session
 
-  // Si ya estoy logueado e intento ir a /login → redirigir a destino (o /)
+  // 1. Si ya estoy logueado e intento ir a /login → redirigir a destino (o /)
   if (to.name === 'login' && hasSession) {
     const dest =
       typeof to.query.redirect === 'string' && to.query.redirect ? to.query.redirect : '/'
@@ -116,10 +118,39 @@ router.beforeEach(async (to) => {
     return { path: dest }
   }
 
-  // Si la ruta requiere auth y no hay sesión → mandar a login
+  // 2. Si la ruta requiere auth y no hay sesión → mandar a login
   if (to.meta?.requiresAuth && !hasSession) {
     if (to.name === 'login') return true
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  // 3. 🔒 EL PAYWALL TOTAL 🔒
+  // Si tiene sesión, va a una ruta protegida y NO es la página de billing...
+  if (to.meta?.requiresAuth && hasSession && to.name !== 'billing') {
+    try {
+      // Buscamos su suscripción actual en la base de datos
+      const { data: sub, error } = await supabase
+        .from('subscriptions')
+        .select('plan_id, status')
+        .eq('owner_id', sessionData.session.user.id)
+        .single()
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('[Router] Error validando plan:', error)
+      }
+
+      // Definimos si tiene acceso total (Es PRO y está Activo)
+      const isPro = sub && sub.plan_id !== 'free' && sub.status === 'active'
+
+      // Si no es PRO, lo pateamos a la pantalla de pago
+      if (!isPro) {
+        return { name: 'billing' }
+      }
+    } catch (err) {
+      console.error('[Paywall] Falla en la validación:', err)
+      // Por seguridad extrema ante un error, redirigimos a pagar
+      return { name: 'billing' }
+    }
   }
 
   return true
