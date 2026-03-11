@@ -29,13 +29,13 @@
               type="range" 
               class="styled-slider"
               min="0" 
-              max="10" 
+              max="4" 
               step="1" 
               v-model.number="extraDevices"
             />
             <div class="slider-marks">
               <span>1K (Base)</span>
-              <span>11K (Máx)</span>
+              <span>5K (Máx)</span>
             </div>
           </div>
 
@@ -59,7 +59,7 @@
           </div>
         </div>
 
-        <button @click="checkoutPlan('1390296')" class="subscribe-btn" :disabled="isLoading">
+        <button @click="checkoutPlan" class="subscribe-btn" :disabled="isLoading">
           <span v-if="isLoading" class="loader"></span>
           {{ isLoading ? 'Generando Pago Seguro...' : 'Suscribirse Ahora' }}
         </button>
@@ -123,12 +123,8 @@ const getAuthHeaders = async () => {
   }
 }
 
-const checkoutPlan = async (variantId) => {
-  if (variantId === '883079') {
-    showNotify('Error: Debes configurar el Variant ID real de Lemon Squeezy.', 'error')
-    return
-  }
-
+// La función ya no necesita recibir un variantId porque el backend lo calcula
+const checkoutPlan = async () => {
   isLoading.value = true
   try {
     const headers = await getAuthHeaders()
@@ -137,16 +133,15 @@ const checkoutPlan = async (variantId) => {
       method: 'POST',
       headers,
       body: JSON.stringify({ 
-        plan_id: String(variantId),
         extra_devices: extraDevices.value,
         extra_vpns: extraVpns.value
       })
     })
     
     if (!res.ok) {
-        const errText = await res.text()
-        console.error("Error del backend:", errText)
-        throw new Error(`Error ${res.status}: ${res.statusText}`)
+        const errData = await res.json()
+        // Mostramos el mensaje de error que el backend nos envía (ej: "Plan no configurado")
+        throw new Error(errData.detail || `Error ${res.status}: ${res.statusText}`)
     }
     
     const data = await res.json()
@@ -158,7 +153,7 @@ const checkoutPlan = async (variantId) => {
     }
   } catch (err) {
     console.error('[Billing Error]', err)
-    showNotify('No se pudo conectar con la pasarela de pagos. Verifica la consola.', 'error')
+    showNotify(err.message || 'No se pudo conectar con la pasarela de pagos. Verifica la consola.', 'error')
   } finally {
     isLoading.value = false
   }
