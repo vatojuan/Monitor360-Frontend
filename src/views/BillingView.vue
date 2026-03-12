@@ -457,6 +457,7 @@ const openCustomerPortal = async () => {
 
 .styled-slider {
   -webkit-appearance: none;
+  appearance: none; /* <--- Propiedad estándar agregada para compatibilidad */
   width: 100%;
   height: 6px;
   border-radius: 5px;
