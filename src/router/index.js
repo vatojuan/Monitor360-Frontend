@@ -11,6 +11,10 @@ import ScanView from '../views/ScanView.vue'
 import LoginView from '../views/LoginView.vue'
 import ReportsView from '../views/ReportsView.vue'
 import BillingView from '../views/BillingView.vue'
+
+// ✅ NUEVA VISTA DE CUENTA
+import AccountView from '../views/AccountView.vue'
+
 // ✅ IMPORTACIONES PARA LEGALES
 import TermsView from '../views/TermsView.vue'
 import PrivacyView from '../views/PrivacyView.vue'
@@ -80,6 +84,14 @@ const routes = [
     meta: { requiresAuth: true },
   },
 
+  // Ruta de Mi Cuenta (NUEVA)
+  {
+    path: '/account',
+    name: 'account',
+    component: AccountView,
+    meta: { requiresAuth: true },
+  },
+
   // Ruta del panel de suscripciones/pagos
   {
     path: '/billing',
@@ -125,8 +137,8 @@ router.beforeEach(async (to) => {
   }
 
   // 3. 🔒 EL PAYWALL TOTAL 🔒
-  // Si tiene sesión, va a una ruta protegida y NO es la página de billing...
-  if (to.meta?.requiresAuth && hasSession && to.name !== 'billing') {
+  // Si tiene sesión, va a una ruta protegida y NO es la página de billing NI la de account...
+  if (to.meta?.requiresAuth && hasSession && to.name !== 'billing' && to.name !== 'account') {
     try {
       // Buscamos su suscripción actual en la base de datos
       const { data: sub, error } = await supabase

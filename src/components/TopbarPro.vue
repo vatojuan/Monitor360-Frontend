@@ -162,6 +162,10 @@
             >🛡️ VPNs</router-link
           >
           
+          <router-link to="/account" class="m360-item" role="menuitem" @click="closeMenu"
+            >👤 Mi Cuenta</router-link
+          >
+          
           <router-link to="/billing" class="m360-item" role="menuitem" @click="closeMenu"
             >💳 Facturación y Límites</router-link
           >
@@ -173,7 +177,8 @@
       </div>
 
       <div class="m360-avatar" :title="userEmail || 'Cuenta'" aria-label="Cuenta">
-        <span>{{ (userEmail || 'U').slice(0, 1).toUpperCase() }}</span>
+        <img v-if="userAvatar" :src="userAvatar" alt="Avatar" class="avatar-img" />
+        <span v-else>{{ (userEmail || 'U').slice(0, 1).toUpperCase() }}</span>
       </div>
     </div>
   </header>
@@ -223,6 +228,7 @@ const props = defineProps({
   realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
   logoSrc: { type: String, default: '' },
+  userAvatar: { type: String, default: '' }, // <-- AÑADIDO: Prop para el avatar
 })
 const emit = defineEmits(['toggleSidebar', 'logout'])
 
@@ -257,7 +263,8 @@ const breadcrumb = computed(() => {
     '/credentials': 'Credenciales',
     '/channels': 'Canales',
     '/vpns': 'VPNs',
-    '/billing': 'Facturación y Límites', // AÑADIDO PARA LA VISTA DE BILLING
+    '/account': 'Mi Cuenta', // <-- AÑADIDO
+    '/billing': 'Facturación y Límites', 
   }
   return map[route.path] ?? ''
 })
@@ -778,6 +785,14 @@ const closeFab = () => {
   place-items: center;
   font-size: 12px;
   font-weight: 700;
+  overflow: hidden; /* <-- AÑADIDO PARA LA IMAGEN REDONDA */
+}
+
+/* --- AÑADIDO: ESTILO PARA LA IMAGEN DEL AVATAR --- */
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* SPEED DIAL */

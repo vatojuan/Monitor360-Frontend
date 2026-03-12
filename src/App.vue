@@ -4,6 +4,7 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { supabase } from '@/lib/supabase'
 import TopbarPro from '@/components/TopbarPro.vue'
 import { connectWebSocketWhenAuthenticated, addWsListener, getCurrentWebSocket } from '@/lib/ws'
+import api from '@/lib/api' // <-- AÑADIDO: Importamos la API para consultar el perfil
 
 const route = useRoute()
 const router = useRouter()
@@ -11,6 +12,7 @@ const router = useRouter()
 // ===== Auth/session =====
 const session = ref(null)
 const userEmail = ref('')
+const userAvatar = ref('') // <-- AÑADIDO: Estado para el avatar del usuario
 
 // Ocultar chrome en rutas que lo pidan
 const hideChrome = computed(() => route.meta?.hideChrome === true)
@@ -50,10 +52,29 @@ let wsStateTimer = null
 let offWsListener = null
 let offAuthSub = null
 
+// --- AÑADIDO: Función para traer datos rápidos del perfil (Avatar) ---
+async function fetchUserProfile() {
+  try {
+    const { data } = await api.get('/account/me')
+    if (data?.profile?.avatar_url) {
+      userAvatar.value = data.profile.avatar_url
+    } else {
+      userAvatar.value = ''
+    }
+  } catch (e) {
+    if (import.meta?.env?.DEV) console.debug('[AppLayout] Error cargando perfil:', e?.message || e)
+  }
+}
+
 async function getSession() {
   const { data } = await supabase.auth.getSession()
   session.value = data.session
   userEmail.value = data.session?.user?.email || ''
+  
+  // Si hay sesión, cargamos el perfil para obtener el avatar
+  if (session.value) {
+    await fetchUserProfile()
+  }
 }
 
 async function onLogout() {
@@ -64,6 +85,7 @@ async function onLogout() {
   }
   session.value = null
   userEmail.value = ''
+  userAvatar.value = '' // Limpiamos el avatar
   router.push('/login')
 }
 
@@ -124,6 +146,13 @@ onMounted(async () => {
   const { data: sub } = supabase.auth.onAuthStateChange(async (_event, s) => {
     session.value = s
     userEmail.value = s?.user?.email || ''
+    
+    // Si la sesión cambia a activa, cargamos el perfil
+    if (s) {
+      fetchUserProfile()
+    } else {
+      userAvatar.value = ''
+    }
   })
   offAuthSub = () => {
     try {
@@ -162,16 +191,16 @@ onBeforeUnmount(() => {
       :realtime="live.connected"
       :uptime="uptime"
       :userEmail="userEmail"
+      :userAvatar="userAvatar" 
       @logout="onLogout"
     />
-
     <main class="main-content">
       <RouterView />
     </main>
 
     <footer class="main-footer">
       <div class="footer-content">
-        <p class="copyright">&copy; 2026 Monitor360. Todos los derechos reservados.</p>
+        <p class="copyright">&copy; 2026 MonitorWISP. Todos los derechos reservados.</p>
         <div class="footer-links">
           <router-link to="/terms">Términos y Condiciones</router-link>
           <router-link to="/privacy">Política de Privacidad</router-link>
