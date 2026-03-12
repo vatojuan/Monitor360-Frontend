@@ -124,6 +124,8 @@ const vpnProfiles = ref([])
 const channels = ref([]) 
 const isLoading = ref(false)
 const isCreating = ref(false)
+
+const desktopProfileId = ref(null) // Para saber si ya existe la VPN de PC
 const isEnablingDesktop = ref(false) // Estado de carga para el botón de PC
 
 const showLimitModal = ref(false)
@@ -245,14 +247,26 @@ async function createAutoProfile() {
   }
 }
 
-// NUEVO: Lógica para el botón global "Habilitar Acceso desde PC"
+// NUEVO: Función para verificar si ya tiene acceso habilitado al cargar
+async function checkDesktopStatus() {
+  try {
+    const { data } = await api.post('/vpns/desktop/ensure')
+    if (data && data.id) {
+      desktopProfileId.value = data.id
+    }
+  } catch (err) {
+    console.error("Error verificando acceso desktop:", err)
+  }
+}
+
+// MODIFICADO: Lógica para el botón global "Habilitar Acceso desde PC"
 async function enableDesktopAccess() {
   isEnablingDesktop.value = true
   try {
     const { data } = await api.post('/vpns/desktop/ensure')
     
-    // Si el endpoint devuelve el ID, significa que ya existía o se creó exitosamente.
     if (data && data.id) {
+      desktopProfileId.value = data.id
       showNotification('✅ Acceso desde PC habilitado. Ya puedes conectar la App de Escritorio.', 'success')
     }
   } catch (err) {
@@ -262,6 +276,21 @@ async function enableDesktopAccess() {
     } else {
       showNotification(getAxiosErr(err), 'error')
     }
+  } finally {
+    isEnablingDesktop.value = false
+  }
+}
+
+// NUEVO: Función para deshabilitar (borrar el perfil shadow)
+async function disableDesktopAccess() {
+  if (!confirm('¿Deshabilitar el acceso desde PC? La App de escritorio dejará de funcionar.')) return
+  isEnablingDesktop.value = true
+  try {
+    await api.delete(`/vpns/${desktopProfileId.value}`)
+    desktopProfileId.value = null
+    showNotification('💻 Acceso desde PC deshabilitado.', 'success')
+  } catch (err) {
+    showNotification(getAxiosErr(err), 'error')
   } finally {
     isEnablingDesktop.value = false
   }
@@ -357,6 +386,7 @@ function proposeProfileName(iniText) {
 onMounted(async () => {
   await fetchChannels() 
   await fetchVpnProfiles()
+  await checkDesktopStatus()
 
   watch(
     () => newProfile.value.config_data,
@@ -391,14 +421,16 @@ onMounted(async () => {
           <p>Administra los túneles WireGuard para tus dispositivos remotos.</p>
         </div>
         <button 
-          class="btn-outline-primary" 
-          @click="enableDesktopAccess" 
+          :class="desktopProfileId ? 'btn-outline-danger' : 'btn-outline-primary'" 
+          @click="desktopProfileId ? disableDesktopAccess() : enableDesktopAccess()" 
           :disabled="isEnablingDesktop"
           style="display: flex; align-items: center; gap: 8px; padding: 0.6rem 1.2rem; border-radius: 8px;"
         >
           <span v-if="isEnablingDesktop" class="spinner" style="margin: 0; width: 14px; height: 14px;"></span>
-          <span v-else>💻</span>
-          {{ isEnablingDesktop ? 'Configurando...' : 'Habilitar Acceso desde PC' }}
+          <template v-else>
+            <span>💻</span>
+            {{ desktopProfileId ? 'Deshabilitar Acceso PC' : 'Habilitar Acceso desde PC' }}
+          </template>
         </button>
       </div>
     </div>
@@ -812,6 +844,17 @@ button {
 .btn-outline-primary:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* NUEVA CLASE: Botón de deshabilitar (Rojo) */
+.btn-outline-danger {
+  background-color: transparent;
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 0.5rem 1rem;
+}
+.btn-outline-danger:hover {
+  background-color: rgba(239, 68, 68, 0.1);
 }
 
 /* LISTADO DE TARJETAS */
