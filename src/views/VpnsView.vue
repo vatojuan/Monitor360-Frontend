@@ -1,15 +1,14 @@
 <script setup>
 import { ref, onBeforeUnmount, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router' // <-- NUEVO: Para redirigir a facturación
+import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
 
-const router = useRouter() // Instancia del router
+const router = useRouter()
 
 /* ====== Helpers ====== */
 const getAxiosErr = (err) => err?.response?.data?.detail || err?.message || 'Error inesperado.'
 
-// FIX: Parseo robusto que no rompe las claves que terminan en '='
 function parseWgIni(iniText) {
   const res = {
     privateKey: '',
@@ -32,7 +31,6 @@ function parseWgIni(iniText) {
     if (line.startsWith('[')) {
       section = line.toLowerCase()
     } else if (line.includes('=')) {
-      // USAMOS INDEXOF para partir solo en el primer '='
       const eqIdx = line.indexOf('=')
       const k = line.substring(0, eqIdx).trim().toLowerCase()
       const v = line.substring(eqIdx + 1).trim()
@@ -51,7 +49,6 @@ function parseWgIni(iniText) {
   return res
 }
 
-// --- SCRIPT MIKROTIK (Sintaxis CLI con espacios) ---
 function buildMikrotikCmdFromIni(iniText, clientPrivKeyOverride = null) {
   const conf = parseWgIni(iniText)
   if (!conf.address || !conf.serverPublicKey || !conf.endpoint)
@@ -121,13 +118,13 @@ function downloadConfFile(name, content) {
 }
 
 /* ====== Estado UI ====== */
-const newProfile = ref({ name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null })
+// NUEVO: allowed_ips en el objeto inicial
+const newProfile = ref({ name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' })
 const vpnProfiles = ref([])
 const channels = ref([]) 
 const isLoading = ref(false)
 const isCreating = ref(false)
 
-// --- MODAL DE LÍMITES DE FACTURACIÓN ---
 const showLimitModal = ref(false)
 const limitMessage = ref('')
 
@@ -135,9 +132,8 @@ function goToBilling() {
   showLimitModal.value = false
   router.push('/billing')
 }
-// ---------------------------------------
 
-/* ====== Inspector de Estado (Polling) ====== */
+/* ====== Inspector de Estado ====== */
 const inspector = ref({
   activeProfileId: null,
   running: false,
@@ -226,17 +222,17 @@ async function createAutoProfile() {
       check_ip: newProfile.value.check_ip || autoData.interface_address?.split('/')[0],
       config_data: autoData.conf_ini,
       alerts_enabled: newProfile.value.alerts_enabled,
-      notification_channel_id: newProfile.value.notification_channel_id
+      notification_channel_id: newProfile.value.notification_channel_id,
+      allowed_ips: newProfile.value.allowed_ips // NUEVO: Enviar redes a la BD
     }
 
     const { data: savedProfile } = await api.post('/vpns', payload)
 
     vpnProfiles.value.unshift({ ...savedProfile, _expanded: true })
-    newProfile.value = { name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null }
+    newProfile.value = { name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' }
     showNotification('Perfil creado y activado.', 'success')
 
   } catch (err) {
-    // CAPTURAMOS EL ERROR 403 o 402 DE LÍMITES
     if (err?.response?.status === 403 || err?.response?.status === 402) {
       limitMessage.value = err?.response?.data?.detail || 'Has alcanzado el límite de VPNs de tu plan actual.'
       showLimitModal.value = true
@@ -255,6 +251,18 @@ async function updateVpnAlerts(profile) {
       notification_channel_id: profile.notification_channel_id
     })
     showNotification('Configuración de alertas actualizada', 'success')
+  } catch (err) {
+    showNotification(getAxiosErr(err), 'error')
+  }
+}
+
+// NUEVO: Función para actualizar específicamente las rutas
+async function updateVpnRoutes(profile) {
+  try {
+    await api.put(`/vpns/${profile.id}`, {
+      allowed_ips: profile.allowed_ips
+    })
+    showNotification('Rutas de servidor actualizadas', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
   }
@@ -298,14 +306,12 @@ async function copyMikrotikScript(configData) {
   }
 }
 
-// Notificaciones
 const notification = ref({ show: false, message: '', type: '' })
 function showNotification(msg, type = 'success') {
   notification.value = { show: true, message: msg, type }
   setTimeout(() => (notification.value.show = false), 4000)
 }
 
-// Variables WS
 let wsUnsubRot = null
 
 onBeforeUnmount(() => {
@@ -313,7 +319,6 @@ onBeforeUnmount(() => {
   if (wsUnsubRot) removeWsListener(wsUnsubRot)
 })
 
-// Funciones auxiliares para proposeProfileName
 function proposeProfileName(iniText) {
   try {
     const conf = parseWgIni(iniText)
@@ -331,7 +336,6 @@ onMounted(async () => {
   await fetchChannels() 
   await fetchVpnProfiles()
 
-  // Watch para autocompletar nombre
   watch(
     () => newProfile.value.config_data,
     (val, old) => {
@@ -343,7 +347,6 @@ onMounted(async () => {
     { flush: 'post' },
   )
 
-  // WebSocket
   try {
     await connectWebSocketWhenAuthenticated()
     wsUnsubRot = addWsListener((msg) => {
@@ -382,6 +385,15 @@ onMounted(async () => {
             v-model="newProfile.check_ip"
             type="text"
             placeholder="IP interna para monitoreo"
+          />
+        </div>
+
+        <div class="form-group">
+          <label>Redes LAN a Enrutar (Pools)</label>
+          <input
+            v-model="newProfile.allowed_ips"
+            type="text"
+            placeholder="Ej: 192.168.80.0/24, 10.0.0.0/16"
           />
         </div>
 
@@ -474,7 +486,7 @@ onMounted(async () => {
             </div>
 
             <div class="alerts-inline-section">
-              <h4>⚙️ Alertas y Monitoreo</h4>
+              <h4>⚙️ Configuración y Alertas</h4>
               <div class="alerts-controls">
                 <label class="toggle-label">
                   <input type="checkbox" v-model="p.alerts_enabled" @change="updateVpnAlerts(p)" />
@@ -491,7 +503,16 @@ onMounted(async () => {
                   <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
               </div>
+
+              <div class="form-group" style="margin-top: 1.2rem;">
+                <label style="color: var(--blue);">Redes alcanzables (Rutas a inyectar en Hetzner)</label>
+                <div style="display: flex; gap: 0.5rem; margin-top: 0.2rem;">
+                  <input type="text" v-model="p.allowed_ips" placeholder="Ej: 192.168.80.0/24" style="flex: 1;" />
+                  <button class="btn-secondary" style="padding: 0 1.5rem;" @click="updateVpnRoutes(p)">💾 Guardar</button>
+                </div>
+              </div>
             </div>
+
             <transition name="fade">
               <div v-if="inspector.activeProfileId === p.id" class="inspector-panel">
                 <div class="inspector-grid">
@@ -613,7 +634,7 @@ onMounted(async () => {
   font-size: 1.2rem;
 }
 
-/* NUEVO: FORMULARIO CREACIÓN RESPONSIVE */
+/* FORMULARIO CREACIÓN RESPONSIVE */
 .create-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -643,7 +664,7 @@ onMounted(async () => {
   border-color: var(--blue, #3b82f6);
 }
 
-/* NUEVO: INPUT SELECT Y TOGGLES */
+/* INPUT SELECT Y TOGGLES */
 .input-select {
   background: var(--surface-color);
   border: 1px solid var(--primary-color);
@@ -834,7 +855,7 @@ button {
   gap: 0.5rem;
 }
 
-/* NUEVO: SECCIÓN INLINE DE ALERTAS */
+/* SECCIÓN INLINE DE ALERTAS */
 .alerts-inline-section {
   background: rgba(255, 255, 255, 0.02);
   border: 1px dashed var(--primary-color);
