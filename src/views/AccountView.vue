@@ -134,8 +134,48 @@
           </div>
         </section>
 
+        <section class="account-card danger-zone">
+          <div class="card-header">
+            <h2 class="text-danger">Zona de Peligro</h2>
+          </div>
+          <div class="card-body">
+            <p class="danger-text">
+              Eliminar tu cuenta cancelará cualquier suscripción activa y borrará permanentemente todos tus datos, dispositivos y configuraciones.
+            </p>
+            <button class="btn-danger" @click="openDeleteModal">Eliminar Cuenta</button>
+          </div>
+        </section>
+
       </div>
     </div>
+
+    <transition name="fade">
+      <div v-if="showDeleteModal" class="modal-overlay" @click.self="closeDeleteModal">
+        <div class="modal-content danger-modal">
+          <h3>¿Estás completamente seguro?</h3>
+          <p>
+            Esta acción es irreversible. Para confirmar que deseas eliminar tu cuenta permanentemente, 
+            escribe la palabra <strong>ELIMINAR</strong> en el siguiente campo:
+          </p>
+          <div class="form-group">
+            <input 
+              type="text" 
+              v-model="deleteConfirmationText" 
+              placeholder="ELIMINAR" 
+              class="danger-input"
+            />
+          </div>
+          <div class="modal-actions">
+            <button class="btn-secondary" @click="closeDeleteModal" :disabled="isDeleting">Cancelar</button>
+            <button class="btn-danger" @click="deleteAccount" :disabled="isDeleting || deleteConfirmationText !== 'ELIMINAR'">
+              <span v-if="isDeleting" class="spinner-small"></span>
+              {{ isDeleting ? 'Eliminando...' : 'Sí, Eliminar Cuenta' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
   </div>
 </template>
 
@@ -143,7 +183,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
-import { supabase } from '@/lib/supabase' // IMPORTANTE: Asegúrate de que esta ruta sea correcta según tu proyecto
+import { supabase } from '@/lib/supabase'
 
 const router = useRouter()
 
@@ -154,6 +194,11 @@ const isUploading = ref(false)
 const notification = ref({ show: false, message: '', type: 'success' })
 
 const fileInputRef = ref(null)
+
+// Estados para Eliminación de Cuenta
+const showDeleteModal = ref(false)
+const deleteConfirmationText = ref('')
+const isDeleting = ref(false)
 
 // Estructura de Datos
 const profile = ref({
@@ -203,7 +248,6 @@ const fetchAccountData = async () => {
     const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
     if (profile.value.timezone !== browserTz) {
       profile.value.timezone = browserTz
-      // Enviamos el parche silencioso en segundo plano sin bloquear la UI
       api.patch('/account/me', { timezone: browserTz }).catch(e => console.error("Error silente TZ:", e))
     }
 
@@ -249,26 +293,22 @@ const handleFileUpload = async (event) => {
 
   isUploading.value = true
   try {
-    // a. Generar un nombre único para evitar caché
     const fileExt = file.name.split('.').pop()
     const fileName = `${profile.value.id}-${Date.now()}.${fileExt}`
     const filePath = `public/${fileName}`
 
-    // b. Subir a Supabase Storage (Bucket 'avatars')
     const { error: uploadError } = await supabase.storage
       .from('avatars')
       .upload(filePath, file, { cacheControl: '3600', upsert: true })
 
     if (uploadError) throw uploadError
 
-    // c. Obtener URL Pública
     const { data: urlData } = supabase.storage
       .from('avatars')
       .getPublicUrl(filePath)
 
     const publicUrl = urlData.publicUrl
 
-    // d. Actualizar Base de Datos usando nuestro Endpoint
     await api.patch('/account/me', { avatar_url: publicUrl })
     
     profile.value.avatar_url = publicUrl
@@ -279,7 +319,45 @@ const handleFileUpload = async (event) => {
     showNotification('Error al subir la imagen. Verifica tu conexión.', 'error')
   } finally {
     isUploading.value = false
-    event.target.value = '' // Resetear input
+    event.target.value = ''
+  }
+}
+
+// 4. Lógica de Eliminación de Cuenta
+const openDeleteModal = () => {
+  deleteConfirmationText.value = ''
+  showDeleteModal.value = true
+}
+
+const closeDeleteModal = () => {
+  if (isDeleting.value) return
+  showDeleteModal.value = false
+}
+
+const deleteAccount = async () => {
+  if (deleteConfirmationText.value !== 'ELIMINAR') return
+  isDeleting.value = true
+  try {
+    await api.delete('/account/me')
+    
+    // Si la API responde OK, cerramos la sesión localmente
+    showNotification('Cuenta eliminada correctamente. Redirigiendo...', 'success')
+    
+    await supabase.auth.signOut()
+    localStorage.clear()
+    sessionStorage.clear()
+    
+    setTimeout(() => {
+      router.push('/login')
+    }, 2000)
+
+  } catch (error) {
+    console.error('Error eliminando cuenta:', error)
+    const errorMsg = error.response?.data?.detail || 'Ocurrió un error. Por favor contacta a soporte.'
+    showNotification(errorMsg, 'error')
+    closeDeleteModal()
+  } finally {
+    isDeleting.value = false
   }
 }
 
@@ -408,7 +486,7 @@ onMounted(() => {
 }
 
 /* ========================================================= */
-/* FORMULARIOS (Reutilizando estilo MonitorBuilder)          */
+/* FORMULARIOS                                               */
 /* ========================================================= */
 .form-group {
   display: flex;
@@ -504,7 +582,7 @@ onMounted(() => {
 .status-badge.canceled { background: rgba(248, 81, 73, 0.2); color: #ff7b72; border: 1px solid #f85149; }
 
 /* ========================================================= */
-/* BOTONES                                                   */
+/* BOTONES Y ZONA DE PELIGRO                                 */
 /* ========================================================= */
 .btn-primary {
   background: var(--blue, #5372f0);
@@ -558,6 +636,96 @@ onMounted(() => {
 }
 .portal-btn:hover {
   background: rgba(83, 114, 240, 0.1);
+}
+
+.danger-zone {
+  border-color: #7b1e1c;
+}
+.text-danger {
+  color: #ff7b72 !important;
+}
+.danger-text {
+  font-size: 13px;
+  color: #8b949e;
+  line-height: 1.5;
+}
+.btn-danger {
+  background: #da3633;
+  color: white;
+  border: 1px solid #da3633;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity 0.2s;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #b62324;
+  border-color: #b62324;
+}
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ========================================================= */
+/* MODAL DE CONFIRMACIÓN                                     */
+/* ========================================================= */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.modal-content {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.6);
+}
+.danger-modal {
+  border-top: 4px solid #da3633;
+}
+.danger-modal h3 {
+  margin: 0;
+  color: #ff7b72;
+  font-size: 18px;
+}
+.danger-modal p {
+  margin: 0;
+  color: #c9d1d9;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.danger-input {
+  text-transform: uppercase;
+}
+.danger-input:focus {
+  border-color: #da3633 !important;
+  box-shadow: 0 0 0 1px #da3633;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 10px;
 }
 
 /* ========================================================= */

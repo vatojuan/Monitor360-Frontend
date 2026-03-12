@@ -14,6 +14,7 @@ const activeSensors = ref([])
 const notification = ref({ show: false, message: '', type: 'success' })
 const formToShow = ref(null)
 const channels = ref([])
+const autoTasks = ref([]) // NUEVO: Tareas programadas/manuales disponibles
 
 // --- Nuevo Estado para Grupo ---
 const dbGroups = ref([]) // Grupos traídos de la API
@@ -94,7 +95,7 @@ const suggestedTargetDevices = computed(() => {
 })
 
 //
-// --- Plantillas de Formularios (ACTUALIZADO: Mensajes Personalizados) ---
+// --- Plantillas de Formularios (ACTUALIZADO: Mensajes Personalizados y Auto-Tasks) ---
 const createNewPingSensor = () => ({
   name: '',
   config: {
@@ -115,6 +116,8 @@ const createNewPingSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false, // NUEVO
+    trigger_task_id: null, // NUEVO
   },
   ui_alert_latency: {
     enabled: false,
@@ -127,6 +130,8 @@ const createNewPingSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false, // NUEVO
+    trigger_task_id: null, // NUEVO
   },
 })
 
@@ -146,6 +151,8 @@ const createNewEthernetSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false, // NUEVO
+    trigger_task_id: null, // NUEVO
   },
   ui_alert_traffic: {
     enabled: false,
@@ -159,13 +166,15 @@ const createNewEthernetSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false, // NUEVO
+    trigger_task_id: null, // NUEVO
   },
 })
 
 const createNewWirelessSensor = () => ({
   name: '',
   config: {
-    interface_name: '', // Lo dejamos vacío para obligar a seleccionar de la lista si está disponible
+    interface_name: '',
     thresholds: {
       min_signal_dbm: -80,
       min_ccq_percent: 75,
@@ -184,6 +193,8 @@ const createNewWirelessSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false, // NUEVO
+    trigger_task_id: null, // NUEVO
   },
 })
 
@@ -209,6 +220,8 @@ const createNewSystemSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false, // NUEVO
+    trigger_task_id: null, // NUEVO
   },
 })
 
@@ -223,7 +236,8 @@ onMounted(() => {
   fetchGroups()
   fetchAllMonitors()
   fetchChannels()
-  fetchAllDevices() // Cargar inventario para el buscador
+  fetchAllDevices() 
+  fetchAutoTasks() // NUEVO: Cargar las tareas para los selectores
 })
 
 // RESETEO
@@ -250,6 +264,15 @@ async function fetchChannels() {
     }))
   } catch (err) {
     console.error('Error al cargar canales:', err)
+  }
+}
+
+async function fetchAutoTasks() {
+  try {
+    const { data } = await api.get('/scheduled-tasks/')
+    autoTasks.value = data || []
+  } catch (err) {
+    console.error('Error al cargar tareas automáticas:', err)
   }
 }
 
@@ -317,6 +340,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
       finalConfig.alerts.push(alertObj)
     }
     if (sensorData.ui_alert_latency.enabled) {
@@ -332,6 +356,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
       finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'ethernet') {
@@ -347,6 +372,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
       finalConfig.alerts.push(alertObj)
     }
     if (sensorData.ui_alert_traffic.enabled) {
@@ -363,6 +389,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
       finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'wireless') {
@@ -386,6 +413,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
       finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'system') {
@@ -410,6 +438,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
       finalConfig.alerts.push(alertObj)
     }
   }
@@ -504,6 +533,8 @@ function openFormForEdit(sensor) {
         custom_message: tOut.custom_message || '',
         use_custom_recovery_message: !!tOut.custom_recovery_message,
         custom_recovery_message: tOut.custom_recovery_message || '',
+        use_auto_task: !!tOut.trigger_task_id, // NUEVO
+        trigger_task_id: tOut.trigger_task_id || null, // NUEVO
       }
     }
 
@@ -518,6 +549,8 @@ function openFormForEdit(sensor) {
         custom_message: tLat.custom_message || '',
         use_custom_recovery_message: !!tLat.custom_recovery_message,
         custom_recovery_message: tLat.custom_recovery_message || '',
+        use_auto_task: !!tLat.trigger_task_id, // NUEVO
+        trigger_task_id: tLat.trigger_task_id || null, // NUEVO
       }
     }
     newPingSensor.value = uiData
@@ -541,6 +574,8 @@ function openFormForEdit(sensor) {
         custom_message: tSpd.custom_message || '',
         use_custom_recovery_message: !!tSpd.custom_recovery_message,
         custom_recovery_message: tSpd.custom_recovery_message || '',
+        use_auto_task: !!tSpd.trigger_task_id, // NUEVO
+        trigger_task_id: tSpd.trigger_task_id || null, // NUEVO
       }
     }
 
@@ -555,6 +590,8 @@ function openFormForEdit(sensor) {
         custom_message: tTrf.custom_message || '',
         use_custom_recovery_message: !!tTrf.custom_recovery_message,
         custom_recovery_message: tTrf.custom_recovery_message || '',
+        use_auto_task: !!tTrf.trigger_task_id, // NUEVO
+        trigger_task_id: tTrf.trigger_task_id || null, // NUEVO
       }
     }
     newEthernetSensor.value = uiData
@@ -585,6 +622,8 @@ function openFormForEdit(sensor) {
         custom_message: tWir.custom_message || '',
         use_custom_recovery_message: !!tWir.custom_recovery_message,
         custom_recovery_message: tWir.custom_recovery_message || '',
+        use_auto_task: !!tWir.trigger_task_id, // NUEVO
+        trigger_task_id: tWir.trigger_task_id || null, // NUEVO
       }
     }
     newWirelessSensor.value = uiData
@@ -615,6 +654,8 @@ function openFormForEdit(sensor) {
         custom_message: tSys.custom_message || '',
         use_custom_recovery_message: !!tSys.custom_recovery_message,
         custom_recovery_message: tSys.custom_recovery_message || '',
+        use_auto_task: !!tSys.trigger_task_id, // NUEVO
+        trigger_task_id: tSys.trigger_task_id || null, // NUEVO
       }
     }
     newSystemSensor.value = uiData
@@ -911,6 +952,19 @@ watch(searchQuery, (newQuery) => {
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
+
+                <div class="form-group checkbox-group" style="grid-column: span 1; color: #ffeb3b;">
+                  <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.use_auto_task" id="pTo_auto" />
+                  <label for="pTo_auto">⚡ Auto-Remediación</label>
+                </div>
+                <div class="form-group" v-if="newPingSensor.ui_alert_timeout.use_auto_task">
+                  <label>Tarea a Ejecutar</label>
+                  <select v-model="newPingSensor.ui_alert_timeout.trigger_task_id">
+                    <option :value="null">-- Seleccionar Tarea --</option>
+                    <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </select>
+                </div>
+
                 <div class="form-group">
                   <label>Enfriamiento (min)</label>
                   <input
@@ -979,6 +1033,19 @@ watch(searchQuery, (newQuery) => {
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
+
+                <div class="form-group checkbox-group" style="grid-column: span 1; color: #ffeb3b;">
+                  <input type="checkbox" v-model="newPingSensor.ui_alert_latency.use_auto_task" id="pLat_auto" />
+                  <label for="pLat_auto">⚡ Auto-Remediación</label>
+                </div>
+                <div class="form-group" v-if="newPingSensor.ui_alert_latency.use_auto_task">
+                  <label>Tarea a Ejecutar</label>
+                  <select v-model="newPingSensor.ui_alert_latency.trigger_task_id">
+                    <option :value="null">-- Seleccionar Tarea --</option>
+                    <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </select>
+                </div>
+
                 <div class="form-group">
                   <label>Enfriamiento (min)</label>
                   <input
@@ -1089,6 +1156,19 @@ watch(searchQuery, (newQuery) => {
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
+
+                <div class="form-group checkbox-group" style="grid-column: span 1; color: #ffeb3b;">
+                  <input type="checkbox" v-model="newEthernetSensor.ui_alert_speed_change.use_auto_task" id="eSpd_auto" />
+                  <label for="eSpd_auto">⚡ Auto-Remediación</label>
+                </div>
+                <div class="form-group" v-if="newEthernetSensor.ui_alert_speed_change.use_auto_task">
+                  <label>Tarea a Ejecutar</label>
+                  <select v-model="newEthernetSensor.ui_alert_speed_change.trigger_task_id">
+                    <option :value="null">-- Seleccionar Tarea --</option>
+                    <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </select>
+                </div>
+
                 <div class="form-group">
                   <label>Enfriamiento</label>
                   <input
@@ -1169,6 +1249,19 @@ watch(searchQuery, (newQuery) => {
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
+
+                <div class="form-group checkbox-group" style="grid-column: span 1; color: #ffeb3b;">
+                  <input type="checkbox" v-model="newEthernetSensor.ui_alert_traffic.use_auto_task" id="eTrf_auto" />
+                  <label for="eTrf_auto">⚡ Auto-Remediación</label>
+                </div>
+                <div class="form-group" v-if="newEthernetSensor.ui_alert_traffic.use_auto_task">
+                  <label>Tarea a Ejecutar</label>
+                  <select v-model="newEthernetSensor.ui_alert_traffic.trigger_task_id">
+                    <option :value="null">-- Seleccionar Tarea --</option>
+                    <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </select>
+                </div>
+
                 <div class="form-group">
                   <label>Enfriamiento</label>
                   <input
@@ -1313,6 +1406,19 @@ watch(searchQuery, (newQuery) => {
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
+
+                <div class="form-group checkbox-group" style="grid-column: span 1; color: #ffeb3b;">
+                  <input type="checkbox" v-model="newWirelessSensor.ui_alert_status.use_auto_task" id="wStat_auto" />
+                  <label for="wStat_auto">⚡ Auto-Remediación</label>
+                </div>
+                <div class="form-group" v-if="newWirelessSensor.ui_alert_status.use_auto_task">
+                  <label>Tarea a Ejecutar</label>
+                  <select v-model="newWirelessSensor.ui_alert_status.trigger_task_id">
+                    <option :value="null">-- Seleccionar Tarea --</option>
+                    <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </select>
+                </div>
+
                 <div class="form-group">
                   <label>Enfriamiento (min)</label>
                   <input
@@ -1434,6 +1540,19 @@ watch(searchQuery, (newQuery) => {
                     <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
                   </select>
                 </div>
+
+                <div class="form-group checkbox-group" style="grid-column: span 1; color: #ffeb3b;">
+                  <input type="checkbox" v-model="newSystemSensor.ui_alert_status.use_auto_task" id="sysStat_auto" />
+                  <label for="sysStat_auto">⚡ Auto-Remediación</label>
+                </div>
+                <div class="form-group" v-if="newSystemSensor.ui_alert_status.use_auto_task">
+                  <label>Tarea a Ejecutar</label>
+                  <select v-model="newSystemSensor.ui_alert_status.trigger_task_id">
+                    <option :value="null">-- Seleccionar Tarea --</option>
+                    <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </select>
+                </div>
+
                 <div class="form-group">
                   <label>Enfriamiento (min)</label>
                   <input
@@ -1557,7 +1676,7 @@ h4 {
 }
 
 /* ==============================================
-   FIX: TRUNCADO PROFESIONAL PARA LISTAS Y TARJETAS
+    FIX: TRUNCADO PROFESIONAL PARA LISTAS Y TARJETAS
    ============================================== */
 
 /* 1. Resultados de búsqueda blindados */
