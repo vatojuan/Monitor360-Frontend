@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { supabase } from '@/lib/supabase'
 
@@ -12,6 +12,44 @@ const password = ref('')
 const showPassword = ref(false)
 const isAuthLoading = ref(false)
 const notification = ref({ show: false, message: '', type: 'success' })
+
+// --- NUEVO: Lógica de Fuerza de Contraseña ---
+const passwordRules = computed(() => {
+  const p = password.value
+  return {
+    length: p.length >= 8,
+    casing: /[a-z]/.test(p) && /[A-Z]/.test(p),
+    number: /[0-9]/.test(p),
+    special: /[^A-Za-z0-9]/.test(p) // Cualquier cosa que no sea letra o número
+  }
+})
+
+const passwordStrength = computed(() => {
+  if (!password.value) return 0
+  let strength = 0
+  if (passwordRules.value.length) strength++
+  if (passwordRules.value.casing) strength++
+  if (passwordRules.value.number) strength++
+  if (passwordRules.value.special) strength++
+  return strength // Devuelve 0 a 4
+})
+
+const strengthText = computed(() => {
+  switch (passwordStrength.value) {
+    case 0: return 'Muy débil'
+    case 1: return 'Débil'
+    case 2: return 'Regular'
+    case 3: return 'Buena'
+    case 4: return 'Fuerte'
+    default: return ''
+  }
+})
+
+// Para registro, exigimos al menos nivel 3 (Buena)
+const isPasswordValidForSignup = computed(() => {
+  return passwordStrength.value >= 3
+})
+// ---------------------------------------------
 
 function showNotification(message, type = 'success', ttl = 4000) {
   notification.value = { show: true, message, type }
@@ -61,6 +99,13 @@ async function handleAuthSubmit() {
     showNotification('Completá email y password.', 'error')
     return
   }
+
+  // --- BLOQUEO DURO DE REGISTRO ---
+  if (authMode.value === 'signup' && !isPasswordValidForSignup.value) {
+     showNotification('La contraseña debe cumplir con los requisitos mínimos de seguridad.', 'error')
+     return
+  }
+  // --------------------------------
   
   isAuthLoading.value = true
 
@@ -171,13 +216,34 @@ async function handleGoogleAuth() {
               {{ showPassword ? '🙈' : '👁️' }}
             </button>
           </div>
-          
+
+          <div v-if="authMode === 'signup' && password.length > 0" class="password-strength-container">
+            <div class="strength-bars">
+              <div class="bar" :class="{ 'bg-red': passwordStrength >= 1 }"></div>
+              <div class="bar" :class="{ 'bg-orange': passwordStrength >= 2 }"></div>
+              <div class="bar" :class="{ 'bg-yellow': passwordStrength >= 3 }"></div>
+              <div class="bar" :class="{ 'bg-green': passwordStrength >= 4 }"></div>
+            </div>
+            <div class="strength-text" :class="'text-level-' + passwordStrength">
+              Seguridad: {{ strengthText }}
+            </div>
+            <ul class="strength-rules">
+              <li :class="{ 'rule-met': passwordRules.length }">Mínimo 8 caracteres</li>
+              <li :class="{ 'rule-met': passwordRules.casing }">Mayúsculas y minúsculas</li>
+              <li :class="{ 'rule-met': passwordRules.number }">Al menos un número</li>
+              <li :class="{ 'rule-met': passwordRules.special }">Al menos un símbolo (!@#$)</li>
+            </ul>
+          </div>
           <div v-if="authMode === 'login'" class="forgot-link-wrapper">
             <a href="#" @click.prevent="authMode = 'forgot'" class="forgot-link">¿Olvidaste tu contraseña?</a>
           </div>
         </template>
 
-        <button type="submit" class="btn-primary" :disabled="isAuthLoading">
+        <button 
+          type="submit" 
+          class="btn-primary" 
+          :disabled="isAuthLoading || (authMode === 'signup' && !isPasswordValidForSignup)"
+        >
           <span v-if="isAuthLoading" class="loader"></span>
           <span v-else>
             <template v-if="authMode === 'login'">Entrar</template>
@@ -290,6 +356,70 @@ async function handleGoogleAuth() {
 .btn-eye:hover {
   opacity: 0.8;
 }
+
+/* --- ESTILOS NUEVOS PARA VALIDACIÓN DE CONTRASEÑA --- */
+.password-strength-container {
+  text-align: left;
+  margin-top: -0.5rem;
+  background: rgba(0,0,0,0.2);
+  padding: 0.8rem;
+  border-radius: 8px;
+  border: 1px solid #2a2a2a;
+}
+.strength-bars {
+  display: flex;
+  gap: 4px;
+  height: 4px;
+  margin-bottom: 0.5rem;
+}
+.strength-bars .bar {
+  flex: 1;
+  background: #2a2a2a;
+  border-radius: 2px;
+  transition: background 0.3s ease;
+}
+.bg-red { background: #d9534f !important; }
+.bg-orange { background: #f0ad4e !important; }
+.bg-yellow { background: #f0e68c !important; }
+.bg-green { background: #2ea043 !important; }
+
+.strength-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #9aa0a6;
+}
+.text-level-1 { color: #d9534f; }
+.text-level-2 { color: #f0ad4e; }
+.text-level-3 { color: #f0e68c; }
+.text-level-4 { color: #2ea043; }
+
+.strength-rules {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+.strength-rules li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 3px;
+  transition: color 0.2s;
+}
+.strength-rules li::before {
+  content: '○';
+  font-size: 0.8rem;
+}
+.strength-rules li.rule-met {
+  color: #3ddc84;
+}
+.strength-rules li.rule-met::before {
+  content: '●';
+}
+/* --------------------------------------------------- */
+
 .forgot-link-wrapper {
   text-align: right;
   margin-top: -0.5rem;
@@ -312,7 +442,7 @@ async function handleGoogleAuth() {
   font-weight: 700;
   padding: 0.8rem;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.2s, opacity 0.2s;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -321,8 +451,9 @@ async function handleGoogleAuth() {
   background: #32c176;
 }
 .btn-primary:disabled {
-  opacity: 0.7;
+  opacity: 0.5;
   cursor: not-allowed;
+  background: #6b7280;
 }
 
 .btn-secondary {
