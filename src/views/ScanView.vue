@@ -18,6 +18,7 @@ const ignoredDevices = ref([]) // Lista Negra
 const scanProfiles = ref([])
 const channels = ref([]) 
 const groups = ref([])
+const autoTasks = ref([]) // NUEVO: Lista de Tareas Automáticas disponibles
 
 // --- NUEVO ESTADO PARA INTERFACES ---
 const maestroInterfaces = ref([])
@@ -179,6 +180,7 @@ async function loadGlobalData() {
     await Promise.all([
       fetchMaestrosAndDevices(), fetchCredentialProfiles(), fetchPendingDevices(),
       fetchIgnoredDevices(), fetchScanProfiles(), fetchChannels(), fetchGroups(),
+      fetchAutoTasks() // NUEVO: Cargar Tareas
     ])
   } catch (e) { showNotification('Error cargando datos', 'error') } 
   finally { isLoading.value = false }
@@ -197,6 +199,7 @@ async function fetchIgnoredDevices() { try { const { data } = await api.get('/di
 async function fetchScanProfiles() { try { const { data } = await api.get('/discovery/profiles'); scanProfiles.value = data || [] } catch (e) {} }
 async function fetchChannels() { try { const { data } = await api.get('/channels'); channels.value = data || [] } catch (e) {} }
 async function fetchGroups() { try { const { data } = await api.get('/groups'); groups.value = (data || []).map((g) => g.name) } catch (e) {} }
+async function fetchAutoTasks() { try { const { data } = await api.get('/scheduled-tasks/'); autoTasks.value = data || [] } catch (e) { console.error(e) } } // NUEVO
 
 // =============================================================================
 // NUEVO: GESTIÓN DINÁMICA DE SENSORES (RECETA REUTILIZABLE)
@@ -213,20 +216,21 @@ function createDefaultSensor(type) {
       config: {}
   }
 
+  // NUEVO: Campos use_auto_task y trigger_task_id en todos los modelos de UI
   if (type === 'ping') {
       base.config = { interval_sec: 60, latency_threshold_ms: 150, display_mode: 'realtime', average_count: 5, ping_type: 'device_to_external', target_ip: 'dynamic_ip' }
-      base.ui_alert_timeout = { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
-      base.ui_alert_latency = { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+      base.ui_alert_timeout = { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null }
+      base.ui_alert_latency = { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null }
   } else if (type === 'ethernet') {
       base.config = { interface_name: 'ether1', interval_sec: 30 }
-      base.ui_alert_speed_change = { enabled: false, channel_id: null, cooldown_minutes: 10, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
-      base.ui_alert_traffic = { enabled: false, threshold_mbps: 100, direction: 'any', channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+      base.ui_alert_speed_change = { enabled: false, channel_id: null, cooldown_minutes: 10, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null }
+      base.ui_alert_traffic = { enabled: false, threshold_mbps: 100, direction: 'any', channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null }
   } else if (type === 'wireless') {
       base.config = { interface_name: 'wlan1', interval_sec: 60, thresholds: { min_signal_dbm: -80, min_ccq_percent: 75, min_tx_rate_mbps: 0, min_rx_rate_mbps: 0, min_client_count: 0 }, tolerance_checks: 3 }
-      base.ui_alert_wireless = { enabled: false, channel_id: null, cooldown_minutes: 5, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+      base.ui_alert_wireless = { enabled: false, channel_id: null, cooldown_minutes: 5, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null }
   } else if (type === 'system') {
       base.config = { interval_sec: 60, thresholds: { max_cpu_percent: 90, max_memory_percent: 90, restart_uptime_seconds: 300 }, tolerance_checks: 3 }
-      base.ui_alert_system = { enabled: false, channel_id: null, cooldown_minutes: 5, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '' }
+      base.ui_alert_system = { enabled: false, channel_id: null, cooldown_minutes: 5, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null }
   }
   return base
 }
@@ -257,12 +261,14 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'timeout', channel_id: sensorData.ui_alert_timeout.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_timeout.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_timeout.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_timeout.notify_recovery };
         if (sensorData.ui_alert_timeout.use_custom_message && sensorData.ui_alert_timeout.custom_message?.trim()) a.custom_message = sensorData.ui_alert_timeout.custom_message.trim();
         if (sensorData.ui_alert_timeout.use_custom_recovery_message && sensorData.ui_alert_timeout.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_timeout.custom_recovery_message.trim();
+        if (sensorData.ui_alert_timeout.use_auto_task && sensorData.ui_alert_timeout.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_timeout.trigger_task_id; // NUEVO
         alerts.push(a);
     }
     if (sensorData.ui_alert_latency?.enabled && sensorData.ui_alert_latency?.channel_id) {
         const a = { type: 'high_latency', threshold_ms: onlyNums(sensorData.ui_alert_latency.threshold_ms, 200), channel_id: sensorData.ui_alert_latency.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_latency.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_latency.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_latency.notify_recovery };
         if (sensorData.ui_alert_latency.use_custom_message && sensorData.ui_alert_latency.custom_message?.trim()) a.custom_message = sensorData.ui_alert_latency.custom_message.trim();
         if (sensorData.ui_alert_latency.use_custom_recovery_message && sensorData.ui_alert_latency.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_latency.custom_recovery_message.trim();
+        if (sensorData.ui_alert_latency.use_auto_task && sensorData.ui_alert_latency.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_latency.trigger_task_id; // NUEVO
         alerts.push(a);
     }
   } else if (sType === 'ethernet') {
@@ -270,12 +276,14 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'speed_change', channel_id: sensorData.ui_alert_speed_change.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_speed_change.cooldown_minutes, 10), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_speed_change.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_speed_change.notify_recovery };
         if (sensorData.ui_alert_speed_change.use_custom_message && sensorData.ui_alert_speed_change.custom_message?.trim()) a.custom_message = sensorData.ui_alert_speed_change.custom_message.trim();
         if (sensorData.ui_alert_speed_change.use_custom_recovery_message && sensorData.ui_alert_speed_change.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_speed_change.custom_recovery_message.trim();
+        if (sensorData.ui_alert_speed_change.use_auto_task && sensorData.ui_alert_speed_change.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_speed_change.trigger_task_id; // NUEVO
         alerts.push(a);
     }
     if (sensorData.ui_alert_traffic?.enabled && sensorData.ui_alert_traffic?.channel_id) {
         const a = { type: 'traffic_threshold', threshold_mbps: onlyNums(sensorData.ui_alert_traffic.threshold_mbps, 100), direction: sensorData.ui_alert_traffic.direction || 'any', channel_id: sensorData.ui_alert_traffic.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_traffic.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_traffic.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_traffic.notify_recovery };
         if (sensorData.ui_alert_traffic.use_custom_message && sensorData.ui_alert_traffic.custom_message?.trim()) a.custom_message = sensorData.ui_alert_traffic.custom_message.trim();
         if (sensorData.ui_alert_traffic.use_custom_recovery_message && sensorData.ui_alert_traffic.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_traffic.custom_recovery_message.trim();
+        if (sensorData.ui_alert_traffic.use_auto_task && sensorData.ui_alert_traffic.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_traffic.trigger_task_id; // NUEVO
         alerts.push(a);
     }
   } else if (sType === 'wireless') {
@@ -283,6 +291,7 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'wireless_status', channel_id: sensorData.ui_alert_wireless.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_wireless.cooldown_minutes, 5), notify_recovery: !!sensorData.ui_alert_wireless.notify_recovery };
         if (sensorData.ui_alert_wireless.use_custom_message && sensorData.ui_alert_wireless.custom_message?.trim()) a.custom_message = sensorData.ui_alert_wireless.custom_message.trim();
         if (sensorData.ui_alert_wireless.use_custom_recovery_message && sensorData.ui_alert_wireless.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_wireless.custom_recovery_message.trim();
+        if (sensorData.ui_alert_wireless.use_auto_task && sensorData.ui_alert_wireless.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_wireless.trigger_task_id; // NUEVO
         alerts.push(a);
     }
   } else if (sType === 'system') {
@@ -290,6 +299,7 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'system_status', channel_id: sensorData.ui_alert_system.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_system.cooldown_minutes, 5), notify_recovery: !!sensorData.ui_alert_system.notify_recovery };
         if (sensorData.ui_alert_system.use_custom_message && sensorData.ui_alert_system.custom_message?.trim()) a.custom_message = sensorData.ui_alert_system.custom_message.trim();
         if (sensorData.ui_alert_system.use_custom_recovery_message && sensorData.ui_alert_system.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_system.custom_recovery_message.trim();
+        if (sensorData.ui_alert_system.use_auto_task && sensorData.ui_alert_system.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_system.trigger_task_id; // NUEVO
         alerts.push(a);
     }
   }
@@ -320,15 +330,15 @@ function restoreSensorConfig(sensors) {
       if (backendSensor.config && backendSensor.config.alerts) {
           backendSensor.config.alerts.forEach(a => {
               if (s.sensor_type === 'ping') {
-                 if (a.type === 'timeout') s.ui_alert_timeout = { ...s.ui_alert_timeout, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
-                 if (a.type === 'high_latency') s.ui_alert_latency = { ...s.ui_alert_latency, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+                 if (a.type === 'timeout') s.ui_alert_timeout = { ...s.ui_alert_timeout, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '', use_auto_task: !!a.trigger_task_id, trigger_task_id: a.trigger_task_id || null }
+                 if (a.type === 'high_latency') s.ui_alert_latency = { ...s.ui_alert_latency, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '', use_auto_task: !!a.trigger_task_id, trigger_task_id: a.trigger_task_id || null }
               } else if (s.sensor_type === 'ethernet') {
-                 if (a.type === 'speed_change') s.ui_alert_speed_change = { ...s.ui_alert_speed_change, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
-                 if (a.type === 'traffic_threshold') s.ui_alert_traffic = { ...s.ui_alert_traffic, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+                 if (a.type === 'speed_change') s.ui_alert_speed_change = { ...s.ui_alert_speed_change, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '', use_auto_task: !!a.trigger_task_id, trigger_task_id: a.trigger_task_id || null }
+                 if (a.type === 'traffic_threshold') s.ui_alert_traffic = { ...s.ui_alert_traffic, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '', use_auto_task: !!a.trigger_task_id, trigger_task_id: a.trigger_task_id || null }
               } else if (s.sensor_type === 'wireless') {
-                 if (a.type === 'wireless_status') s.ui_alert_wireless = { ...s.ui_alert_wireless, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+                 if (a.type === 'wireless_status') s.ui_alert_wireless = { ...s.ui_alert_wireless, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '', use_auto_task: !!a.trigger_task_id, trigger_task_id: a.trigger_task_id || null }
               } else if (s.sensor_type === 'system') {
-                 if (a.type === 'system_status') s.ui_alert_system = { ...s.ui_alert_system, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '' }
+                 if (a.type === 'system_status') s.ui_alert_system = { ...s.ui_alert_system, ...a, enabled: true, use_custom_message: !!a.custom_message, custom_message: a.custom_message || '', use_custom_recovery_message: !!a.custom_recovery_message, custom_recovery_message: a.custom_recovery_message || '', use_auto_task: !!a.trigger_task_id, trigger_task_id: a.trigger_task_id || null }
               }
           })
       }
@@ -798,6 +808,13 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <div class="chk-label"><input type="checkbox" v-model="sensor.ui_alert_timeout.enabled" /> Alerta Timeout</div>
                                 <div v-if="sensor.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                     <select v-model="sensor.ui_alert_timeout.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                    
+                                    <div class="chk-label" style="margin-bottom: 5px; color: #ffeb3b;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_auto_task" /> ⚡ Tarea Auto-Remediación</div>
+                                    <select v-if="sensor.ui_alert_timeout.use_auto_task" v-model="sensor.ui_alert_timeout.trigger_task_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                        <option :value="null">-- Seleccionar Tarea --</option>
+                                        <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                    </select>
+                                    
                                     <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_custom_message" /> ✏️ Msj. Alerta</div>
                                     <textarea v-if="sensor.ui_alert_timeout.use_custom_message" v-model="sensor.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} no responde. {status}"></textarea>
                                     <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.notify_recovery" /> 🟢 Notificar Regreso</div>
@@ -813,6 +830,13 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.enabled" /> Alerta Desconexión</div>
                                 <div v-if="sensor.ui_alert_speed_change.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                    <select v-model="sensor.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                   
+                                   <div class="chk-label" style="margin-bottom: 5px; color: #ffeb3b;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_auto_task" /> ⚡ Tarea Auto-Remediación</div>
+                                   <select v-if="sensor.ui_alert_speed_change.use_auto_task" v-model="sensor.ui_alert_speed_change.trigger_task_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                       <option :value="null">-- Seleccionar Tarea --</option>
+                                       <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                   </select>
+                                   
                                    <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_custom_message" /> ✏️ Msj. Alerta</div>
                                    <textarea v-if="sensor.ui_alert_speed_change.use_custom_message" v-model="sensor.ui_alert_speed_change.custom_message" class="search-input custom-textarea" placeholder="Ej: Cable desconectado en {client_name}"></textarea>
                                    <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.notify_recovery" /> 🟢 Notificar Regreso</div>
@@ -828,6 +852,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_wireless.enabled" /> Alerta Estado Degradado/Caído</div>
                                 <div v-if="sensor.ui_alert_wireless.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                    <select v-model="sensor.ui_alert_wireless.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                   
+                                   <div class="chk-label" style="margin-bottom: 5px; color: #ffeb3b;"><input type="checkbox" v-model="sensor.ui_alert_wireless.use_auto_task" /> ⚡ Tarea Auto-Remediación</div>
+                                   <select v-if="sensor.ui_alert_wireless.use_auto_task" v-model="sensor.ui_alert_wireless.trigger_task_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                       <option :value="null">-- Seleccionar Tarea --</option>
+                                       <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                   </select>
                                 </div>
                             </div>
 
@@ -835,6 +865,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_system.enabled" /> Alerta Recursos Elevados/Reinicio</div>
                                 <div v-if="sensor.ui_alert_system.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                    <select v-model="sensor.ui_alert_system.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                   
+                                   <div class="chk-label" style="margin-bottom: 5px; color: #ffeb3b;"><input type="checkbox" v-model="sensor.ui_alert_system.use_auto_task" /> ⚡ Tarea Auto-Remediación</div>
+                                   <select v-if="sensor.ui_alert_system.use_auto_task" v-model="sensor.ui_alert_system.trigger_task_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                       <option :value="null">-- Seleccionar Tarea --</option>
+                                       <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                   </select>
                                 </div>
                             </div>
                         </div>
@@ -942,6 +978,13 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <div class="chk-label"><input type="checkbox" v-model="sensor.ui_alert_timeout.enabled" /> Alerta Timeout</div>
                                 <div v-if="sensor.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                     <select v-model="sensor.ui_alert_timeout.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                    
+                                    <div class="chk-label" style="margin-bottom: 5px; color: #ffeb3b;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_auto_task" /> ⚡ Tarea Auto-Remediación</div>
+                                    <select v-if="sensor.ui_alert_timeout.use_auto_task" v-model="sensor.ui_alert_timeout.trigger_task_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                        <option :value="null">-- Seleccionar Tarea --</option>
+                                        <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                    </select>
+
                                     <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_timeout.use_custom_message" /> ✏️ Msj. Alerta</div>
                                     <textarea v-if="sensor.ui_alert_timeout.use_custom_message" v-model="sensor.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} no responde. {status}"></textarea>
                                 </div>
@@ -952,6 +995,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.enabled" /> Alerta Desconexión</div>
                                 <div v-if="sensor.ui_alert_speed_change.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                    <select v-model="sensor.ui_alert_speed_change.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                   
+                                   <div class="chk-label" style="margin-bottom: 5px; color: #ffeb3b;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_auto_task" /> ⚡ Tarea Auto-Remediación</div>
+                                   <select v-if="sensor.ui_alert_speed_change.use_auto_task" v-model="sensor.ui_alert_speed_change.trigger_task_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                       <option :value="null">-- Seleccionar Tarea --</option>
+                                       <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                   </select>
                                 </div>
                             </div>
 
@@ -960,6 +1009,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_wireless.enabled" /> Alerta Estado Degradado/Caído</div>
                                 <div v-if="sensor.ui_alert_wireless.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                    <select v-model="sensor.ui_alert_wireless.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                   
+                                   <div class="chk-label" style="margin-bottom: 5px; color: #ffeb3b;"><input type="checkbox" v-model="sensor.ui_alert_wireless.use_auto_task" /> ⚡ Tarea Auto-Remediación</div>
+                                   <select v-if="sensor.ui_alert_wireless.use_auto_task" v-model="sensor.ui_alert_wireless.trigger_task_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                       <option :value="null">-- Seleccionar Tarea --</option>
+                                       <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                   </select>
                                 </div>
                             </div>
 
@@ -967,6 +1022,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 <div class="chk-label" style="margin-top:8px;"><input type="checkbox" v-model="sensor.ui_alert_system.enabled" /> Alerta Recursos Elevados/Reinicio</div>
                                 <div v-if="sensor.ui_alert_system.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
                                    <select v-model="sensor.ui_alert_system.channel_id" class="mini-select" style="width: 100%; margin-bottom: 5px;"><option :value="null">-- Seleccionar Canal --</option><option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+                                   
+                                   <div class="chk-label" style="margin-bottom: 5px; color: #ffeb3b;"><input type="checkbox" v-model="sensor.ui_alert_system.use_auto_task" /> ⚡ Tarea Auto-Remediación</div>
+                                   <select v-if="sensor.ui_alert_system.use_auto_task" v-model="sensor.ui_alert_system.trigger_task_id" class="mini-select" style="width: 100%; margin-bottom: 5px;">
+                                       <option :value="null">-- Seleccionar Tarea --</option>
+                                       <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                   </select>
                                 </div>
                             </div>
 

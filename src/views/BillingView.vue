@@ -135,7 +135,7 @@ const extraVpns = ref(0)
 
 // Configuración de Entorno
 const isProd = import.meta.env.PROD || window.location.hostname !== 'localhost'
-const API_BASE = isProd ? 'https://api.monitor360.media' : 'http://localhost:8000'
+const API_BASE = isProd ? 'https://api.monitorwisp.com' : 'http://localhost:8000'
 
 // Cálculos Dinámicos
 const totalDevices = computed(() => 1000 + (extraDevices.value * 1000))

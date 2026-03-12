@@ -204,7 +204,7 @@ onBeforeUnmount(() => {
         <div class="footer-links">
           <router-link to="/terms">Términos y Condiciones</router-link>
           <router-link to="/privacy">Política de Privacidad</router-link>
-          <a href="mailto:soporte@monitor360.media">Soporte Técnico</a>
+          <a href="mailto:support@monitorwisp.com">Soporte Técnico</a>
         </div>
       </div>
     </footer>

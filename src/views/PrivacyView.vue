@@ -70,7 +70,7 @@
           <h3>7. Contacto</h3>
           <p>
             Para consultas sobre su privacidad, contáctenos en: 
-            <a href="mailto:soporte@monitor360.media">soporte@monitor360.media</a>
+            <a href="mailto:support@monitorwisp.com">support@monitorwisp.com</a>
           </p>
         </div>
       </section>
