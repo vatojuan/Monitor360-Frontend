@@ -61,9 +61,20 @@
             <small v-if="provider === 'google'" class="helper-text text-warning">
               Iniciaste sesión con Google. El correo no se puede modificar.
             </small>
+            <small v-else class="helper-text">
+              Si modificas el correo, deberás verificarlo mediante un enlace que te enviaremos.
+            </small>
           </div>
 
-          <button class="btn-primary" @click="saveProfile" :disabled="isSaving">
+          <div class="form-group" v-if="provider !== 'google'">
+            <label>Contraseña</label>
+            <button class="btn-secondary" style="width: fit-content;" @click="resetPassword" :disabled="isResettingPassword">
+              <span v-if="isResettingPassword" class="spinner-small"></span>
+              {{ isResettingPassword ? 'Enviando correo...' : '🔒 Restablecer Contraseña' }}
+            </button>
+          </div>
+
+          <button class="btn-primary" @click="saveProfile" :disabled="isSaving" style="margin-top: 10px;">
             {{ isSaving ? 'Guardando...' : 'Guardar Cambios' }}
           </button>
         </div>
@@ -191,6 +202,7 @@ const router = useRouter()
 const isLoading = ref(true)
 const isSaving = ref(false)
 const isUploading = ref(false)
+const isResettingPassword = ref(false) // Nuevo estado para contraseña
 const notification = ref({ show: false, message: '', type: 'success' })
 
 const fileInputRef = ref(null)
@@ -201,6 +213,7 @@ const deleteConfirmationText = ref('')
 const isDeleting = ref(false)
 
 // Estructura de Datos
+const originalEmail = ref('') // Guardamos el correo original para detectar cambios
 const profile = ref({
   id: '',
   full_name: '',
@@ -241,6 +254,7 @@ const fetchAccountData = async () => {
     const { data } = await api.get('/account/me')
     
     profile.value = data.profile || profile.value
+    originalEmail.value = profile.value.email // Guardamos correo actual
     provider.value = data.provider
     billing.value = data.billing
 
@@ -259,25 +273,57 @@ const fetchAccountData = async () => {
   }
 }
 
-// 2. Guardar Cambios (Nombre, Idioma, etc)
+// 2. Guardar Cambios (Nombre, Correo, Idioma, etc)
 const saveProfile = async () => {
   isSaving.value = true
   try {
+    let emailMessage = ''
+    
+    // Si el usuario modificó el correo y no es de Google, notificamos a Supabase
+    if (provider.value !== 'google' && profile.value.email !== originalEmail.value) {
+      const { error: authError } = await supabase.auth.updateUser({ email: profile.value.email })
+      
+      if (authError) throw authError
+      
+      emailMessage = ' Se ha enviado un enlace de confirmación a tu nueva dirección de correo.'
+      originalEmail.value = profile.value.email // Evitamos múltiples envíos
+    }
+
+    // Guardamos el resto de las preferencias en nuestro Backend
     await api.patch('/account/me', {
       full_name: profile.value.full_name,
       language: profile.value.language,
       timezone: profile.value.timezone
     })
-    showNotification('Perfil actualizado correctamente.')
+    
+    showNotification(`Perfil actualizado correctamente.${emailMessage}`)
   } catch (error) {
     console.error('Error guardando perfil:', error)
-    showNotification('Error al guardar los cambios.', 'error')
+    const errorMsg = error.message || 'Error al guardar los cambios.'
+    showNotification(errorMsg, 'error')
   } finally {
     isSaving.value = false
   }
 }
 
-// 3. Subir Avatar a Supabase Storage Directamente
+// 3. Restablecer Contraseña
+const resetPassword = async () => {
+  isResettingPassword.value = true
+  try {
+    // Supabase envía el correo al email original (por seguridad)
+    const { error } = await supabase.auth.resetPasswordForEmail(originalEmail.value)
+    if (error) throw error
+    
+    showNotification('Te hemos enviado un correo con instrucciones para cambiar tu contraseña.')
+  } catch (error) {
+    console.error('Error enviando reseteo:', error)
+    showNotification('Error al enviar el correo. Inténtalo de nuevo más tarde.', 'error')
+  } finally {
+    isResettingPassword.value = false
+  }
+}
+
+// 4. Subir Avatar a Supabase Storage Directamente
 const triggerFileInput = () => {
   fileInputRef.value.click()
 }
@@ -323,7 +369,7 @@ const handleFileUpload = async (event) => {
   }
 }
 
-// 4. Lógica de Eliminación de Cuenta
+// 5. Lógica de Eliminación de Cuenta
 const openDeleteModal = () => {
   deleteConfirmationText.value = ''
   showDeleteModal.value = true
@@ -340,7 +386,6 @@ const deleteAccount = async () => {
   try {
     await api.delete('/account/me')
     
-    // Si la API responde OK, cerramos la sesión localmente
     showNotification('Cuenta eliminada correctamente. Redirigiendo...', 'success')
     
     await supabase.auth.signOut()
