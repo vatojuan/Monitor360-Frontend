@@ -124,6 +124,7 @@ const vpnProfiles = ref([])
 const channels = ref([]) 
 const isLoading = ref(false)
 const isCreating = ref(false)
+const isEnablingDesktop = ref(false) // Estado de carga para el botón de PC
 
 const showLimitModal = ref(false)
 const limitMessage = ref('')
@@ -230,7 +231,7 @@ async function createAutoProfile() {
 
     vpnProfiles.value.unshift({ ...savedProfile, _expanded: true })
     newProfile.value = { name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' }
-    showNotification('Perfil creado y activado.', 'success')
+    showNotification('Perfil de Router creado y activado.', 'success')
 
   } catch (err) {
     if (err?.response?.status === 403 || err?.response?.status === 402) {
@@ -241,6 +242,28 @@ async function createAutoProfile() {
     }
   } finally {
     isCreating.value = false
+  }
+}
+
+// NUEVO: Lógica para el botón global "Habilitar Acceso desde PC"
+async function enableDesktopAccess() {
+  isEnablingDesktop.value = true
+  try {
+    const { data } = await api.post('/vpns/desktop/ensure')
+    
+    // Si el endpoint devuelve el ID, significa que ya existía o se creó exitosamente.
+    if (data && data.id) {
+      showNotification('✅ Acceso desde PC habilitado. Ya puedes conectar la App de Escritorio.', 'success')
+    }
+  } catch (err) {
+    if (err?.response?.status === 403 || err?.response?.status === 402) {
+      limitMessage.value = err?.response?.data?.detail || 'Límite de PCs de escritorio alcanzado. Mejora tu plan.'
+      showLimitModal.value = true
+    } else {
+      showNotification(getAxiosErr(err), 'error')
+    }
+  } finally {
+    isEnablingDesktop.value = false
   }
 }
 
@@ -256,7 +279,6 @@ async function updateVpnAlerts(profile) {
   }
 }
 
-// NUEVO: Función para actualizar específicamente las rutas
 async function updateVpnRoutes(profile) {
   try {
     await api.put(`/vpns/${profile.id}`, {
@@ -363,14 +385,28 @@ onMounted(async () => {
 <template>
   <div class="page-wrap">
     <div class="header-section">
-      <h1>Gestión VPN</h1>
-      <p>Administra los túneles WireGuard para tus dispositivos remotos.</p>
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <div>
+          <h1>Gestión VPN</h1>
+          <p>Administra los túneles WireGuard para tus dispositivos remotos.</p>
+        </div>
+        <button 
+          class="btn-outline-primary" 
+          @click="enableDesktopAccess" 
+          :disabled="isEnablingDesktop"
+          style="display: flex; align-items: center; gap: 8px; padding: 0.6rem 1.2rem; border-radius: 8px;"
+        >
+          <span v-if="isEnablingDesktop" class="spinner" style="margin: 0; width: 14px; height: 14px;"></span>
+          <span v-else>💻</span>
+          {{ isEnablingDesktop ? 'Configurando...' : 'Habilitar Acceso desde PC' }}
+        </button>
+      </div>
     </div>
 
     <section class="control-section">
       <div class="section-title">
         <i class="icon">🚀</i>
-        <h3>Nuevo Cliente</h3>
+        <h3>Nuevo Cliente (Router)</h3>
       </div>
 
       <div class="create-form-grid">
@@ -423,7 +459,7 @@ onMounted(async () => {
     <section class="control-section">
       <div class="section-title">
         <i class="icon">📡</i>
-        <h3>Perfiles Activos</h3>
+        <h3>Perfiles Activos (Routers)</h3>
       </div>
 
       <div v-if="isLoading" class="loading-state">
@@ -505,7 +541,7 @@ onMounted(async () => {
               </div>
 
               <div class="form-group" style="margin-top: 1.2rem;">
-                <label style="color: var(--blue);">Redes alcanzables (Rutas a inyectar en Hetzner)</label>
+                <label style="color: var(--blue);">Redes alcanzables (Rutas para acceso desde PC)</label>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.2rem;">
                   <input type="text" v-model="p.allowed_ips" placeholder="Ej: 192.168.80.0/24" style="flex: 1;" />
                   <button class="btn-secondary" style="padding: 0 1.5rem;" @click="updateVpnRoutes(p)">💾 Guardar</button>
@@ -763,6 +799,19 @@ button {
 .btn-ping:hover {
   border-color: var(--blue);
   background: rgba(59, 130, 246, 0.1);
+}
+.btn-outline-primary {
+  background-color: transparent;
+  border: 1px solid var(--blue);
+  color: var(--blue);
+  padding: 0.5rem 1rem;
+}
+.btn-outline-primary:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+.btn-outline-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* LISTADO DE TARJETAS */
