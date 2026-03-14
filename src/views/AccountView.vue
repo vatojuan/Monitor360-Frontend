@@ -113,7 +113,9 @@
         <section class="account-card limits-card">
           <div class="card-header">
             <h2>Consumo del Plan</h2>
-            <span :class="['status-badge', billing.status]">{{ billing.status.toUpperCase() }}</span>
+            <span :class="['status-badge', billing.devices.max === 0 ? 'no_plan' : billing.status]">
+              {{ billing.devices.max === 0 ? 'SIN PLAN' : billing.status.toUpperCase() }}
+            </span>
           </div>
           
           <div class="card-body">
@@ -625,6 +627,7 @@ onMounted(() => {
 .status-badge.active { background: rgba(35, 134, 54, 0.2); color: #3fb950; border: 1px solid #238636; }
 .status-badge.past_due { background: rgba(210, 153, 34, 0.2); color: #d29922; border: 1px solid #d29922; }
 .status-badge.canceled { background: rgba(248, 81, 73, 0.2); color: #ff7b72; border: 1px solid #f85149; }
+.status-badge.no_plan { background: rgba(139, 148, 158, 0.2); color: #8b949e; border: 1px solid #8b949e; }
 
 /* ========================================================= */
 /* BOTONES Y ZONA DE PELIGRO                                 */
