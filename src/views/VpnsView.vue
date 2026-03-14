@@ -113,7 +113,7 @@ const channels = ref([])
 const isLoading = ref(false)
 const isCreating = ref(false)
 
-// NUEVO: Array de perfiles de escritorio (Apps)
+// Array de perfiles de escritorio (Apps)
 const desktopProfiles = ref([]) 
 const isEnablingDesktop = ref(false)
 
@@ -236,12 +236,11 @@ async function createAutoProfile() {
   }
 }
 
-// ==== NUEVAS ACCIONES: LISTA DE AUTORIZACIÓN DINÁMICA ====
+// ==== ACCIONES: LISTA DE AUTORIZACIÓN DINÁMICA ====
 
 async function fetchDesktopProfiles() {
   try {
     const { data } = await api.get('/vpns/desktop/profiles')
-    // Agregamos propiedad _isToggling a cada perfil para manejar loadings individuales
     desktopProfiles.value = (data || []).map(p => ({ ...p, _isToggling: false }))
   } catch (err) {
     console.error("Error verificando accesos desktop:", err)
@@ -315,6 +314,7 @@ async function toggleDesktopPower(profile) {
       active_device: profile.active_device
     })
     profile.is_active = nextState
+    if(!nextState) profile.is_in_use_by_pc = false // Limpia el indicador visual
     showNotification(nextState ? 'Conexión Permitida' : 'Conexión Bloqueada', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
@@ -332,6 +332,7 @@ async function switchDesktopDevice(profile, device) {
       active_device: device
     })
     profile.active_device = device
+    if(device === 'mobile') profile.is_in_use_by_pc = false // Limpia el indicador visual de PC
     showNotification(`Permiso transferido al ${device === 'mobile' ? 'Móvil' : 'Escritorio'}`, 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
@@ -340,7 +341,7 @@ async function switchDesktopDevice(profile, device) {
   }
 }
 
-// NUEVO: Función que enruta el dispositivo móvil hacia un Router específico
+// Función que enruta el dispositivo móvil hacia un Router específico
 async function routeMobileToTarget(profile) {
   if (!profile.linked_target_id) return
   profile._isToggling = true
@@ -350,6 +351,21 @@ async function routeMobileToTarget(profile) {
       target_profile_id: profile.linked_target_id
     })
     showNotification('✅ Ruteo del móvil actualizado en el servidor.', 'success')
+  } catch (err) {
+    showNotification(getAxiosErr(err), 'error')
+  } finally {
+    profile._isToggling = false
+  }
+}
+
+// NUEVO: Botón de pánico para forzar liberación de Slot de PC
+async function forceReleaseDesktop(profile) {
+  if (!confirm('¿Forzar la liberación de este slot? Si el técnico está trabajando, se le desconectará la sesión.')) return
+  profile._isToggling = true
+  try {
+    await api.post(`/vpns/desktop/${profile.id}/force-release`)
+    profile.is_in_use_by_pc = false
+    showNotification('Slot liberado correctamente.', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
   } finally {
@@ -453,7 +469,7 @@ function proposeProfileName(iniText) {
 onMounted(async () => {
   await fetchChannels() 
   await fetchVpnProfiles()
-  await fetchDesktopProfiles() // Ahora cargamos la lista
+  await fetchDesktopProfiles() 
 
   watch(
     () => newProfile.value.config_data,
@@ -720,6 +736,18 @@ onMounted(async () => {
           </div>
           
           <div class="desktop-actions">
+            <div v-if="dProfile.is_in_use_by_pc" class="in-use-indicator">
+              <span class="pulsing-dot"></span>
+              En uso por PC
+              <button 
+                class="force-release-btn" 
+                @click="forceReleaseDesktop(dProfile)"
+                title="Forzar desconexión de la App de Escritorio"
+              >
+                🛟 Forzar Liberación
+              </button>
+            </div>
+
             <label class="toggle-label" :class="{ 'text-disabled': dProfile._isToggling }">
               <span style="font-size: 0.85rem; color: var(--gray);">Permitir Conexión:</span>
               <input 
@@ -953,6 +981,45 @@ onMounted(async () => {
 .small-icon-btn {
   padding: 0.4rem 0.6rem;
   font-size: 1.1rem;
+}
+
+/* INDICADOR DE USO Y BOTÓN DE RESCATE */
+.in-use-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--red);
+  padding: 0.3rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  color: var(--red);
+  font-weight: bold;
+}
+.pulsing-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--red);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+.force-release-btn {
+  background: transparent;
+  border: 1px dashed var(--red);
+  color: var(--red);
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  margin-left: 0.5rem;
+}
+.force-release-btn:hover {
+  background: var(--red);
+  color: white;
 }
 
 .dynamic-auth-body {
@@ -1498,6 +1565,11 @@ textarea {
   }
   .desktop-actions {
     justify-content: space-between;
+  }
+  .in-use-indicator {
+    width: 100%;
+    justify-content: center;
+    margin-bottom: 1rem;
   }
   .qr-container {
     flex-direction: column;
