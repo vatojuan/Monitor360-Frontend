@@ -30,7 +30,7 @@ const newChannel = ref({
   name: '',
   timezone: 'America/Argentina/Buenos_Aires', // Valor por defecto
   webhook: { url: '' },
-  telegram: { bot_token: '' }, // Simplificado, ya no pide chat_id al crear
+  telegram: { bot_token: '', bot_role: 'alert_only' }, // Añadido bot_role por defecto
 })
 
 const isTestingChannel = ref(false)
@@ -71,6 +71,13 @@ function formatDate(isoString) {
   }
 }
 
+// NUEVO: Formateador para mostrar el rol del bot de forma amigable
+function formatBotRole(role) {
+  if (role === 'alert_only') return 'Solo Alertas'
+  if (role === 'consultant') return 'Consultor NOC'
+  return 'Híbrido'
+}
+
 async function fetchChannels() {
   try {
     const { data } = await api.get('/channels')
@@ -107,7 +114,7 @@ async function handleAddChannel() {
       },
     }
   } else {
-    // telegram (SIMPLIFICADO)
+    // telegram (SIMPLIFICADO Y CON ROLES)
     if (!newChannel.value.name.trim() || !newChannel.value.telegram.bot_token.trim()) {
       return showNotification('Nombre y Bot Token son obligatorios.', 'error')
     }
@@ -117,6 +124,7 @@ async function handleAddChannel() {
       config: {
         bot_token: newChannel.value.telegram.bot_token.trim(),
         timezone: newChannel.value.timezone,
+        bot_role: newChannel.value.telegram.bot_role, // <-- NUEVO: Se envía el rol a la DB
         authorized_chats: [], // Se inicializa vacío, la gente pide acceso por el bot
         pending_requests: []
       },
@@ -131,7 +139,7 @@ async function handleAddChannel() {
       name: '',
       timezone: 'America/Argentina/Buenos_Aires',
       webhook: { url: '' },
-      telegram: { bot_token: '' },
+      telegram: { bot_token: '', bot_role: 'alert_only' },
     }
     fetchChannels()
   } catch (err) {
@@ -286,6 +294,13 @@ function formatHistoryDetails(details) {
               required
             />
 
+            <label>Rol del Bot</label>
+            <select v-model="newChannel.telegram.bot_role" required>
+              <option value="alert_only">Canal de Alertas (Solo envía notificaciones)</option>
+              <option value="consultant">Consultor de Estado NOC (Interactivo)</option>
+              <option value="both">Híbrido (Alertas y Consultas)</option>
+            </select>
+
             <label>Zona Horaria</label>
             <select v-model="newChannel.timezone" required>
               <option v-for="tz in commonTimezones" :key="tz" :value="tz">{{ tz }}</option>
@@ -320,6 +335,11 @@ function formatHistoryDetails(details) {
                 <div class="item-info">
                   <strong>{{ channel.name }}</strong>
                   <span class="channel-type-badge" :class="channel.type">{{ channel.type }}</span>
+                  
+                  <span v-if="channel.type === 'telegram'" class="role-badge" :class="channel.config?.bot_role || 'both'">
+                    {{ formatBotRole(channel.config?.bot_role || 'both') }}
+                  </span>
+
                   <span style="font-size: 0.8rem; color: #888; margin-left: 0.5rem">
                     ({{ channel.config?.timezone || 'UTC' }})
                   </span>
@@ -514,6 +534,7 @@ function formatHistoryDetails(details) {
   align-items: center;
   gap: 1rem;
   overflow: hidden;
+  flex-wrap: wrap; /* Permitir wrap si el nombre es muy largo */
 }
 .item-info strong {
   color: white;
@@ -678,6 +699,19 @@ function formatHistoryDetails(details) {
 }
 .channel-type-badge.webhook { background-color: var(--blue); }
 .channel-type-badge.telegram { background-color: #34a8de; }
+
+/* NUEVO ESTILO: Badge del Rol del Bot */
+.role-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  background-color: var(--bg-color);
+  border: 1px solid var(--gray);
+  color: var(--gray);
+}
+.role-badge.alert_only { border-color: var(--error-red); color: var(--error-red); }
+.role-badge.consultant { border-color: var(--green); color: var(--green); }
+.role-badge.both { border-color: var(--blue); color: var(--blue); }
 
 .form-hint-box {
   background-color: var(--bg-color);
