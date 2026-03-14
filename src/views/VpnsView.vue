@@ -3,7 +3,7 @@ import { ref, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { addWsListener, connectWebSocketWhenAuthenticated, removeWsListener } from '@/lib/ws'
-// NUEVO: Importar librería de QR
+// Importar librería de QR
 import QrcodeVue from 'qrcode.vue'
 
 const router = useRouter()
@@ -106,19 +106,6 @@ async function copyToClipboard(text) {
   }
 }
 
-function downloadConfFile(name, content) {
-  const filename = `${(name || 'vpn').replace(/\s+/g, '_')}.conf`
-  const blob = new Blob([content], { type: 'text/plain' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
-
 /* ====== Estado UI ====== */
 const newProfile = ref({ name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' })
 const vpnProfiles = ref([])
@@ -126,10 +113,9 @@ const channels = ref([])
 const isLoading = ref(false)
 const isCreating = ref(false)
 
-// NUEVO: Modificado para contener el objeto completo de Escritorio/Móvil
-const desktopProfile = ref(null) 
+// NUEVO: Array de perfiles de escritorio (Apps)
+const desktopProfiles = ref([]) 
 const isEnablingDesktop = ref(false)
-const isTogglingDesktop = ref(false)
 
 const showLimitModal = ref(false)
 const limitMessage = ref('')
@@ -250,29 +236,27 @@ async function createAutoProfile() {
   }
 }
 
-// ==== NUEVAS ACCIONES: AUTORIZACIÓN DINÁMICA ====
-async function checkDesktopStatus() {
+// ==== NUEVAS ACCIONES: LISTA DE AUTORIZACIÓN DINÁMICA ====
+
+async function fetchDesktopProfiles() {
   try {
-    const { data } = await api.post('/vpns/desktop/ensure')
-    if (data && data.id) {
-      desktopProfile.value = data
-    }
+    const { data } = await api.get('/vpns/desktop/profiles')
+    // Agregamos propiedad _isToggling a cada perfil para manejar loadings individuales
+    desktopProfiles.value = (data || []).map(p => ({ ...p, _isToggling: false }))
   } catch (err) {
-    console.error("Error verificando acceso desktop:", err)
+    console.error("Error verificando accesos desktop:", err)
   }
 }
 
-async function enableDesktopAccess() {
+async function addDesktopProfile() {
   isEnablingDesktop.value = true
   try {
     const { data } = await api.post('/vpns/desktop/ensure')
-    if (data && data.id) {
-      desktopProfile.value = data
-      showNotification('✅ Acceso a Aplicaciones Habilitado.', 'success')
-    }
+    desktopProfiles.value.push({ ...data, _isToggling: false })
+    showNotification('✅ Nuevo acceso a aplicación agregado.', 'success')
   } catch (err) {
     if (err?.response?.status === 403 || err?.response?.status === 402) {
-      limitMessage.value = err?.response?.data?.detail || 'Límite de PCs de escritorio alcanzado. Mejora tu plan.'
+      limitMessage.value = err?.response?.data?.detail || 'Límite de accesos para aplicaciones alcanzado. Mejora tu plan.'
       showLimitModal.value = true
     } else {
       showNotification(getAxiosErr(err), 'error')
@@ -282,13 +266,13 @@ async function enableDesktopAccess() {
   }
 }
 
-async function disableDesktopAccess() {
-  if (!confirm('¿Borrar definitivamente el acceso a App de Escritorio y Móvil?')) return
+async function deleteAllDesktopProfiles() {
+  if (!confirm('¿Borrar definitivamente TODOS los accesos a Apps de Escritorio y Móvil?')) return
   isEnablingDesktop.value = true
   try {
-    await api.delete(`/vpns/${desktopProfile.value.id}`)
-    desktopProfile.value = null
-    showNotification('💻 Acceso deshabilitado y borrado.', 'success')
+    await api.delete(`/vpns/desktop/all`)
+    desktopProfiles.value = []
+    showNotification('💻 Todos los accesos deshabilitados y borrados.', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
   } finally {
@@ -296,52 +280,78 @@ async function disableDesktopAccess() {
   }
 }
 
-async function toggleDesktopPower() {
-  isTogglingDesktop.value = true
-  const nextState = !desktopProfile.value.is_active
+async function deleteSingleDesktopProfile(profile) {
+  if (!confirm(`¿Eliminar el acceso "${profile.name}"?`)) return
+  profile._isToggling = true
   try {
-    await api.post(`/vpns/desktop/${desktopProfile.value.id}/toggle`, {
-      is_active: nextState,
-      active_device: desktopProfile.value.active_device
-    })
-    desktopProfile.value.is_active = nextState
-    showNotification(nextState ? 'VPN Encendida' : 'VPN Apagada', 'success')
+    await api.delete(`/vpns/${profile.id}`)
+    desktopProfiles.value = desktopProfiles.value.filter(p => p.id !== profile.id)
+    showNotification('Acceso eliminado.', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
-  } finally {
-    isTogglingDesktop.value = false
+    profile._isToggling = false
   }
 }
 
-async function switchDesktopDevice(device) {
-  if (desktopProfile.value.active_device === device) return
-  isTogglingDesktop.value = true
+async function updateDesktopProfileName(profile) {
+  if (!profile.name.trim()) return
+  profile._isToggling = true
   try {
-    await api.post(`/vpns/desktop/${desktopProfile.value.id}/toggle`, {
-      is_active: desktopProfile.value.is_active,
+    await api.put(`/vpns/${profile.id}`, { name: profile.name })
+    showNotification('Nombre guardado', 'success')
+  } catch (err) {
+    showNotification(getAxiosErr(err), 'error')
+  } finally {
+    profile._isToggling = false
+  }
+}
+
+async function toggleDesktopPower(profile) {
+  profile._isToggling = true
+  const nextState = !profile.is_active
+  try {
+    await api.post(`/vpns/desktop/${profile.id}/toggle`, {
+      is_active: nextState,
+      active_device: profile.active_device
+    })
+    profile.is_active = nextState
+    showNotification(nextState ? 'Conexión Permitida' : 'Conexión Bloqueada', 'success')
+  } catch (err) {
+    showNotification(getAxiosErr(err), 'error')
+  } finally {
+    profile._isToggling = false
+  }
+}
+
+async function switchDesktopDevice(profile, device) {
+  if (profile.active_device === device) return
+  profile._isToggling = true
+  try {
+    await api.post(`/vpns/desktop/${profile.id}/toggle`, {
+      is_active: profile.is_active,
       active_device: device
     })
-    desktopProfile.value.active_device = device
+    profile.active_device = device
     showNotification(`Permiso transferido al ${device === 'mobile' ? 'Móvil' : 'Escritorio'}`, 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
   } finally {
-    isTogglingDesktop.value = false
+    profile._isToggling = false
   }
 }
 
-async function revokeMobileKeys() {
+async function revokeMobileKeys(profile) {
   if (!confirm('¿Generar nuevo código QR? El móvil actual perderá acceso inmediatamente.')) return
-  isTogglingDesktop.value = true
+  profile._isToggling = true
   try {
-    const { data } = await api.post(`/vpns/desktop/${desktopProfile.value.id}/revoke-mobile`)
-    desktopProfile.value.mobile_config_data = data.mobile_config_data
-    desktopProfile.value.mobile_public_key = data.mobile_public_key
+    const { data } = await api.post(`/vpns/desktop/${profile.id}/revoke-mobile`)
+    profile.mobile_config_data = data.mobile_config_data
+    profile.mobile_public_key = data.mobile_public_key
     showNotification('QR regenerado. El dispositivo anterior fue desconectado.', 'success')
   } catch (err) {
     showNotification(getAxiosErr(err), 'error')
   } finally {
-    isTogglingDesktop.value = false
+    profile._isToggling = false
   }
 }
 
@@ -426,7 +436,7 @@ function proposeProfileName(iniText) {
 onMounted(async () => {
   await fetchChannels() 
   await fetchVpnProfiles()
-  await checkDesktopStatus()
+  await fetchDesktopProfiles() // Ahora cargamos la lista
 
   watch(
     () => newProfile.value.config_data,
@@ -460,108 +470,30 @@ onMounted(async () => {
           <h1>Gestión VPN</h1>
           <p>Administra los túneles WireGuard para tus dispositivos remotos.</p>
         </div>
-        <button 
-          :class="desktopProfile ? 'btn-outline-danger' : 'btn-outline-primary'" 
-          @click="desktopProfile ? disableDesktopAccess() : enableDesktopAccess()" 
-          :disabled="isEnablingDesktop"
-          style="display: flex; align-items: center; gap: 8px; padding: 0.6rem 1.2rem; border-radius: 8px;"
-        >
-          <span v-if="isEnablingDesktop" class="spinner" style="margin: 0; width: 14px; height: 14px;"></span>
-          <template v-else>
-            <span>💻</span>
-            {{ desktopProfile ? 'Eliminar Acceso a Apps' : 'Habilitar Acceso a Apps' }}
-          </template>
-        </button>
+        <div style="display: flex; gap: 10px;">
+          <button 
+            v-if="desktopProfiles.length > 0"
+            class="btn-outline-danger" 
+            @click="deleteAllDesktopProfiles()" 
+            :disabled="isEnablingDesktop"
+            style="display: flex; align-items: center; gap: 8px; padding: 0.6rem 1.2rem; border-radius: 8px;"
+          >
+            <span v-if="isEnablingDesktop" class="spinner" style="margin: 0; width: 14px; height: 14px;"></span>
+            <template v-else>🗑️ Eliminar Todos</template>
+          </button>
+
+          <button 
+            class="btn-outline-primary" 
+            @click="addDesktopProfile()" 
+            :disabled="isEnablingDesktop"
+            style="display: flex; align-items: center; gap: 8px; padding: 0.6rem 1.2rem; border-radius: 8px;"
+          >
+            <span v-if="isEnablingDesktop" class="spinner" style="margin: 0; width: 14px; height: 14px;"></span>
+            <template v-else>➕ Agregar Acceso a App</template>
+          </button>
+        </div>
       </div>
     </div>
-
-    <section v-if="desktopProfile" class="control-section auth-dynamic-panel">
-      <div class="section-title">
-        <i class="icon">📱</i>
-        <h3>Acceso Seguro a Apps (Escritorio / Móvil)</h3>
-        
-        <div class="power-switch-container" style="margin-left: auto;">
-          <label class="toggle-label" :class="{ 'text-disabled': isTogglingDesktop }">
-            <span style="font-size: 0.85rem; color: var(--gray);">Permitir Conexión:</span>
-            <input 
-              type="checkbox" 
-              :checked="desktopProfile.is_active" 
-              @change="toggleDesktopPower" 
-              :disabled="isTogglingDesktop"
-            />
-          </label>
-        </div>
-      </div>
-
-      <div class="dynamic-auth-body" :class="{ 'is-disabled': !desktopProfile.is_active }">
-        <p class="info-text">
-          Selecciona en qué dispositivo quieres usar la VPN. Solo un dispositivo puede estar activo a la vez para garantizar el ruteo seguro.
-        </p>
-
-        <div class="device-switcher">
-          <button 
-            class="switch-btn" 
-            :class="{ 'active': desktopProfile.active_device === 'desktop' }"
-            @click="switchDesktopDevice('desktop')"
-            :disabled="isTogglingDesktop || !desktopProfile.is_active"
-          >
-            💻 App de Escritorio
-          </button>
-          <button 
-            class="switch-btn" 
-            :class="{ 'active': desktopProfile.active_device === 'mobile' }"
-            @click="switchDesktopDevice('mobile')"
-            :disabled="isTogglingDesktop || !desktopProfile.is_active"
-          >
-            📱 App Móvil (QR)
-          </button>
-        </div>
-
-        <transition name="fade">
-          <div v-if="desktopProfile.active_device === 'mobile'" class="qr-container">
-            <div class="qr-box">
-              <qrcode-vue 
-                v-if="desktopProfile.mobile_config_data" 
-                :value="desktopProfile.mobile_config_data" 
-                :size="180" 
-                level="M" 
-                render-as="svg" 
-              />
-              <span v-else class="spinner"></span>
-            </div>
-            <div class="qr-instructions">
-              <h4>Cómo usar en tu móvil</h4>
-              <ol>
-                <li>Descarga la app oficial <strong>WireGuard</strong> (iOS / Android).</li>
-                <li>Toca el botón <strong>+</strong> y selecciona <strong>"Escanear código QR"</strong>.</li>
-                <li>Apunta la cámara a este código y ponle un nombre (ej. Monitor360).</li>
-              </ol>
-              <button 
-                class="btn-danger small" 
-                style="margin-top: 1rem; align-self: flex-start;" 
-                @click="revokeMobileKeys"
-                :disabled="isTogglingDesktop"
-              >
-                ⚠️ Revocar QR actual
-              </button>
-            </div>
-          </div>
-        </transition>
-
-        <transition name="fade">
-          <div v-if="desktopProfile.active_device === 'desktop'" class="desktop-instructions">
-            <div class="status-box-ok">
-              <span style="font-size: 1.5rem;">✅</span>
-              <div>
-                <h4>Permiso concedido a la App de Escritorio</h4>
-                <p style="margin: 0; font-size: 0.9rem; color: var(--gray);">La aplicación de Windows ahora tiene acceso al túnel. Puedes ir allí y hacer clic en "Conectar".</p>
-              </div>
-            </div>
-          </div>
-        </transition>
-
-      </div>
-    </section>
 
     <section class="control-section">
       <div class="section-title">
@@ -652,14 +584,8 @@ onMounted(async () => {
           <div v-if="p._expanded" class="vpn-body">
             <div class="toolbar">
               <div class="tool-group">
-                <button
-                  class="btn-secondary small"
-                  @click="downloadConfFile(p.name, p.config_data)"
-                >
-                  ⬇️ Config
-                </button>
                 <button class="btn-secondary small" @click="copyMikrotikScript(p.config_data)">
-                  📋 Script ROS
+                  📋 Copiar Script ROS
                 </button>
               </div>
 
@@ -738,16 +664,10 @@ onMounted(async () => {
             </transition>
 
             <details class="tech-details">
-              <summary>Ver Código y Configuración</summary>
-              <div class="code-grid">
-                <div class="code-block">
-                  <label>Script MikroTik</label>
-                  <textarea readonly :value="buildMikrotikCmdFromIni(p.config_data)"></textarea>
-                </div>
-                <div class="code-block">
-                  <label>WireGuard .conf</label>
-                  <textarea readonly :value="p.config_data"></textarea>
-                </div>
+              <summary>Ver Script ROS</summary>
+              <div class="code-block" style="grid-column: 1 / -1;">
+                <label>Script MikroTik</label>
+                <textarea readonly :value="buildMikrotikCmdFromIni(p.config_data)"></textarea>
               </div>
             </details>
           </div>
@@ -756,6 +676,115 @@ onMounted(async () => {
 
       <div v-if="!isLoading && vpnProfiles.length === 0" class="empty-state">
         No hay perfiles VPN creados.
+      </div>
+    </section>
+
+    <section v-if="desktopProfiles.length > 0" class="control-section auth-dynamic-panel">
+      <div class="section-title">
+        <i class="icon">📱</i>
+        <h3>Acceso Seguro a Apps (Escritorio / Móvil)</h3>
+      </div>
+      
+      <p class="info-text">
+        Por cada VPN contratada, dispones de un acceso para ti o tus técnicos. Administra los permisos individualmente.
+      </p>
+
+      <div v-for="dProfile in desktopProfiles" :key="dProfile.id" class="desktop-card">
+        
+        <div class="desktop-card-header">
+          <div class="desktop-name-edit">
+            <input 
+              type="text" 
+              v-model="dProfile.name" 
+              @blur="updateDesktopProfileName(dProfile)" 
+              title="Haz clic para editar el nombre (ej. Notebook de Juan)"
+            />
+            <span class="edit-hint">✏️</span>
+          </div>
+          
+          <div class="desktop-actions">
+            <label class="toggle-label" :class="{ 'text-disabled': dProfile._isToggling }">
+              <span style="font-size: 0.85rem; color: var(--gray);">Permitir Conexión:</span>
+              <input 
+                type="checkbox" 
+                :checked="dProfile.is_active" 
+                @change="toggleDesktopPower(dProfile)" 
+                :disabled="dProfile._isToggling"
+              />
+            </label>
+            <button 
+              class="btn-danger small-icon-btn" 
+              @click="deleteSingleDesktopProfile(dProfile)" 
+              title="Eliminar permanentemente este acceso"
+              :disabled="dProfile._isToggling"
+            >🗑️</button>
+          </div>
+        </div>
+
+        <div class="dynamic-auth-body" :class="{ 'is-disabled': !dProfile.is_active }">
+          <div class="device-switcher">
+            <button 
+              class="switch-btn" 
+              :class="{ 'active': dProfile.active_device === 'desktop' }"
+              @click="switchDesktopDevice(dProfile, 'desktop')"
+              :disabled="dProfile._isToggling || !dProfile.is_active"
+            >
+              💻 App de Escritorio
+            </button>
+            <button 
+              class="switch-btn" 
+              :class="{ 'active': dProfile.active_device === 'mobile' }"
+              @click="switchDesktopDevice(dProfile, 'mobile')"
+              :disabled="dProfile._isToggling || !dProfile.is_active"
+            >
+              📱 App Móvil (QR)
+            </button>
+          </div>
+
+          <transition name="fade">
+            <div v-if="dProfile.active_device === 'mobile'" class="qr-container">
+              <div class="qr-box">
+                <qrcode-vue 
+                  v-if="dProfile.mobile_config_data" 
+                  :value="dProfile.mobile_config_data" 
+                  :size="180" 
+                  level="M" 
+                  render-as="svg" 
+                />
+                <span v-else class="spinner"></span>
+              </div>
+              <div class="qr-instructions">
+                <h4>Cómo usar en el móvil</h4>
+                <ol>
+                  <li>Descarga la app oficial <strong>WireGuard</strong> (iOS / Android).</li>
+                  <li>Toca el botón <strong>+</strong> y selecciona <strong>"Escanear código QR"</strong>.</li>
+                  <li>Apunta la cámara a este código y ponle un nombre (ej. Monitor360).</li>
+                </ol>
+                <button 
+                  class="btn-danger small" 
+                  style="margin-top: 1rem; align-self: flex-start;" 
+                  @click="revokeMobileKeys(dProfile)"
+                  :disabled="dProfile._isToggling"
+                >
+                  ⚠️ Revocar QR actual
+                </button>
+              </div>
+            </div>
+          </transition>
+
+          <transition name="fade">
+            <div v-if="dProfile.active_device === 'desktop'" class="desktop-instructions">
+              <div class="status-box-ok">
+                <span style="font-size: 1.5rem;">✅</span>
+                <div>
+                  <h4>Permiso concedido a la App de Escritorio</h4>
+                  <p style="margin: 0; font-size: 0.9rem; color: var(--gray);">La aplicación de Windows ahora tiene acceso al túnel. Puedes ir allí y conectarte usando este perfil.</p>
+                </div>
+              </div>
+            </div>
+          </transition>
+        </div>
+
       </div>
     </section>
 
@@ -830,11 +859,66 @@ onMounted(async () => {
   font-size: 1.2rem;
 }
 
-/* ==== NUEVOS ESTILOS PARA AUTORIZACIÓN DINÁMICA ==== */
+/* ==== ESTILOS PARA LA LISTA DE AUTORIZACIÓN DINÁMICA ==== */
 .auth-dynamic-panel {
   border-color: var(--blue);
   box-shadow: 0 0 15px rgba(59, 130, 246, 0.1);
 }
+.desktop-card {
+  border: 1px solid var(--primary-color);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  background: rgba(255,255,255,0.02);
+}
+.desktop-card:last-child {
+  margin-bottom: 0;
+}
+.desktop-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+  border-bottom: 1px dashed var(--primary-color);
+  padding-bottom: 1rem;
+}
+.desktop-name-edit {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.desktop-name-edit input {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 1.1rem;
+  font-weight: bold;
+  width: 250px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
+  padding: 4px 0;
+}
+.desktop-name-edit input:hover,
+.desktop-name-edit input:focus {
+  outline: none;
+  border-bottom: 1px solid var(--gray);
+}
+.edit-hint {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+.desktop-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+.small-icon-btn {
+  padding: 0.4rem 0.6rem;
+  font-size: 1.1rem;
+}
+
 .dynamic-auth-body {
   transition: opacity 0.3s;
 }
@@ -1240,11 +1324,6 @@ button {
   margin-bottom: 1rem;
   outline: none;
 }
-.code-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-}
 .code-block {
   display: flex;
   flex-direction: column;
@@ -1360,9 +1439,6 @@ textarea {
 
 /* RESPONSIVE */
 @media (max-width: 768px) {
-  .code-grid {
-    grid-template-columns: 1fr;
-  }
   .toolbar {
     flex-direction: column;
     align-items: stretch;
@@ -1373,6 +1449,13 @@ textarea {
   .alerts-controls select {
     max-width: 100%;
     width: 100%;
+  }
+  .desktop-card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .desktop-actions {
+    justify-content: space-between;
   }
   .qr-container {
     flex-direction: column;
