@@ -340,6 +340,23 @@ async function switchDesktopDevice(profile, device) {
   }
 }
 
+// NUEVO: Función que enruta el dispositivo móvil hacia un Router específico
+async function routeMobileToTarget(profile) {
+  if (!profile.linked_target_id) return
+  profile._isToggling = true
+  try {
+    await api.post(`/vpns/desktop/switch`, {
+      desktop_profile_id: profile.id,
+      target_profile_id: profile.linked_target_id
+    })
+    showNotification('✅ Ruteo del móvil actualizado en el servidor.', 'success')
+  } catch (err) {
+    showNotification(getAxiosErr(err), 'error')
+  } finally {
+    profile._isToggling = false
+  }
+}
+
 async function revokeMobileKeys(profile) {
   if (!confirm('¿Generar nuevo código QR? El móvil actual perderá acceso inmediatamente.')) return
   profile._isToggling = true
@@ -756,10 +773,29 @@ onMounted(async () => {
               <div class="qr-instructions">
                 <h4>Cómo usar en el móvil</h4>
                 <ol>
-                  <li>Descarga la app oficial <strong>WireGuard</strong> (iOS / Android).</li>
-                  <li>Toca el botón <strong>+</strong> y selecciona <strong>"Escanear código QR"</strong>.</li>
-                  <li>Apunta la cámara a este código y ponle un nombre (ej. Monitor360).</li>
+                  <li>Descarga la app oficial <strong>WireGuard</strong>.</li>
+                  <li>Toca <strong>+</strong> y selecciona <strong>"Escanear código QR"</strong>.</li>
+                  <li>Apunta la cámara a este código.</li>
                 </ol>
+                
+                <div class="routing-control" style="margin-top: 1rem;">
+                  <label style="font-size: 0.85rem; color: var(--blue); font-weight: bold; display: block; margin-bottom: 0.4rem;">
+                    📍 Enrutar tráfico hacia:
+                  </label>
+                  <select 
+                    v-model="dProfile.linked_target_id" 
+                    @change="routeMobileToTarget(dProfile)"
+                    class="input-select" 
+                    style="width: 100%; max-width: 250px;"
+                    :disabled="dProfile._isToggling"
+                  >
+                    <option :value="null">-- Selecciona un Router --</option>
+                    <option v-for="router in vpnProfiles" :key="router.id" :value="router.id">
+                      {{ router.name }}
+                    </option>
+                  </select>
+                </div>
+
                 <button 
                   class="btn-danger small" 
                   style="margin-top: 1rem; align-self: flex-start;" 
@@ -990,6 +1026,12 @@ onMounted(async () => {
 }
 .qr-instructions li {
   margin-bottom: 0.5rem;
+}
+.routing-control {
+  background: rgba(59, 130, 246, 0.1);
+  padding: 1rem;
+  border-radius: 6px;
+  border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
 .status-box-ok {
