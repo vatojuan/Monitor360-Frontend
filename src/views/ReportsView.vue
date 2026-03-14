@@ -104,7 +104,8 @@ async function fetchChannels() {
 
 async function fetchSchedules() {
   try {
-    const { data } = await api.get('/api/reports/schedules')
+    // CORREGIDO: Se quitó /api/
+    const { data } = await api.get('/reports/schedules')
     schedules.value = Array.isArray(data) ? data : []
   } catch (err) {
     console.error('Error al cargar reportes programados:', err)
@@ -113,7 +114,8 @@ async function fetchSchedules() {
 
 async function fetchHistory() {
   try {
-    const { data } = await api.get('/api/reports/history')
+    // CORREGIDO: Se quitó /api/
+    const { data } = await api.get('/reports/history')
     history.value = Array.isArray(data) ? data : []
   } catch (err) {
     console.error('Error al cargar historial:', err)
@@ -125,7 +127,8 @@ async function handleAddSchedule() {
   if (!isFormValid.value) return
 
   try {
-    await api.post('/api/reports/schedules', newSchedule.value)
+    // CORREGIDO: Se quitó /api/
+    await api.post('/reports/schedules', newSchedule.value)
     showNotification('Reporte programado con éxito.', 'success')
     
     // Resetear formulario (manteniendo la zona horaria)
@@ -149,7 +152,8 @@ async function handleAddSchedule() {
 async function handleDeleteSchedule(id) {
   if (!confirm('¿Seguro que deseas eliminar esta programación?')) return
   try {
-    await api.delete(`/api/reports/schedules/${id}`)
+    // CORREGIDO: Se quitó /api/
+    await api.delete(`/reports/schedules/${id}`)
     showNotification('Programación eliminada.', 'success')
     fetchSchedules()
   } catch (err) {
@@ -161,7 +165,8 @@ async function handleDeleteSchedule(id) {
 async function toggleScheduleActive(schedule) {
   const newVal = !schedule.is_active
   try {
-    await api.put(`/api/reports/schedules/${schedule.id}`, { is_active: newVal })
+    // CORREGIDO: Se quitó /api/
+    await api.put(`/reports/schedules/${schedule.id}`, { is_active: newVal })
     schedule.is_active = newVal
     showNotification(newVal ? 'Reporte activado.' : 'Reporte pausado.')
   } catch (err) {
