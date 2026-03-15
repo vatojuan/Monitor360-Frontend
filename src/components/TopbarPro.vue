@@ -110,6 +110,15 @@
                    <div class="sys-content">
                       <span class="sys-title">{{ sys.title }}</span>
                       <span class="sys-msg">{{ sys.message }}</span>
+                      
+                      <button
+                        v-if="getFailedDevices(sys).length > 0"
+                        @click.stop="openDetails(sys)"
+                        class="btn-text-small view-details-btn"
+                      >
+                        Ver detalles de fallo ({{ getFailedDevices(sys).length }})
+                      </button>
+
                       <span class="sys-time">{{ formatTime(sys.created_at) }}</span>
                    </div>
                    </div>
@@ -216,6 +225,23 @@
       </div>
     </transition>
   </div>
+
+  <transition name="fade">
+    <div v-if="showDetailsModal" class="m360-modal-overlay" @click.self="showDetailsModal = false">
+      <div class="m360-modal">
+        <div class="m360-modal-header">
+          <h3>Detalles de Auditoría</h3>
+          <button class="m360-close-btn" @click="showDetailsModal = false">✕</button>
+        </div>
+        <div class="m360-modal-body">
+          <ul class="details-list">
+            <li v-for="(item, idx) in currentDetailsList" :key="idx">{{ item }}</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </transition>
+
 </template>
 
 <script setup>
@@ -228,7 +254,7 @@ const props = defineProps({
   realtime: { type: Boolean, default: true },
   userEmail: { type: String, default: '' },
   logoSrc: { type: String, default: '' },
-  userAvatar: { type: String, default: '' }, // <-- AÑADIDO: Prop para el avatar
+  userAvatar: { type: String, default: '' }, 
 })
 const emit = defineEmits(['toggleSidebar', 'logout'])
 
@@ -263,7 +289,7 @@ const breadcrumb = computed(() => {
     '/credentials': 'Credenciales',
     '/channels': 'Canales',
     '/vpns': 'VPNs',
-    '/account': 'Mi Cuenta', // <-- AÑADIDO
+    '/account': 'Mi Cuenta', 
     '/billing': 'Facturación y Límites', 
   }
   return map[route.path] ?? ''
@@ -298,6 +324,32 @@ let notifInterval = null
 
 // Badge total
 const totalBadgeCount = computed(() => notifications.value.length + sysNotifications.value.length)
+
+// --- Lógica del Modal de Detalles ---
+const showDetailsModal = ref(false)
+const currentDetailsList = ref([])
+
+const getFailedDevices = (sys) => {
+  if (!sys.meta_data) return []
+  // Parseo seguro por si el backend mandó un string JSON o un objeto directo
+  if (typeof sys.meta_data === 'string') {
+    try {
+      const parsed = JSON.parse(sys.meta_data)
+      return parsed.failed_devices || []
+    } catch(e) { return [] }
+  }
+  return sys.meta_data.failed_devices || []
+}
+
+const openDetails = (sys) => {
+  const fails = getFailedDevices(sys)
+  if (fails.length > 0) {
+    currentDetailsList.value = fails
+    showDetailsModal.value = true
+    showNotif.value = false // Cerramos la campanita para no ensuciar la pantalla
+  }
+}
+// ------------------------------------
 
 const toggleNotifications = async () => {
   showNotif.value = !showNotif.value
@@ -396,6 +448,7 @@ const onKeydown = (e) => {
     if (menu.value) menu.value = false
     if (showNotif.value) showNotif.value = false
     if (fabOpen.value) fabOpen.value = false
+    if (showDetailsModal.value) showDetailsModal.value = false
   }
 }
 
@@ -733,6 +786,20 @@ const closeFab = () => {
     align-self: flex-end;
 }
 
+.view-details-btn {
+  margin-top: 4px;
+  align-self: flex-start;
+  padding: 4px 8px;
+  background: rgba(100, 255, 218, 0.1);
+  border-radius: 4px;
+  color: #64ffda;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+.view-details-btn:hover {
+  background: rgba(100, 255, 218, 0.2);
+}
+
 .notif-footer {
   display: block;
   text-align: center;
@@ -785,10 +852,8 @@ const closeFab = () => {
   place-items: center;
   font-size: 12px;
   font-weight: 700;
-  overflow: hidden; /* <-- AÑADIDO PARA LA IMAGEN REDONDA */
+  overflow: hidden;
 }
-
-/* --- AÑADIDO: ESTILO PARA LA IMAGEN DEL AVATAR --- */
 .avatar-img {
   width: 100%;
   height: 100%;
@@ -851,6 +916,74 @@ const closeFab = () => {
 }
 .m360-fab-item.danger-solid:hover {
   filter: brightness(1.05);
+}
+
+/* --- ESTILOS DEL MODAL DE DETALLES --- */
+.m360-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.m360-modal {
+  background: #0f1626;
+  border: 1px solid rgba(130, 180, 255, 0.22);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.m360-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.m360-modal-header h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 16px;
+}
+.m360-close-btn {
+  background: transparent;
+  border: none;
+  color: #93a4c7;
+  font-size: 18px;
+  cursor: pointer;
+}
+.m360-close-btn:hover {
+  color: #ff9a9a;
+}
+.m360-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+}
+.details-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.details-list li {
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px;
+  border-radius: 6px;
+  color: #ff9a9a;
+  font-size: 13px;
+  font-family: monospace;
+  border-left: 3px solid #e94560;
+  word-break: break-all;
 }
 
 /* Transitions */
