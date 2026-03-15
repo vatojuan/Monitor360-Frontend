@@ -799,7 +799,7 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
     vpn_profile_id: addForm.value.connection_method === 'vpn' ? addForm.value.vpn_profile_id : null,
-    credential_id: addForm.value.connection_method === 'vpn' ? addForm.value.credential_id : null,
+    credential_id: addForm.value.credential_id, // <-- CORREGIDO: Siempre se envía para asociarlo al destino
     vendor: addForm.value.vendor,
     force_generic_ping: isForced,
   }
@@ -1188,21 +1188,22 @@ onUnmounted(() => {
               <option value="vpn">A través de Perfil VPN</option>
               <option value="maestro">A través de Maestro existente</option>
             </select>
+            
+            <label style="margin-top: 0.8rem">Perfil de Credenciales</label>
+            <select v-model="addForm.credential_id">
+              <option :value="null">-- Auto-detectar (Lento) --</option>
+              <option v-for="cred in credentialProfiles" :key="cred.id" :value="cred.id">
+                {{ cred.name }} ({{ cred.username }})
+              </option>
+            </select>
           </div>
+          
           <div v-if="addForm.connection_method === 'vpn'">
             <label>Perfil VPN</label>
             <select v-model="addForm.vpn_profile_id" required>
               <option :value="null" disabled>-- Selecciona VPN --</option>
               <option v-for="vpn in vpnProfiles" :key="vpn.id" :value="vpn.id">
                 {{ vpn.name }}
-              </option>
-            </select>
-
-            <label style="margin-top: 0.8rem">Perfil de Credenciales</label>
-            <select v-model="addForm.credential_id">
-              <option :value="null">-- Auto-detectar (Lento) --</option>
-              <option v-for="cred in credentialProfiles" :key="cred.id" :value="cred.id">
-                {{ cred.name }} ({{ cred.username }})
               </option>
             </select>
           </div>
