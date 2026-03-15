@@ -624,7 +624,13 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
               <td>
                 <input type="checkbox" :checked="selectedPending.includes(dev.mac_address)" @click="toggleSelection(dev.mac_address)" />
               </td>
-              <td class="font-mono text-highlight">{{ dev.ip_address }}</td>
+              <td class="font-mono">
+                <div class="text-highlight">{{ dev.ip_address }}</div>
+                <div class="text-dim" style="font-size: 0.8rem; margin-top: 3px;" v-if="(dev.api_port && dev.api_port !== 8728) || (dev.ssh_port && dev.ssh_port !== 22)">
+                  <span v-if="dev.api_port && dev.api_port !== 8728 && dev.api_port !== 22" style="color: var(--blue); margin-right: 5px;">API: {{ dev.api_port }}</span>
+                  <span v-if="dev.ssh_port && dev.ssh_port !== 22" style="color: var(--green);">SSH: {{ dev.ssh_port }}</span>
+                </div>
+              </td>
               <td class="font-mono text-dim">{{ dev.mac_address }}</td>
               <td class="text-highlight font-weight-bold">{{ dev.identity || '-' }}</td>
               <td>{{ dev.vendor || 'Desconocido' }}</td>
@@ -689,7 +695,14 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                     </tr>
                     <tr v-for="dev in filteredIgnoredDevices" :key="dev.mac_address" class="ignored-row" :class="{ selected: selectedIgnored.includes(dev.mac_address) }">
                         <td><input type="checkbox" :checked="selectedIgnored.includes(dev.mac_address)" @click="toggleIgnoredSelection(dev.mac_address)" /></td>
-                        <td class="font-mono text-dim">{{ dev.ip_address }}</td><td class="font-mono text-dim">{{ dev.mac_address }}</td><td class="text-dim">{{ dev.identity || '-' }}</td><td class="text-dim">{{ dev.vendor || 'Desconocido' }}</td><td class="text-dim">{{ dev.platform || '-' }}</td><td class="text-dim">{{ dev.hostname || '-' }}</td>
+                        <td class="font-mono text-dim">
+                          {{ dev.ip_address }}
+                          <div style="font-size: 0.8rem; margin-top: 3px;" v-if="(dev.api_port && dev.api_port !== 8728) || (dev.ssh_port && dev.ssh_port !== 22)">
+                            <span v-if="dev.api_port && dev.api_port !== 8728 && dev.api_port !== 22" style="color: var(--blue); margin-right: 5px;">API: {{ dev.api_port }}</span>
+                            <span v-if="dev.ssh_port && dev.ssh_port !== 22" style="color: var(--green);">SSH: {{ dev.ssh_port }}</span>
+                          </div>
+                        </td>
+                        <td class="font-mono text-dim">{{ dev.mac_address }}</td><td class="text-dim">{{ dev.identity || '-' }}</td><td class="text-dim">{{ dev.vendor || 'Desconocido' }}</td><td class="text-dim">{{ dev.platform || '-' }}</td><td class="text-dim">{{ dev.hostname || '-' }}</td>
                         <td style="text-align: right;">
                             <button @click="restoreDevice(dev.mac_address)" class="btn-sm btn-restore" title="Restaurar" style="margin-right: 10px;">♻️</button>
                             <button @click="hardDeleteDevice(dev.mac_address)" class="btn-sm btn-del" title="Olvidar Definitivamente">💀</button>
@@ -873,6 +886,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                    </select>
                                 </div>
                             </div>
+
                         </div>
                     </div>
                 </div>
@@ -1001,6 +1015,14 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                        <option :value="null">-- Seleccionar Tarea --</option>
                                        <option v-for="t in autoTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
                                    </select>
+                                   
+                                   <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_custom_message" /> ✏️ Msj. Alerta</div>
+                                   <textarea v-if="sensor.ui_alert_speed_change.use_custom_message" v-model="sensor.ui_alert_speed_change.custom_message" class="search-input custom-textarea" placeholder="Ej: Cable desconectado en {client_name}"></textarea>
+                                   <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.notify_recovery" /> 🟢 Notificar Regreso</div>
+                                   <template v-if="sensor.ui_alert_speed_change.notify_recovery">
+                                       <div class="chk-label" style="margin-bottom: 5px; padding-left: 10px;"><input type="checkbox" v-model="sensor.ui_alert_speed_change.use_custom_recovery_message" /> ✏️ Msj. Recuperación</div>
+                                       <textarea v-if="sensor.ui_alert_speed_change.use_custom_recovery_message" v-model="sensor.ui_alert_speed_change.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} conectado a {speed}"></textarea>
+                                   </template>
                                 </div>
                             </div>
 

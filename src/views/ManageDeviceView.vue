@@ -3,7 +3,7 @@ import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import SmartTerminalModal from '@/components/SmartTerminalModal.vue'
-import * as XLSX from 'xlsx' // <-- NUEVA DEPENDENCIA PARA LEER EXCEL
+import * as XLSX from 'xlsx' // <-- DEPENDENCIA PARA LEER EXCEL
 
 const router = useRouter()
 
@@ -29,11 +29,12 @@ function goToBilling() {
   router.push('/billing')
 }
 
-// ===== Alta en un paso =====
+// ===== Alta en un paso (ACTUALIZADO DUAL-CHECK) =====
 const addForm = ref({
   client_name: '',
   ip_address: '',
   api_port: 8728,
+  ssh_port: 22, // <-- NUEVO: Soporte DUAL-CHECK
   mac_address: '',
   node: '',
   connection_method: 'vpn',
@@ -57,7 +58,7 @@ const deletingId = ref(null)
 // --- Nuevo Estado para Selector de IP Destino (Masivo) ---
 const allDevicesList = ref([])
 
-// ===== ESTADO FILTROS INVENTARIO (NUEVO) =====
+// ===== ESTADO FILTROS INVENTARIO =====
 const inventoryFilter = ref({
   search: '',
   vendor: '',
@@ -70,7 +71,7 @@ const showBulkModal = ref(false)
 const isBulking = ref(false)
 const isDeletingBulk = ref(false)
 
-// ===== NUEVO: ESTADO ACTUALIZACIÓN MASIVA EXCEL (RENAME) =====
+// ===== ESTADO ACTUALIZACIÓN MASIVA EXCEL (RENAME) =====
 const showBulkRenameModal = ref(false)
 const isUploadingExcel = ref(false)
 const isSubmittingBulkRename = ref(false)
@@ -88,7 +89,7 @@ const bulkRenameForm = ref({
 const bulkSensorType = ref('ping')
 const bulkNameTemplate = ref('{{hostname}} - Sensor')
 
-// Modelos de configuración (ACTUALIZADO PARA MENSAJES PERSONALIZADOS)
+// Modelos de configuración
 const createNewPingSensor = () => ({
   config: {
     interval_sec: 60,
@@ -216,7 +217,7 @@ function formatDate(isoStr) {
   })
 }
 
-// ===== ESTADO TERMINAL (MODAL PREVIO DE PUERTO) =====
+// ===== ESTADO TERMINAL =====
 const showTerminalSetupModal = ref(false)
 const showTerminalModal = ref(false)
 const activeTerminalDevice = ref(null)
@@ -225,7 +226,6 @@ const activeTerminalPort = ref(22)
 const terminalSetupDevice = ref(null)
 const terminalSetupPort = ref(22)
 
-// 1. Abrimos el modal de setup de puerto
 function openTerminalSetup(device) {
   terminalSetupDevice.value = device
   terminalSetupPort.value = device.ssh_port || 22
@@ -233,7 +233,6 @@ function openTerminalSetup(device) {
   activeDropdown.value = null // Cierra el menú si está abierto
 }
 
-// 2. Confirmamos y lanzamos la terminal real
 function confirmTerminalSetup() {
   activeTerminalDevice.value = terminalSetupDevice.value
   activeTerminalPort.value = terminalSetupPort.value
@@ -241,7 +240,6 @@ function confirmTerminalSetup() {
   showTerminalModal.value = true
 }
 
-// 3. Al cerrar la terminal
 function closeTerminal() {
   showTerminalModal.value = false
   activeTerminalDevice.value = null
@@ -263,7 +261,7 @@ function openRotateCredentialsModal(device) {
     credentialName: `Cred-${device.client_name}-${new Date().toISOString().split('T')[0]}`
   }
   showRotateCredentialsModal.value = true
-  activeDropdown.value = null // Cierra el menú si está abierto
+  activeDropdown.value = null 
 }
 
 async function submitRotateCredentials() {
@@ -306,7 +304,7 @@ async function requestReboot(device) {
   }
   
   isRebooting.value = true
-  activeDropdown.value = null // Cierra el menú si está abierto
+  activeDropdown.value = null 
   
   try {
     await api.post(`/devices/${device.id}/reboot`)
@@ -355,7 +353,7 @@ const newTaskForm = ref({
   min_uptime_days: 30,
   script_body: '',
   time: '03:00',
-  days: [] // Vacio = Todos los dias
+  days: [] 
 })
 
 // Logs Modal
@@ -434,7 +432,6 @@ async function submitScheduledTask() {
     showTaskModal.value = false
     selectedDevices.value = []
     
-    // Cambiamos a la pestaña de tareas automáticamente para que vea su creación
     currentTab.value = 'tasks'
     await fetchScheduledTasks()
   } catch (error) {
@@ -539,19 +536,20 @@ const filteredDevices = computed(() => {
   })
 })
 
-const portLabel = computed(() => {
-  const v = addForm.value.vendor
-  if (v === 'Mikrotik') return 'Puerto API (Winbox)'
-  if (v === 'Ubiquiti' || v === 'Mimosa') return 'Puerto SSH'
-  if (v === 'SNMP') return 'Puerto SNMP'
-  return 'Puerto de Gestión'
-})
-
 function onVendorChange() {
-  if (addForm.value.vendor === 'Mikrotik') addForm.value.api_port = 8728
-  else if (addForm.value.vendor === 'Ubiquiti') addForm.value.api_port = 22
-  else if (addForm.value.vendor === 'Mimosa') addForm.value.api_port = 22
-  else if (addForm.value.vendor === 'SNMP') addForm.value.api_port = 161
+  if (addForm.value.vendor === 'Mikrotik') {
+    addForm.value.api_port = 8728
+    addForm.value.ssh_port = 22
+  } else if (addForm.value.vendor === 'Ubiquiti' || addForm.value.vendor === 'Mimosa') {
+    addForm.value.api_port = 22 // Legacy API fallback
+    addForm.value.ssh_port = 22
+  } else if (addForm.value.vendor === 'SNMP') {
+    addForm.value.api_port = 161
+    addForm.value.ssh_port = null
+  } else {
+    addForm.value.api_port = 8728
+    addForm.value.ssh_port = 22
+  }
 }
 
 const selectionStats = computed(() => {
@@ -617,12 +615,10 @@ const suggestedTargetDevicesForBulk = computed(() => {
 // ===== FUNCIONES ACTUALIZACIÓN MASIVA NOMBRES (NUEVO) =====
 function openBulkRenameModal() {
   showBulkRenameModal.value = true
-  bulkRenameFile.value = null
   bulkRenameData.value = []
   bulkRenameHeaders.value = []
   bulkRenamePreview.value = []
   bulkRenameForm.value = { vpn_profile_id: null, ip_column: '', name_column: '' }
-  // Limpiamos el input de archivo si existe
   const fileInput = document.getElementById('excelFileInput')
   if (fileInput) fileInput.value = ''
 }
@@ -645,14 +641,12 @@ async function handleFileUpload(event) {
     const firstSheetName = workbook.SheetNames[0]
     const worksheet = workbook.Sheets[firstSheetName]
     
-    // Convertir la hoja a JSON donde las claves son la cabecera
     const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' })
     
     if (jsonData.length > 0) {
       bulkRenameData.value = jsonData
       bulkRenameHeaders.value = Object.keys(jsonData[0])
       
-      // Auto-detectar columnas por el nombre
       const lowerHeaders = bulkRenameHeaders.value.map(h => h.toLowerCase())
       
       const ipMatchIndex = lowerHeaders.findIndex(h => h.includes('ip') || h === 'direccion' || h === 'address')
@@ -679,17 +673,15 @@ function updateBulkRenamePreview() {
     return
   }
   
-  // Extraemos y filtramos solo los registros que tengan ambos campos
   bulkRenamePreview.value = bulkRenameData.value
     .map(row => ({
       ip_address: String(row[bulkRenameForm.value.ip_column]).trim(),
       new_client_name: String(row[bulkRenameForm.value.name_column]).trim()
     }))
     .filter(item => item.ip_address && item.new_client_name)
-    .slice(0, 5) // Mostramos solo 5 de ejemplo
+    .slice(0, 5) 
 }
 
-// Escuchamos cambios en los selectores para actualizar la vista previa
 watch([() => bulkRenameForm.value.ip_column, () => bulkRenameForm.value.name_column], () => {
   updateBulkRenamePreview()
 })
@@ -699,7 +691,6 @@ async function submitBulkRename() {
     return showNotification('Debes seleccionar las columnas de IP y Nombre.', 'error')
   }
 
-  // Filtrar y preparar la lista completa
   const finalDevicesList = bulkRenameData.value
     .map(row => ({
       ip_address: String(row[bulkRenameForm.value.ip_column] || '').trim(),
@@ -729,8 +720,6 @@ async function submitBulkRename() {
   }
 }
 
-// Escuchar evento global si el backend emite al terminar (Opcional, depende del setup del WS global)
-// Asumiendo que el cliente WS despacha eventos al window
 onMounted(() => {
   const handleRenameComplete = () => {
     fetchAllDevices()
@@ -805,6 +794,7 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
     client_name: addForm.value.client_name,
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
+    ssh_port: Number(addForm.value.ssh_port) || null, // <-- INTEGRACIÓN DUAL CHECK
     mac_address: addForm.value.mac_address || '',
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
@@ -832,7 +822,6 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
     console.error('Error creando dispositivo:', error)
     const detail = error.response?.data?.detail || ''
     
-    // CAPTURAMOS EL ERROR DE LÍMITES DE PLAN (402 o 403)
     if (error?.response?.status === 403 || error?.response?.status === 402) {
       limitMessage.value = detail || 'Has alcanzado el límite de dispositivos de tu plan actual.'
       showLimitModal.value = true
@@ -850,9 +839,11 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
 
 async function handleTestReachability() {
   if (!addForm.value.ip_address?.trim()) return showNotification('Ingresá la IP.', 'error')
+  
   const payload = {
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
+    ssh_port: Number(addForm.value.ssh_port) || null, // <-- INTEGRACIÓN DUAL CHECK
     vendor: addForm.value.vendor,
   }
   if (addForm.value.connection_method === 'vpn') {
@@ -866,7 +857,12 @@ async function handleTestReachability() {
   try {
     const { data } = await api.post('/devices/test_reachability', payload)
     testResult.value = data
-    if (data.reachable) showNotification('¡Conexión OK!', 'success')
+    if (data.reachable) {
+        showNotification('¡Conexión OK!', 'success')
+        // Si el motor de adopción descubrió que los puertos correctos eran otros, los pisamos en el form
+        if (data.api_port) addForm.value.api_port = data.api_port
+        if (data.ssh_port) addForm.value.ssh_port = data.ssh_port
+    }
     else showNotification(data.detail || 'No alcanzable.', 'error')
   } catch (error) {
     console.error(error)
@@ -882,6 +878,7 @@ function resetAddForm() {
     client_name: '',
     ip_address: '',
     api_port: 8728,
+    ssh_port: 22,
     mac_address: '',
     node: '',
     connection_method: 'vpn',
@@ -919,7 +916,7 @@ async function handleVpnAssociation(device) {
 }
 
 async function deleteDevice(device) {
-  activeDropdown.value = null // Cierra el menú si está abierto
+  activeDropdown.value = null 
   if (!confirm(`¿Eliminar "${device.client_name}"?`)) return
   try {
     deletingId.value = device.id
@@ -948,10 +945,8 @@ function selectAll() {
   const allVisibleSelected = visibleIds.every(id => selectedDevices.value.includes(id))
 
   if (allVisibleSelected) {
-    // Si todos los visibles están seleccionados, los deseleccionamos
     selectedDevices.value = selectedDevices.value.filter(id => !visibleIds.includes(id))
   } else {
-    // Si no, seleccionamos solo los que están actualmente visibles
     const newSelections = visibleIds.filter(id => !selectedDevices.value.includes(id))
     selectedDevices.value.push(...newSelections)
   }
@@ -990,7 +985,6 @@ function openBulkModal() {
   showBulkModal.value = true
 }
 
-// Helper de construcción de payload (ACTUALIZADO CON MENSAJES PERSONALIZADOS)
 function buildSensorConfig(type, data) {
   const finalConfig = { ...data.config }
   const alerts = []
@@ -1165,20 +1159,25 @@ onUnmounted(() => {
             <label>Dirección IP *</label>
             <input type="text" v-model="addForm.ip_address" placeholder="192.168.88.1" required />
           </div>
-          <div>
-            <label>{{ portLabel }}</label>
-            <input
-              type="number"
-              v-model="addForm.api_port"
-              :placeholder="addForm.vendor === 'Ubiquiti' ? '22' : '8728'"
-              required
-            />
-            <small v-if="addForm.vendor === 'Mikrotik'" class="text-dim"
-              >Puerto API (Default 8728)</small
-            >
-            <small v-if="addForm.vendor === 'Ubiquiti'" class="text-dim"
-              >Puerto SSH (Default 22)</small
-            >
+          <div class="ip-port-grid">
+            <div v-if="['Mikrotik', 'SNMP', 'Generic'].includes(addForm.vendor)" style="flex: 1;">
+              <label>{{ addForm.vendor === 'SNMP' ? 'Puerto SNMP' : 'Puerto API' }}</label>
+              <input
+                type="number"
+                v-model="addForm.api_port"
+                :placeholder="addForm.vendor === 'SNMP' ? '161' : '8728'"
+                required
+              />
+            </div>
+            <div v-if="['Mikrotik', 'Ubiquiti', 'Mimosa', 'Generic'].includes(addForm.vendor)" style="flex: 1;">
+              <label>Puerto SSH</label>
+              <input
+                type="number"
+                v-model="addForm.ssh_port"
+                placeholder="22"
+                :required="['Mikrotik', 'Ubiquiti', 'Mimosa'].includes(addForm.vendor)"
+              />
+            </div>
           </div>
         </div>
 
@@ -1237,11 +1236,17 @@ onUnmounted(() => {
         </div>
 
         <div v-if="testResult" class="test-box" :class="testResult.reachable ? 'ok' : 'error'">
-          {{
-            testResult.reachable
-              ? '✅ Alcanzable'
-              : '❌ No alcanzable: ' + (testResult.detail || '')
-          }}
+          <div style="font-weight: bold;">
+            {{ testResult.reachable ? '✅ Alcanzable y Autenticado' : '❌ Fallo en la prueba' }}
+          </div>
+          <div v-if="!testResult.reachable && testResult.detail" class="text-dim" style="margin-top: 5px;">
+            {{ testResult.detail }}
+          </div>
+          <div v-if="testResult.reachable && (testResult.api_port || testResult.ssh_port)" class="text-dim" style="margin-top: 5px;">
+            Puertos confirmados: 
+            <span v-if="testResult.api_port" style="color: var(--blue);">API ({{testResult.api_port}}) </span>
+            <span v-if="testResult.ssh_port" style="color: var(--green);">SSH ({{testResult.ssh_port}})</span>
+          </div>
         </div>
       </form>
     </section>
@@ -1335,12 +1340,13 @@ onUnmounted(() => {
                 <div class="text-dim small">{{ device.identity || '' }}</div>
               </td>
               <td class="font-mono">
-                {{ device.ip_address
-                }}<span
-                  v-if="device.api_port && device.api_port !== 8728 && device.api_port !== 22"
-                  class="text-dim"
-                  >:{{ device.api_port }}</span
-                >
+                {{ device.ip_address }}
+                <div class="text-dim small" v-if="device.api_port && device.api_port !== 8728 && device.api_port !== 22">
+                  API: {{ device.api_port }}
+                </div>
+                <div class="text-dim small" v-if="device.ssh_port && device.ssh_port !== 22">
+                  SSH: {{ device.ssh_port }}
+                </div>
               </td>
               <td>
                 {{ device.vendor || 'Generico' }}
