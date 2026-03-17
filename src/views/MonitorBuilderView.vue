@@ -139,7 +139,7 @@ const createNewEthernetSensor = () => ({
   name: '',
   config: {
     interface_name: '',
-    interval_sec: 3,
+    interval_sec: 60,
   },
   ui_alert_speed_change: {
     enabled: false,
@@ -175,6 +175,7 @@ const createNewWirelessSensor = () => ({
   name: '',
   config: {
     interface_name: '',
+    interval_sec: 60, // <-- AÑADIDO
     thresholds: {
       min_signal_dbm: -80,
       min_ccq_percent: 75,
@@ -201,6 +202,7 @@ const createNewWirelessSensor = () => ({
 const createNewSystemSensor = () => ({
   name: '',
   config: {
+    interval_sec: 60, // <-- AÑADIDO
     thresholds: {
       max_cpu_percent: 85,
       max_memory_percent: 90,
@@ -560,7 +562,7 @@ function openFormForEdit(sensor) {
     uiData.name = sensor.name
     uiData.config = {
       interface_name: cfg.interface_name || '',
-      interval_sec: cfg.interval_sec || 30,
+      interval_sec: cfg.interval_sec || 60, // <-- Edit: Carga correcta
     }
 
     const tSpd = mapAlert(alerts, 'speed_change')
@@ -601,6 +603,7 @@ function openFormForEdit(sensor) {
     uiData.name = sensor.name
     uiData.config = {
       interface_name: cfg.interface_name || '',
+      interval_sec: cfg.interval_sec || 60, // <-- Edit: AÑADIDO
       tolerance_checks: cfg.tolerance_checks ?? 3,
       thresholds: {
         min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
@@ -632,6 +635,7 @@ function openFormForEdit(sensor) {
     const uiData = createNewSystemSensor()
     uiData.name = sensor.name
     uiData.config = {
+      interval_sec: cfg.interval_sec || 60, // <-- Edit: AÑADIDO
       tolerance_checks: cfg.tolerance_checks ?? 3,
       thresholds: {
         max_cpu_percent: cfg.thresholds?.max_cpu_percent ?? null,
@@ -1348,6 +1352,11 @@ watch(searchQuery, (newQuery) => {
             </template>
           </div>
 
+          <div class="form-group span-3">
+            <label>Intervalo (s)</label>
+            <input type="number" v-model.number="newWirelessSensor.config.interval_sec" required />
+          </div>
+
           <div class="sub-section span-3">
             <h4>Umbrales y Calidad de Enlace</h4>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
@@ -1475,6 +1484,11 @@ watch(searchQuery, (newQuery) => {
           <div class="form-group span-3">
             <label>Nombre del Sensor</label>
             <input type="text" v-model="newSystemSensor.name" required placeholder="Ej: Recursos y Salud" />
+          </div>
+
+          <div class="form-group span-3">
+            <label>Intervalo (s)</label>
+            <input type="number" v-model.number="newSystemSensor.config.interval_sec" required />
           </div>
 
           <div class="sub-section span-3">
@@ -1676,7 +1690,7 @@ h4 {
 }
 
 /* ==============================================
-    FIX: TRUNCADO PROFESIONAL PARA LISTAS Y TARJETAS
+   FIX: TRUNCADO PROFESIONAL PARA LISTAS Y TARJETAS
    ============================================== */
 
 /* 1. Resultados de búsqueda blindados */
