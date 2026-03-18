@@ -17,7 +17,11 @@ const isSidebarCollapsed = ref(false)
 // Estado de grupos sincronizado con DB
 const dbGroups = ref([])
 
+// Estado Reactivo de Sensores
 const liveSensorStatus = ref({})
+// Caché Reactivo de Alertas de Monitores (Para no recalcular en HTML)
+const liveMonitorAlerts = ref({}) 
+
 const monitorToDelete = ref(null)
 const collapsedCards = ref(new Set())
 
@@ -149,7 +153,6 @@ const createNewEthernetSensor = () => ({
   },
 })
 
-// Plantilla para Edición de Sensor Wireless
 const createNewWirelessSensor = () => ({
   name: '',
   is_active: true,
@@ -173,7 +176,6 @@ const createNewWirelessSensor = () => ({
   },
 })
 
-// NUEVO: Plantilla para Edición de Sensor System
 const createNewSystemSensor = () => ({
   name: '',
   is_active: true,
@@ -217,14 +219,29 @@ async function fetchAllMonitors() {
     const { data } = await api.get('/monitors')
     allMonitors.value = Array.isArray(data) ? data : []
 
+    const initialStatus = {}
+    const initialAlerts = {}
+
     allMonitors.value.forEach((m) => {
       if (m.is_active === null || m.is_active === undefined) m.is_active = true
       if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
+      
+      let hasAlert = false
       ;(m.sensors || []).forEach((s) => {
         const sid = String(s.id)
-        if (!liveSensorStatus.value[sid]) liveSensorStatus.value[sid] = { status: 'pending' }
+        if (!liveSensorStatus.value[sid]) initialStatus[sid] = { status: 'pending' }
+        else initialStatus[sid] = liveSensorStatus.value[sid]
+
+        if (['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(initialStatus[sid].status)) {
+            hasAlert = true
+        }
       })
+      if (m.is_active === false) hasAlert = false
+      initialAlerts[m.monitor_id] = hasAlert
     })
+    
+    liveSensorStatus.value = initialStatus
+    liveMonitorAlerts.value = initialAlerts
 
     refreshGroupedMonitors()
     trySubscribeSensors()
@@ -233,7 +250,6 @@ async function fetchAllMonitors() {
   }
 }
 
-// Nueva función para cargar todos los dispositivos (necesaria para el buscador)
 async function fetchAllDevices() {
   try {
     const { data } = await api.get('/devices')
@@ -290,15 +306,13 @@ function refreshGroupedMonitors() {
 
 function getGroupStatusClass(groupName) {
   const monitors = groupedMonitors.value[groupName] || []
-  let hasAlert = false
   for (const m of monitors) {
     if (!m.is_active) continue
-    if (getOverallCardStatus(m)) {
-      hasAlert = true
-      break
+    if (liveMonitorAlerts.value[m.monitor_id]) {
+      return 'dot-red'
     }
   }
-  return hasAlert ? 'dot-red' : 'dot-green'
+  return 'dot-green'
 }
 
 // --- D&D ---
@@ -370,7 +384,7 @@ function formatDate(dateString) {
   return new Date(dateString).toLocaleString()
 }
 
-// --- WEBSOCKETS ---
+// --- WEBSOCKETS OPTIMIZADOS (BUFFERING) ---
 function normalizeWsPayload(raw) {
   if (Array.isArray(raw)) return raw.flatMap(normalizeWsPayload)
   if (typeof raw === 'string') {
@@ -403,6 +417,7 @@ function trySubscribeSensors() {
   if (ids.length > 0) ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
 }
 watch(() => allMonitors.value, trySubscribeSensors, { deep: true })
+
 async function ensureChannelsLoaded() {
   if (!Object.keys(channelsById.value).length) {
     try {
@@ -414,23 +429,75 @@ async function ensureChannelsLoaded() {
   }
 }
 
-let wsOpenUnbind = null,
-  directMsgUnbind = null
+// BUZÓN TEMPORAL
+let pendingWsUpdates = {}
+let wsBufferTimer = null
+
+function flushWsUpdates() {
+  if (Object.keys(pendingWsUpdates).length === 0) return
+  
+  // 1. Actualización Atómica de Sensores (Cero estrés a Vue)
+  liveSensorStatus.value = { ...liveSensorStatus.value, ...pendingWsUpdates }
+
+  // 2. Pre-Cálculo de Alertas Globales (Para no hacerlo en HTML)
+  const newAlerts = { ...liveMonitorAlerts.value }
+  
+  // Mapeamos los IDs de sensores actualizados para saber qué monitores recalcular
+  const affectedMonitorIds = new Set()
+  const sensorToMonitorMap = {}
+  allMonitors.value.forEach(m => {
+      (m.sensors || []).forEach(s => {
+          sensorToMonitorMap[String(s.id)] = m.monitor_id
+      })
+  })
+
+  Object.keys(pendingWsUpdates).forEach(sid => {
+      const mid = sensorToMonitorMap[sid]
+      if (mid) affectedMonitorIds.add(mid)
+  })
+
+  // Recalculamos SOLO los monitores que sufrieron cambios
+  affectedMonitorIds.forEach(mid => {
+      const m = allMonitors.value.find(x => x.monitor_id === mid)
+      if (!m || m.is_active === false) {
+          newAlerts[mid] = false
+          return
+      }
+      let hasAlert = false
+      if (m.sensors && m.sensors.length) {
+          hasAlert = m.sensors.some(s => {
+              const st = liveSensorStatus.value[String(s.id)]?.status
+              return ['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(st)
+          })
+      }
+      newAlerts[mid] = hasAlert
+  })
+
+  liveMonitorAlerts.value = newAlerts
+  pendingWsUpdates = {}
+}
+
 function handleRawMessage(evt) {
   try {
     const parsed = JSON.parse(evt.data)
     const updates = normalizeWsPayload(parsed)
     updates.forEach((u) => {
-      if (u.sensor_id)
-        liveSensorStatus.value[String(u.sensor_id)] = {
-          ...liveSensorStatus.value[String(u.sensor_id)],
+      if (u.sensor_id) {
+        pendingWsUpdates[String(u.sensor_id)] = {
+          ...(liveSensorStatus.value[String(u.sensor_id)] || {}),
+          ...(pendingWsUpdates[String(u.sensor_id)] || {}),
           ...u,
         }
+      }
     })
   } catch {
     /* ignore */
   }
 }
+
+let wsOpenUnbind = null,
+  directMsgUnbind = null
+
 function wireWsSyncAndSubs() {
   const ws = getCurrentWebSocket()
   if (!ws) {
@@ -467,14 +534,19 @@ onMounted(async () => {
   }
   await fetchGroups()
   await fetchAllMonitors()
-  await fetchAllDevices() // Cargar inventario para el buscador
+  await fetchAllDevices()
 
   await connectWebSocketWhenAuthenticated()
   wireWsSyncAndSubs()
+
+  // Iniciamos el Reloj del Buffer (Vacía la cola cada 500ms)
+  wsBufferTimer = setInterval(flushWsUpdates, 500)
 })
+
 onUnmounted(() => {
   if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
   if (typeof directMsgUnbind === 'function') directMsgUnbind()
+  if (wsBufferTimer) clearInterval(wsBufferTimer)
 })
 
 // --- ACCIONES DE TARJETA ---
@@ -501,15 +573,7 @@ async function toggleMonitorPause(monitor) {
     showNotification('Error', 'error')
   }
 }
-function getOverallCardStatus(monitor) {
-  if (monitor.is_active === false) return false
-  if (!monitor.sensors || !monitor.sensors.length) return false
-  return monitor.sensors.some((s) => {
-    const st = liveSensorStatus.value[String(s.id)]?.status
-    // Considerar degraded y critical para iluminar la tarjeta
-    return ['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(st)
-  })
-}
+
 async function confirmDeleteMonitor() {
   if (!monitorToDelete.value) return
   try {
@@ -538,15 +602,12 @@ async function deleteSensor(sensor, e) {
   try {
     await api.delete(`/sensors/${sensor.id}`)
 
-    // Actualizar estado local eliminando el sensor de la lista en memoria
     const monitor = allMonitors.value.find((m) => m.monitor_id === sensor.monitor_id)
     if (monitor && monitor.sensors) {
       monitor.sensors = monitor.sensors.filter((s) => s.id !== sensor.id)
-      // Forzar reactividad si es necesario (en Vue 3 con ref suele ser automático al reasignar, pero esto asegura)
       monitor.sensors = [...monitor.sensors]
     }
 
-    // También eliminar del agrupado para que se refleje en la UI inmediatamente
     if (activeGroup.value && groupedMonitors.value[activeGroup.value]) {
       const groupMonitor = groupedMonitors.value[activeGroup.value].find(
         (m) => m.monitor_id === sensor.monitor_id,
@@ -571,7 +632,6 @@ function openMonitorSettings(monitor) {
 
 function openTerminal() {
   if (!monitorToEdit.value?.device_id) return
-  // Abrimos la terminal en una nueva pestaña (misma lógica que VpnsView)
   const routeData = router.resolve({
     path: '/terminal',
     query: { device_id: monitorToEdit.value.device_id }
@@ -612,7 +672,6 @@ async function addComment() {
 
 // Lógica de Rotación de Credenciales
 function triggerRotateCredentials() {
-  // Pre-llenar el formulario con un nombre sugerido
   rotateCredentialsForm.value = {
     newUsername: '',
     newPassword: '',
@@ -642,9 +701,8 @@ async function submitRotateCredentials() {
     
     showNotification('Credenciales rotadas exitosamente', 'success')
     showRotateCredentialsModal.value = false
-    monitorToEdit.value = null // <-- CORRECCIÓN: Cierra el modal de herramientas subyacente
+    monitorToEdit.value = null 
     
-    // Actualizar datos en memoria para reflejar el cambio en vivo
     await fetchAllMonitors()
     await fetchAllDevices()
     
@@ -655,7 +713,7 @@ async function submitRotateCredentials() {
   }
 }
 
-// Configuración de Monitor y Reinicio (Existentes)
+// Configuración de Monitor y Reinicio
 async function saveMonitorSettings() {
   if (!monitorToEdit.value) return
   const newGroup = editMonitorGroup.value
@@ -694,7 +752,7 @@ async function requestReboot() {
   try {
     await api.post(`/devices/${m.device_id}/reboot`)
     showNotification(`Reiniciando ${m.client_name}...`, 'success')
-    monitorToEdit.value = null // Cerrar modal
+    monitorToEdit.value = null 
   } catch (err) {
     console.error(err)
     showNotification(err.response?.data?.detail || 'Error al enviar comando de reinicio.', 'error')
@@ -884,7 +942,6 @@ async function handleUpdateSensor() {
         notify_recovery: !!tr.notify_recovery,
       })
   } else if (type === 'wireless') {
-    // Normalizar umbrales
     config.thresholds = {
       min_signal_dbm: num(uiData.config.thresholds.min_signal_dbm, -80),
       min_ccq_percent: num(uiData.config.thresholds.min_ccq_percent, 75),
@@ -1014,7 +1071,7 @@ function closeSensorDetails() {
               :class="[
                 'monitor-card',
                 {
-                  'status-alert': getOverallCardStatus(monitor),
+                  'status-alert': liveMonitorAlerts[monitor.monitor_id],
                   'is-inactive': !monitor.is_active,
                   'is-collapsed': collapsedCards.has(monitor.monitor_id),
                 },
@@ -1036,7 +1093,7 @@ function closeSensorDetails() {
                   <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">
                     {{ monitor.ip_address }}
                   </span>
-                  <span v-if="getOverallCardStatus(monitor)" class="alert-icon">⚠️</span>
+                  <span v-if="liveMonitorAlerts[monitor.monitor_id]" class="alert-icon">⚠️</span>
 
                   <button
                     class="action-icon-btn"
@@ -1205,9 +1262,9 @@ function closeSensorDetails() {
               <div
                 v-else
                 class="card-body collapsed-summary"
-                :class="{ 'has-alert': getOverallCardStatus(monitor) }"
+                :class="{ 'has-alert': liveMonitorAlerts[monitor.monitor_id] }"
               >
-                <span v-if="getOverallCardStatus(monitor)" class="summary-alert"
+                <span v-if="liveMonitorAlerts[monitor.monitor_id]" class="summary-alert"
                   >⚠️ Atención Requerida</span
                 >
                 <span v-else class="summary-ok">✓ Sistema Operativo</span>
