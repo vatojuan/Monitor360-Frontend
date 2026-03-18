@@ -204,6 +204,13 @@ async function fetchVpnProfiles() {
 
 async function createAutoProfile() {
   if (!newProfile.value.name.trim()) return showNotification('Nombre requerido', 'error')
+  
+  // --- VALIDACIÓN DE RUTEO OBLIGATORIO ---
+  if (!newProfile.value.allowed_ips.trim()) {
+    return showNotification('Debes ingresar al menos una Red LAN a Enrutar (ej: 192.168.80.0/24)', 'error')
+  }
+  // ---------------------------------------
+  
   isCreating.value = true
 
   try {
@@ -402,6 +409,12 @@ async function updateVpnAlerts(profile) {
 }
 
 async function updateVpnRoutes(profile) {
+  // --- VALIDACIÓN DE RUTEO OBLIGATORIO AL EDITAR ---
+  if (!profile.allowed_ips || !profile.allowed_ips.trim()) {
+    return showNotification('La red LAN no puede estar vacía. (ej: 192.168.80.0/24)', 'error')
+  }
+  // -------------------------------------------------
+  
   try {
     await api.put(`/vpns/${profile.id}`, {
       allowed_ips: profile.allowed_ips
@@ -550,11 +563,13 @@ onMounted(async () => {
         </div>
 
         <div class="form-group">
-          <label>Redes LAN a Enrutar (Pools)</label>
+          <label style="color: var(--blue);">Redes LAN a Enrutar (Pools) *Obligatorio*</label>
           <input
             v-model="newProfile.allowed_ips"
             type="text"
             placeholder="Ej: 192.168.80.0/24, 10.0.0.0/16"
+            required
+            style="border-color: rgba(59, 130, 246, 0.5);"
           />
         </div>
 
@@ -660,9 +675,9 @@ onMounted(async () => {
               </div>
 
               <div class="form-group" style="margin-top: 1.2rem;">
-                <label style="color: var(--blue);">Redes alcanzables (Rutas para acceso desde PC)</label>
+                <label style="color: var(--blue);">Redes LAN a Enrutar (Pools)</label>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.2rem;">
-                  <input type="text" v-model="p.allowed_ips" placeholder="Ej: 192.168.80.0/24" style="flex: 1;" />
+                  <input type="text" v-model="p.allowed_ips" placeholder="Ej: 192.168.80.0/24" style="flex: 1;" required />
                   <button class="btn-secondary" style="padding: 0 1.5rem;" @click="updateVpnRoutes(p)">💾 Guardar</button>
                 </div>
               </div>
