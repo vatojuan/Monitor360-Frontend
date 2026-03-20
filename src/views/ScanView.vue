@@ -10,7 +10,7 @@ const isAdopting = ref(false)
 const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- DATOS ---
-const probes = ref([]) // NUEVO: Reemplaza a maestros para el escáner
+const maestros = ref([])
 const allDevicesList = ref([]) // Inventario completo
 const credentialProfiles = ref([])
 const pendingDevices = ref([])
@@ -20,7 +20,12 @@ const channels = ref([])
 const groups = ref([])
 const autoTasks = ref([]) // Lista de Tareas Automáticas disponibles
 
-// --- NUEVO ESTADO PARA INTERFACES ---
+// --- ESTADO PARA SONDAS (PROBES) ---
+const availableProbes = ref([])
+const probeSearchText = ref('')
+const isProbeDropdownOpen = ref(false)
+
+// --- ESTADO PARA INTERFACES ---
 const maestroInterfaces = ref([])
 const isLoadingInterfaces = ref(false)
 
@@ -46,7 +51,7 @@ const selectedIgnored = ref([])
 // --- ESTADO CONFIGURACIÓN (SCAN) ---
 const scanConfig = ref({
   id: null,
-  source_device_id: '', // <-- MODIFICADO: Era maestro_id
+  source_device_id: '', // <-- AHORA ES LA SONDA
   network_cidr: '192.168.88.0/24',
   interface: '',
   scan_ports: '8728, 80, 22', 
@@ -58,10 +63,10 @@ const scanConfig = ref({
   adopt_only_managed: false,
 })
 
-// --- NUEVO ESTADO: LISTA DINÁMICA DE SENSORES PARA LA RECETA (SCANNER) ---
+// --- ESTADO: LISTA DINÁMICA DE SENSORES PARA LA RECETA (SCANNER) ---
 const sensorsTemplateList = ref([])
 
-// --- NUEVO ESTADO: MODAL DE ADOPCIÓN MANUAL ---
+// --- ESTADO: MODAL DE ADOPCIÓN MANUAL ---
 const showAdoptModal = ref(false)
 const adoptCredentialId = ref(null)
 const adoptTargetGroup = ref('General')
@@ -73,7 +78,25 @@ const hasSystemSensorScanner = computed(() => sensorsTemplateList.value.some(s =
 const hasSystemSensorModal = computed(() => adoptSensorsList.value.some(s => s.sensor_type === 'system'))
 
 
-// --- COMPUTADA: Dispositivos Sugeridos ---
+// --- COMPUTADA: Sondas Sugeridas (Filtro Autocomplete) ---
+const filteredProbes = computed(() => {
+    if (!probeSearchText.value) return availableProbes.value;
+    const q = probeSearchText.value.toLowerCase();
+    return availableProbes.value.filter(p => 
+        (p.client_name || '').toLowerCase().includes(q) ||
+        (p.ip_address || '').toLowerCase().includes(q) ||
+        (p.vendor || '').toLowerCase().includes(q)
+    );
+});
+
+// Getter seguro para mostrar el nombre en el input de búsqueda
+const selectedProbeName = computed(() => {
+    if (!scanConfig.value.source_device_id) return '';
+    const p = availableProbes.value.find(x => x.id === scanConfig.value.source_device_id);
+    return p ? `${p.client_name} (${p.ip_address})` : 'Dispositivo Desconocido';
+});
+
+// --- COMPUTADA: Dispositivos Sugeridos (Para el Ping Target) ---
 const suggestedTargetDevices = computed(() => {
   if (!scanConfig.value.source_device_id) return []
   const selectedProbe = allDevicesList.value.find((d) => d.id === scanConfig.value.source_device_id)
@@ -91,8 +114,26 @@ const suggestedTargetDevices = computed(() => {
 })
 
 // =============================================================================
-// LÓGICA DE INTERFACES
+// LÓGICA DE INTERFACES Y BUSCADOR
 // =============================================================================
+
+function selectProbe(probe) {
+    scanConfig.value.source_device_id = probe.id;
+    probeSearchText.value = '';
+    isProbeDropdownOpen.value = false;
+}
+
+function clearProbe() {
+    scanConfig.value.source_device_id = '';
+    probeSearchText.value = '';
+    maestroInterfaces.value = [];
+}
+
+// Cierra el dropdown si se hace clic afuera (comportamiento básico)
+function hideProbeDropdown() {
+    setTimeout(() => { isProbeDropdownOpen.value = false; }, 200);
+}
+
 watch(() => scanConfig.value.source_device_id, async (newSourceId) => {
   if (!newSourceId) {
     maestroInterfaces.value = [];
@@ -104,7 +145,7 @@ watch(() => scanConfig.value.source_device_id, async (newSourceId) => {
     const { data } = await api.get(`/devices/${newSourceId}/interfaces`);
     maestroInterfaces.value = data || [];
   } catch (e) {
-    console.error('Error cargando interfaces de la sonda:', e);
+    console.error('Error cargando interfaces de la Sonda:', e);
     maestroInterfaces.value = [];
     showNotification('No se pudieron cargar las interfaces del Router', 'error');
   } finally {
@@ -113,7 +154,7 @@ watch(() => scanConfig.value.source_device_id, async (newSourceId) => {
 });
 
 // =============================================================================
-// LÓGICA DE FILTRADO (REFINADA)
+// LÓGICA DE FILTRADO INBOX/IGNORED (REFINADA)
 // =============================================================================
 
 function isInfra(dev) {
@@ -178,33 +219,35 @@ async function loadGlobalData() {
   isLoading.value = true
   try {
     await Promise.all([
-      fetchDevices(), fetchProbes(), fetchCredentialProfiles(), fetchPendingDevices(),
+      fetchMaestrosAndDevices(), fetchCredentialProfiles(), fetchPendingDevices(),
       fetchIgnoredDevices(), fetchScanProfiles(), fetchChannels(), fetchGroups(),
-      fetchAutoTasks()
+      fetchAutoTasks(), fetchProbes()
     ])
   } catch (e) { showNotification('Error cargando datos', 'error') } 
   finally { isLoading.value = false }
 }
 
-async function fetchDevices() {
+async function fetchMaestrosAndDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevicesList.value = data || []
-  } catch (e) { allDevicesList.value = [] }
+    maestros.value = (data || []).filter((d) => d.is_maestro === true)
+  } catch (e) { maestros.value = []; allDevicesList.value = [] }
 }
 async function fetchProbes() {
   try {
-    const { data } = await api.get('/discovery/probes')
-    probes.value = data || []
-  } catch (e) { probes.value = [] }
+      const { data } = await api.get('/discovery/probes')
+      availableProbes.value = data || []
+  } catch(e) { availableProbes.value = [] }
 }
+
 async function fetchCredentialProfiles() { const { data } = await api.get('/credentials/profiles'); credentialProfiles.value = data || [] }
 async function fetchPendingDevices() { const { data } = await api.get('/discovery/pending', { params: { include_manual: true } }); pendingDevices.value = data || [] }
 async function fetchIgnoredDevices() { try { const { data } = await api.get('/discovery/ignored'); ignoredDevices.value = data || [] } catch (e) {} }
 async function fetchScanProfiles() { try { const { data } = await api.get('/discovery/profiles'); scanProfiles.value = data || [] } catch (e) {} }
 async function fetchChannels() { try { const { data } = await api.get('/channels'); channels.value = data || [] } catch (e) {} }
 async function fetchGroups() { try { const { data } = await api.get('/groups'); groups.value = (data || []).map((g) => g.name) } catch (e) {} }
-async function fetchAutoTasks() { try { const { data } = await api.get('/scheduled-tasks/'); autoTasks.value = data || [] } catch (e) { console.error(e) } } 
+async function fetchAutoTasks() { try { const { data } = await api.get('/scheduled-tasks/'); autoTasks.value = data || [] } catch (e) { console.error(e) } } // NUEVO
 
 // =============================================================================
 // NUEVO: GESTIÓN DINÁMICA DE SENSORES (RECETA REUTILIZABLE)
@@ -221,6 +264,7 @@ function createDefaultSensor(type) {
       config: {}
   }
 
+  // NUEVO: Campos use_auto_task y trigger_task_id en todos los modelos de UI
   if (type === 'ping') {
       base.config = { interval_sec: 60, latency_threshold_ms: 150, display_mode: 'realtime', average_count: 5, ping_type: 'device_to_external', target_ip: 'dynamic_ip' }
       base.ui_alert_timeout = { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null }
@@ -239,6 +283,7 @@ function createDefaultSensor(type) {
   return base
 }
 
+// Modificado para aceptar la lista objetivo como parámetro
 function addSensorToRecipe(targetList, hasSystemFn) {
     if (newSensorType.value === 'system' && hasSystemFn) return;
     targetList.push(createDefaultSensor(newSensorType.value))
@@ -264,14 +309,14 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'timeout', channel_id: sensorData.ui_alert_timeout.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_timeout.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_timeout.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_timeout.notify_recovery };
         if (sensorData.ui_alert_timeout.use_custom_message && sensorData.ui_alert_timeout.custom_message?.trim()) a.custom_message = sensorData.ui_alert_timeout.custom_message.trim();
         if (sensorData.ui_alert_timeout.use_custom_recovery_message && sensorData.ui_alert_timeout.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_timeout.custom_recovery_message.trim();
-        if (sensorData.ui_alert_timeout.use_auto_task && sensorData.ui_alert_timeout.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_timeout.trigger_task_id;
+        if (sensorData.ui_alert_timeout.use_auto_task && sensorData.ui_alert_timeout.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_timeout.trigger_task_id; // NUEVO
         alerts.push(a);
     }
     if (sensorData.ui_alert_latency?.enabled && sensorData.ui_alert_latency?.channel_id) {
         const a = { type: 'high_latency', threshold_ms: onlyNums(sensorData.ui_alert_latency.threshold_ms, 200), channel_id: sensorData.ui_alert_latency.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_latency.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_latency.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_latency.notify_recovery };
         if (sensorData.ui_alert_latency.use_custom_message && sensorData.ui_alert_latency.custom_message?.trim()) a.custom_message = sensorData.ui_alert_latency.custom_message.trim();
         if (sensorData.ui_alert_latency.use_custom_recovery_message && sensorData.ui_alert_latency.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_latency.custom_recovery_message.trim();
-        if (sensorData.ui_alert_latency.use_auto_task && sensorData.ui_alert_latency.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_latency.trigger_task_id;
+        if (sensorData.ui_alert_latency.use_auto_task && sensorData.ui_alert_latency.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_latency.trigger_task_id; // NUEVO
         alerts.push(a);
     }
   } else if (sType === 'ethernet') {
@@ -279,14 +324,14 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'speed_change', channel_id: sensorData.ui_alert_speed_change.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_speed_change.cooldown_minutes, 10), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_speed_change.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_speed_change.notify_recovery };
         if (sensorData.ui_alert_speed_change.use_custom_message && sensorData.ui_alert_speed_change.custom_message?.trim()) a.custom_message = sensorData.ui_alert_speed_change.custom_message.trim();
         if (sensorData.ui_alert_speed_change.use_custom_recovery_message && sensorData.ui_alert_speed_change.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_speed_change.custom_recovery_message.trim();
-        if (sensorData.ui_alert_speed_change.use_auto_task && sensorData.ui_alert_speed_change.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_speed_change.trigger_task_id;
+        if (sensorData.ui_alert_speed_change.use_auto_task && sensorData.ui_alert_speed_change.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_speed_change.trigger_task_id; // NUEVO
         alerts.push(a);
     }
     if (sensorData.ui_alert_traffic?.enabled && sensorData.ui_alert_traffic?.channel_id) {
         const a = { type: 'traffic_threshold', threshold_mbps: onlyNums(sensorData.ui_alert_traffic.threshold_mbps, 100), direction: sensorData.ui_alert_traffic.direction || 'any', channel_id: sensorData.ui_alert_traffic.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_traffic.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_traffic.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_traffic.notify_recovery };
         if (sensorData.ui_alert_traffic.use_custom_message && sensorData.ui_alert_traffic.custom_message?.trim()) a.custom_message = sensorData.ui_alert_traffic.custom_message.trim();
         if (sensorData.ui_alert_traffic.use_custom_recovery_message && sensorData.ui_alert_traffic.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_traffic.custom_recovery_message.trim();
-        if (sensorData.ui_alert_traffic.use_auto_task && sensorData.ui_alert_traffic.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_traffic.trigger_task_id;
+        if (sensorData.ui_alert_traffic.use_auto_task && sensorData.ui_alert_traffic.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_traffic.trigger_task_id; // NUEVO
         alerts.push(a);
     }
   } else if (sType === 'wireless') {
@@ -294,7 +339,7 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'wireless_status', channel_id: sensorData.ui_alert_wireless.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_wireless.cooldown_minutes, 5), notify_recovery: !!sensorData.ui_alert_wireless.notify_recovery };
         if (sensorData.ui_alert_wireless.use_custom_message && sensorData.ui_alert_wireless.custom_message?.trim()) a.custom_message = sensorData.ui_alert_wireless.custom_message.trim();
         if (sensorData.ui_alert_wireless.use_custom_recovery_message && sensorData.ui_alert_wireless.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_wireless.custom_recovery_message.trim();
-        if (sensorData.ui_alert_wireless.use_auto_task && sensorData.ui_alert_wireless.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_wireless.trigger_task_id;
+        if (sensorData.ui_alert_wireless.use_auto_task && sensorData.ui_alert_wireless.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_wireless.trigger_task_id; // NUEVO
         alerts.push(a);
     }
   } else if (sType === 'system') {
@@ -302,7 +347,7 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'system_status', channel_id: sensorData.ui_alert_system.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_system.cooldown_minutes, 5), notify_recovery: !!sensorData.ui_alert_system.notify_recovery };
         if (sensorData.ui_alert_system.use_custom_message && sensorData.ui_alert_system.custom_message?.trim()) a.custom_message = sensorData.ui_alert_system.custom_message.trim();
         if (sensorData.ui_alert_system.use_custom_recovery_message && sensorData.ui_alert_system.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_system.custom_recovery_message.trim();
-        if (sensorData.ui_alert_system.use_auto_task && sensorData.ui_alert_system.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_system.trigger_task_id;
+        if (sensorData.ui_alert_system.use_auto_task && sensorData.ui_alert_system.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_system.trigger_task_id; // NUEVO
         alerts.push(a);
     }
   }
@@ -392,6 +437,7 @@ async function runScan() {
 
 function resetConfigForm() {
     scanConfig.value = { id: null, source_device_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 80, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false }
+    probeSearchText.value = '';
     sensorsTemplateList.value = []
 }
 
@@ -412,7 +458,7 @@ function selectAll() {
 
 function openAdoptModal() {
   if (selectedPending.value.length === 0) return;
-  adoptSensorsList.value = []; 
+  adoptSensorsList.value = []; // Resetear receta al abrir
   adoptTargetGroup.value = 'General';
   showAdoptModal.value = true;
 }
@@ -526,11 +572,9 @@ function editScanProfile(profile) {
 function showNotification(msg, type) { notification.value = { show: true, message: msg, type }; setTimeout(() => (notification.value.show = false), 5000) }
 
 function getProbeName(id) { 
-    if (!id) return 'Desconocido';
-    let p = probes.value.find(x => x.id === id);
-    if (p) return `${p.is_maestro ? '👑 ' : ''}${p.client_name}`;
-    let d = allDevicesList.value.find(x => x.id === id);
-    return d ? d.client_name || d.ip_address : 'Desconocido';
+    const p = availableProbes.value.find((x) => x.id === id) || maestros.value.find(x => x.id === id); 
+    if (!p) return 'Desconocido';
+    return `${p.client_name || p.name || p.ip_address} ${p.is_maestro ? '(👑)' : '(⚙️)'}`; 
 }
 
 function getCredentialName(id) { if (!id) return 'Sin Credenciales'; const c = credentialProfiles.value.find(p => p.id === id); return c ? c.name : 'ID Desconocido' }
@@ -546,7 +590,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     <div class="header">
       <div class="title-block">
         <h1>📡 Centro de Descubrimiento</h1>
-        <p class="subtitle">Escanea, clasifica y adopta dispositivos en tu red.</p>
+        <p class="subtitle">Escanea, clasifica y adopta dispositivos en tu red usando Sondas Gestionadas.</p>
       </div>
       <div class="tabs">
         <button :class="['tab-btn', { active: activeTab === 'inbox' }]" @click="activeTab = 'inbox'">
@@ -621,7 +665,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
               <th>Fabricante</th>
               <th>Plataforma</th>
               <th>Hostname</th>
-              <th>Origen (Sonda)</th>
+              <th>Origen</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -730,14 +774,39 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
           <h3>{{ scanConfig.id ? '✏️ Editando Tarea' : '🚀 Nuevo Escaneo' }}</h3>
         </div>
         <div class="form-body">
-          <div class="form-group">
-            <label>Sonda de Escaneo (Router)</label>
-            <select v-model="scanConfig.source_device_id">
-              <option value="" disabled>-- Selecciona Sonda --</option>
-              <option v-for="p in probes" :key="p.id" :value="p.id">
-                 {{ p.is_maestro ? '👑 (MAESTRO) ' : '📡 ' }}{{ p.client_name }} ({{ p.ip_address }})
-              </option>
-            </select>
+          
+          <div class="form-group dropdown-container" v-blur="hideProbeDropdown">
+            <label>Dispositivo Origen (Sonda de Red)</label>
+            <div class="search-input probe-input" @click="isProbeDropdownOpen = true; probeSearchText = ''">
+                <template v-if="scanConfig.source_device_id">
+                    <span class="selected-probe-text">{{ selectedProbeName }}</span>
+                    <button @click.stop="clearProbe" class="btn-clear-probe" title="Limpiar Sonda">✖</button>
+                </template>
+                <template v-else>
+                    <input 
+                        type="text" 
+                        v-model="probeSearchText" 
+                        placeholder="Buscar router gestionado o maestro..." 
+                        class="probe-search-field"
+                    />
+                </template>
+            </div>
+            
+            <div v-if="isProbeDropdownOpen && !scanConfig.source_device_id" class="probe-dropdown fade-in">
+                <div v-if="filteredProbes.length === 0" class="probe-option empty">No se encontraron dispositivos gestionados.</div>
+                <div 
+                    v-for="p in filteredProbes" 
+                    :key="p.id" 
+                    @click="selectProbe(p)"
+                    class="probe-option"
+                >
+                    <div class="probe-icon">{{ p.is_maestro ? '👑' : '⚙️' }}</div>
+                    <div class="probe-details">
+                        <strong>{{ p.client_name }}</strong>
+                        <span>{{ p.ip_address }} | {{ p.vendor || 'Generic' }}</span>
+                    </div>
+                </div>
+            </div>
           </div>
           <div class="form-group">
             <label>Red Objetivo (CIDR)</label>
@@ -1270,7 +1339,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 }
 
 /* ========================================================================= */
-/* ESTILOS DEL MODAL */
+/* ESTILOS DEL MODAL Y AUTOCOMPLETE */
 /* ========================================================================= */
 .modal-overlay {
     position: fixed;
@@ -1310,19 +1379,26 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     color: var(--blue);
 }
 
-/* Scrollbar estilizada para el modal */
-.modal-body::-webkit-scrollbar {
-    width: 8px;
-}
-.modal-body::-webkit-scrollbar-track {
-    background: rgba(255,255,255,0.05);
-    border-radius: 4px;
-}
-.modal-body::-webkit-scrollbar-thumb {
-    background: var(--primary-color);
-    border-radius: 4px;
-}
-.modal-body::-webkit-scrollbar-thumb:hover {
-    background: var(--blue);
-}
+.modal-body::-webkit-scrollbar { width: 8px; }
+.modal-body::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 4px; }
+.modal-body::-webkit-scrollbar-thumb { background: var(--primary-color); border-radius: 4px; }
+.modal-body::-webkit-scrollbar-thumb:hover { background: var(--blue); }
+
+/* NUEVOS ESTILOS PARA DROPDOWN (PROBES) */
+.dropdown-container { position: relative; }
+.probe-input { display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 0 !important; overflow: hidden; }
+.probe-search-field { width: 100%; border: none; background: transparent; color: white; padding: 10px; outline: none; }
+.selected-probe-text { padding: 10px; color: white; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn-clear-probe { background: none; border: none; color: var(--gray); cursor: pointer; padding: 0 15px; transition: color 0.2s; font-size: 1.1rem; }
+.btn-clear-probe:hover { color: var(--error-red); }
+.probe-dropdown { position: absolute; top: 100%; left: 0; width: 100%; background: var(--bg-color); border: 1px solid var(--primary-color); border-radius: 0 0 6px 6px; border-top: none; max-height: 250px; overflow-y: auto; z-index: 10; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+.probe-option { display: flex; align-items: center; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: background 0.2s; }
+.probe-option:last-child { border-bottom: none; }
+.probe-option:hover { background: rgba(106, 180, 255, 0.1); }
+.probe-option.empty { color: #aaa; font-style: italic; cursor: default; }
+.probe-option.empty:hover { background: transparent; }
+.probe-icon { font-size: 1.2rem; margin-right: 10px; }
+.probe-details { display: flex; flex-direction: column; }
+.probe-details strong { color: white; font-size: 0.9rem; margin-bottom: 2px; }
+.probe-details span { color: #aaa; font-size: 0.75rem; font-family: monospace; }
 </style>
