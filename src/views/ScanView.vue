@@ -800,7 +800,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                     @click="selectProbe(p)"
                     class="probe-option"
                 >
-                    <div class="probe-icon">{{ p.is_maestro ? '👑' : '⚙️' }}</div>
+                    <div class="probe-icon">{{ p.is_maestro ? '👑' : '📡' }}</div>
                     <div class="probe-details">
                         <strong>{{ p.client_name }}</strong>
                         <span>{{ p.ip_address }} | {{ p.vendor || 'Generic' }}</span>
