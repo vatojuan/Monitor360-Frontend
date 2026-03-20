@@ -574,7 +574,7 @@ function showNotification(msg, type) { notification.value = { show: true, messag
 function getProbeName(id) { 
     const p = availableProbes.value.find((x) => x.id === id) || maestros.value.find(x => x.id === id); 
     if (!p) return 'Desconocido';
-    return `${p.client_name || p.name || p.ip_address} ${p.is_maestro ? '(👑)' : '(⚙️)'}`; 
+    return `${p.client_name || p.name || p.ip_address} ${p.is_maestro ? '(👑)' : '(📡)'}`; 
 }
 
 function getCredentialName(id) { if (!id) return 'Sin Credenciales'; const c = credentialProfiles.value.find(p => p.id === id); return c ? c.name : 'ID Desconocido' }
