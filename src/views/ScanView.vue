@@ -10,7 +10,7 @@ const isAdopting = ref(false)
 const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- DATOS ---
-const maestros = ref([])
+const probes = ref([]) // NUEVO: Reemplaza a maestros para el escáner
 const allDevicesList = ref([]) // Inventario completo
 const credentialProfiles = ref([])
 const pendingDevices = ref([])
@@ -18,7 +18,7 @@ const ignoredDevices = ref([]) // Lista Negra
 const scanProfiles = ref([])
 const channels = ref([]) 
 const groups = ref([])
-const autoTasks = ref([]) // NUEVO: Lista de Tareas Automáticas disponibles
+const autoTasks = ref([]) // Lista de Tareas Automáticas disponibles
 
 // --- NUEVO ESTADO PARA INTERFACES ---
 const maestroInterfaces = ref([])
@@ -46,7 +46,7 @@ const selectedIgnored = ref([])
 // --- ESTADO CONFIGURACIÓN (SCAN) ---
 const scanConfig = ref({
   id: null,
-  maestro_id: '',
+  source_device_id: '', // <-- MODIFICADO: Era maestro_id
   network_cidr: '192.168.88.0/24',
   interface: '',
   scan_ports: '8728, 80, 22', 
@@ -75,10 +75,10 @@ const hasSystemSensorModal = computed(() => adoptSensorsList.value.some(s => s.s
 
 // --- COMPUTADA: Dispositivos Sugeridos ---
 const suggestedTargetDevices = computed(() => {
-  if (!scanConfig.value.maestro_id) return []
-  const selectedMaestro = allDevicesList.value.find((d) => d.id === scanConfig.value.maestro_id)
-  if (!selectedMaestro) return allDevicesList.value 
-  const currentVpnId = selectedMaestro.vpn_profile_id
+  if (!scanConfig.value.source_device_id) return []
+  const selectedProbe = allDevicesList.value.find((d) => d.id === scanConfig.value.source_device_id)
+  if (!selectedProbe) return allDevicesList.value 
+  const currentVpnId = selectedProbe.vpn_profile_id
   return allDevicesList.value.filter((d) => {
     if (!currentVpnId) return true
     if (d.is_maestro) return d.vpn_profile_id === currentVpnId
@@ -93,18 +93,18 @@ const suggestedTargetDevices = computed(() => {
 // =============================================================================
 // LÓGICA DE INTERFACES
 // =============================================================================
-watch(() => scanConfig.value.maestro_id, async (newMaestroId) => {
-  if (!newMaestroId) {
+watch(() => scanConfig.value.source_device_id, async (newSourceId) => {
+  if (!newSourceId) {
     maestroInterfaces.value = [];
     return;
   }
   
   isLoadingInterfaces.value = true;
   try {
-    const { data } = await api.get(`/devices/${newMaestroId}/interfaces`);
+    const { data } = await api.get(`/devices/${newSourceId}/interfaces`);
     maestroInterfaces.value = data || [];
   } catch (e) {
-    console.error('Error cargando interfaces del maestro:', e);
+    console.error('Error cargando interfaces de la sonda:', e);
     maestroInterfaces.value = [];
     showNotification('No se pudieron cargar las interfaces del Router', 'error');
   } finally {
@@ -178,20 +178,25 @@ async function loadGlobalData() {
   isLoading.value = true
   try {
     await Promise.all([
-      fetchMaestrosAndDevices(), fetchCredentialProfiles(), fetchPendingDevices(),
+      fetchDevices(), fetchProbes(), fetchCredentialProfiles(), fetchPendingDevices(),
       fetchIgnoredDevices(), fetchScanProfiles(), fetchChannels(), fetchGroups(),
-      fetchAutoTasks() // NUEVO: Cargar Tareas
+      fetchAutoTasks()
     ])
   } catch (e) { showNotification('Error cargando datos', 'error') } 
   finally { isLoading.value = false }
 }
 
-async function fetchMaestrosAndDevices() {
+async function fetchDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevicesList.value = data || []
-    maestros.value = (data || []).filter((d) => d.is_maestro === true)
-  } catch (e) { maestros.value = []; allDevicesList.value = [] }
+  } catch (e) { allDevicesList.value = [] }
+}
+async function fetchProbes() {
+  try {
+    const { data } = await api.get('/discovery/probes')
+    probes.value = data || []
+  } catch (e) { probes.value = [] }
 }
 async function fetchCredentialProfiles() { const { data } = await api.get('/credentials/profiles'); credentialProfiles.value = data || [] }
 async function fetchPendingDevices() { const { data } = await api.get('/discovery/pending', { params: { include_manual: true } }); pendingDevices.value = data || [] }
@@ -199,7 +204,7 @@ async function fetchIgnoredDevices() { try { const { data } = await api.get('/di
 async function fetchScanProfiles() { try { const { data } = await api.get('/discovery/profiles'); scanProfiles.value = data || [] } catch (e) {} }
 async function fetchChannels() { try { const { data } = await api.get('/channels'); channels.value = data || [] } catch (e) {} }
 async function fetchGroups() { try { const { data } = await api.get('/groups'); groups.value = (data || []).map((g) => g.name) } catch (e) {} }
-async function fetchAutoTasks() { try { const { data } = await api.get('/scheduled-tasks/'); autoTasks.value = data || [] } catch (e) { console.error(e) } } // NUEVO
+async function fetchAutoTasks() { try { const { data } = await api.get('/scheduled-tasks/'); autoTasks.value = data || [] } catch (e) { console.error(e) } } 
 
 // =============================================================================
 // NUEVO: GESTIÓN DINÁMICA DE SENSORES (RECETA REUTILIZABLE)
@@ -216,7 +221,6 @@ function createDefaultSensor(type) {
       config: {}
   }
 
-  // NUEVO: Campos use_auto_task y trigger_task_id en todos los modelos de UI
   if (type === 'ping') {
       base.config = { interval_sec: 60, latency_threshold_ms: 150, display_mode: 'realtime', average_count: 5, ping_type: 'device_to_external', target_ip: 'dynamic_ip' }
       base.ui_alert_timeout = { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null }
@@ -235,7 +239,6 @@ function createDefaultSensor(type) {
   return base
 }
 
-// Modificado para aceptar la lista objetivo como parámetro
 function addSensorToRecipe(targetList, hasSystemFn) {
     if (newSensorType.value === 'system' && hasSystemFn) return;
     targetList.push(createDefaultSensor(newSensorType.value))
@@ -261,14 +264,14 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'timeout', channel_id: sensorData.ui_alert_timeout.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_timeout.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_timeout.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_timeout.notify_recovery };
         if (sensorData.ui_alert_timeout.use_custom_message && sensorData.ui_alert_timeout.custom_message?.trim()) a.custom_message = sensorData.ui_alert_timeout.custom_message.trim();
         if (sensorData.ui_alert_timeout.use_custom_recovery_message && sensorData.ui_alert_timeout.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_timeout.custom_recovery_message.trim();
-        if (sensorData.ui_alert_timeout.use_auto_task && sensorData.ui_alert_timeout.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_timeout.trigger_task_id; // NUEVO
+        if (sensorData.ui_alert_timeout.use_auto_task && sensorData.ui_alert_timeout.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_timeout.trigger_task_id;
         alerts.push(a);
     }
     if (sensorData.ui_alert_latency?.enabled && sensorData.ui_alert_latency?.channel_id) {
         const a = { type: 'high_latency', threshold_ms: onlyNums(sensorData.ui_alert_latency.threshold_ms, 200), channel_id: sensorData.ui_alert_latency.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_latency.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_latency.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_latency.notify_recovery };
         if (sensorData.ui_alert_latency.use_custom_message && sensorData.ui_alert_latency.custom_message?.trim()) a.custom_message = sensorData.ui_alert_latency.custom_message.trim();
         if (sensorData.ui_alert_latency.use_custom_recovery_message && sensorData.ui_alert_latency.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_latency.custom_recovery_message.trim();
-        if (sensorData.ui_alert_latency.use_auto_task && sensorData.ui_alert_latency.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_latency.trigger_task_id; // NUEVO
+        if (sensorData.ui_alert_latency.use_auto_task && sensorData.ui_alert_latency.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_latency.trigger_task_id;
         alerts.push(a);
     }
   } else if (sType === 'ethernet') {
@@ -276,14 +279,14 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'speed_change', channel_id: sensorData.ui_alert_speed_change.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_speed_change.cooldown_minutes, 10), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_speed_change.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_speed_change.notify_recovery };
         if (sensorData.ui_alert_speed_change.use_custom_message && sensorData.ui_alert_speed_change.custom_message?.trim()) a.custom_message = sensorData.ui_alert_speed_change.custom_message.trim();
         if (sensorData.ui_alert_speed_change.use_custom_recovery_message && sensorData.ui_alert_speed_change.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_speed_change.custom_recovery_message.trim();
-        if (sensorData.ui_alert_speed_change.use_auto_task && sensorData.ui_alert_speed_change.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_speed_change.trigger_task_id; // NUEVO
+        if (sensorData.ui_alert_speed_change.use_auto_task && sensorData.ui_alert_speed_change.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_speed_change.trigger_task_id;
         alerts.push(a);
     }
     if (sensorData.ui_alert_traffic?.enabled && sensorData.ui_alert_traffic?.channel_id) {
         const a = { type: 'traffic_threshold', threshold_mbps: onlyNums(sensorData.ui_alert_traffic.threshold_mbps, 100), direction: sensorData.ui_alert_traffic.direction || 'any', channel_id: sensorData.ui_alert_traffic.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_traffic.cooldown_minutes, 5), tolerance_count: Math.max(1, onlyNums(sensorData.ui_alert_traffic.tolerance_count, 1)), notify_recovery: !!sensorData.ui_alert_traffic.notify_recovery };
         if (sensorData.ui_alert_traffic.use_custom_message && sensorData.ui_alert_traffic.custom_message?.trim()) a.custom_message = sensorData.ui_alert_traffic.custom_message.trim();
         if (sensorData.ui_alert_traffic.use_custom_recovery_message && sensorData.ui_alert_traffic.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_traffic.custom_recovery_message.trim();
-        if (sensorData.ui_alert_traffic.use_auto_task && sensorData.ui_alert_traffic.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_traffic.trigger_task_id; // NUEVO
+        if (sensorData.ui_alert_traffic.use_auto_task && sensorData.ui_alert_traffic.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_traffic.trigger_task_id;
         alerts.push(a);
     }
   } else if (sType === 'wireless') {
@@ -291,7 +294,7 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'wireless_status', channel_id: sensorData.ui_alert_wireless.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_wireless.cooldown_minutes, 5), notify_recovery: !!sensorData.ui_alert_wireless.notify_recovery };
         if (sensorData.ui_alert_wireless.use_custom_message && sensorData.ui_alert_wireless.custom_message?.trim()) a.custom_message = sensorData.ui_alert_wireless.custom_message.trim();
         if (sensorData.ui_alert_wireless.use_custom_recovery_message && sensorData.ui_alert_wireless.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_wireless.custom_recovery_message.trim();
-        if (sensorData.ui_alert_wireless.use_auto_task && sensorData.ui_alert_wireless.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_wireless.trigger_task_id; // NUEVO
+        if (sensorData.ui_alert_wireless.use_auto_task && sensorData.ui_alert_wireless.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_wireless.trigger_task_id;
         alerts.push(a);
     }
   } else if (sType === 'system') {
@@ -299,7 +302,7 @@ function buildSensorConfigPayload(sensorData) {
         const a = { type: 'system_status', channel_id: sensorData.ui_alert_system.channel_id, cooldown_minutes: onlyNums(sensorData.ui_alert_system.cooldown_minutes, 5), notify_recovery: !!sensorData.ui_alert_system.notify_recovery };
         if (sensorData.ui_alert_system.use_custom_message && sensorData.ui_alert_system.custom_message?.trim()) a.custom_message = sensorData.ui_alert_system.custom_message.trim();
         if (sensorData.ui_alert_system.use_custom_recovery_message && sensorData.ui_alert_system.custom_recovery_message?.trim()) a.custom_recovery_message = sensorData.ui_alert_system.custom_recovery_message.trim();
-        if (sensorData.ui_alert_system.use_auto_task && sensorData.ui_alert_system.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_system.trigger_task_id; // NUEVO
+        if (sensorData.ui_alert_system.use_auto_task && sensorData.ui_alert_system.trigger_task_id) a.trigger_task_id = sensorData.ui_alert_system.trigger_task_id;
         alerts.push(a);
     }
   }
@@ -351,7 +354,7 @@ function restoreSensorConfig(sensors) {
 // =============================================================================
 
 async function runScan() {
-  if (!scanConfig.value.maestro_id) return showNotification('Selecciona un Router Maestro', 'error')
+  if (!scanConfig.value.source_device_id) return showNotification('Selecciona una Sonda de Escaneo', 'error')
   
   isScanning.value = true 
   try {
@@ -366,7 +369,7 @@ async function runScan() {
        resetConfigForm();
        isScanning.value = false;
     } else {
-        const { data } = await api.post(`/discovery/scan/${scanConfig.value.maestro_id}`, payload); 
+        const { data } = await api.post(`/discovery/scan/${scanConfig.value.source_device_id}`, payload); 
         if (data.status === 'started') {
           showNotification('🚀 Escaneo iniciado en segundo plano.', 'info');
           
@@ -388,7 +391,7 @@ async function runScan() {
 }
 
 function resetConfigForm() {
-    scanConfig.value = { id: null, maestro_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 80, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false }
+    scanConfig.value = { id: null, source_device_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 80, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false }
     sensorsTemplateList.value = []
 }
 
@@ -409,7 +412,7 @@ function selectAll() {
 
 function openAdoptModal() {
   if (selectedPending.value.length === 0) return;
-  adoptSensorsList.value = []; // Resetear receta al abrir
+  adoptSensorsList.value = []; 
   adoptTargetGroup.value = 'General';
   showAdoptModal.value = true;
 }
@@ -430,7 +433,7 @@ async function confirmAdoption() {
     const finalSensorsPayload = adoptSensorsList.value.map(s => buildSensorConfigPayload(s));
 
     const payload = { 
-        maestro_id: devicesToAdopt[0].maestro_id, 
+        source_device_id: devicesToAdopt[0].source_device_id || devicesToAdopt[0].maestro_id, 
         credential_profile_id: adoptCredentialId.value, 
         target_group: adoptTargetGroup.value,
         sensors_config: finalSensorsPayload.length > 0 ? finalSensorsPayload : null,
@@ -516,12 +519,20 @@ async function hardDeleteDevice(mac) { if(!confirm('¿Eliminar DEFINITIVAMENTE?'
 // --- UTIL ---
 async function deleteScanProfile(id) { if (!confirm('¿Eliminar tarea?')) return; try { await api.delete(`/discovery/profiles/${id}`); await fetchScanProfiles(); showNotification('Eliminada', 'success') } catch (e) {} }
 function editScanProfile(profile) { 
-    scanConfig.value = { ...scanConfig.value, id: profile.id, maestro_id: profile.maestro_id, network_cidr: profile.network_cidr, interface: profile.interface, scan_ports: profile.scan_ports, scan_mode: profile.scan_mode, credential_profile_id: profile.credential_profile_id, is_active: profile.is_active, scan_interval_minutes: profile.scan_interval_minutes, target_group: profile.target_group || 'General', adopt_only_managed: profile.adopt_only_managed || false }
+    scanConfig.value = { ...scanConfig.value, id: profile.id, source_device_id: profile.source_device_id || profile.maestro_id, network_cidr: profile.network_cidr, interface: profile.interface, scan_ports: profile.scan_ports, scan_mode: profile.scan_mode, credential_profile_id: profile.credential_profile_id, is_active: profile.is_active, scan_interval_minutes: profile.scan_interval_minutes, target_group: profile.target_group || 'General', adopt_only_managed: profile.adopt_only_managed || false }
     if (profile.sensors_template) restoreSensorConfig(profile.sensors_template); else { sensorsTemplateList.value = [] }
     window.scrollTo({ top: 0, behavior: 'smooth' }); showNotification(`✏️ Editando: ${profile.network_cidr}`, 'info') 
 }
 function showNotification(msg, type) { notification.value = { show: true, message: msg, type }; setTimeout(() => (notification.value.show = false), 5000) }
-function getMaestroName(id) { const m = maestros.value.find((x) => x.id === id); return m ? m.name || m.client_name || m.ip_address : 'Desconocido' }
+
+function getProbeName(id) { 
+    if (!id) return 'Desconocido';
+    let p = probes.value.find(x => x.id === id);
+    if (p) return `${p.is_maestro ? '👑 ' : ''}${p.client_name}`;
+    let d = allDevicesList.value.find(x => x.id === id);
+    return d ? d.client_name || d.ip_address : 'Desconocido';
+}
+
 function getCredentialName(id) { if (!id) return 'Sin Credenciales'; const c = credentialProfiles.value.find(p => p.id === id); return c ? c.name : 'ID Desconocido' }
 async function toggleProfileStatus(profile) { const newState = !profile.is_active; try { profile.is_active = newState; await api.patch(`/discovery/profiles/${profile.id}/toggle`, { active: newState }); showNotification(newState ? 'Reanudada' : 'Pausada', 'info'); } catch (e) { profile.is_active = !newState; } }
 </script>
@@ -610,7 +621,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
               <th>Fabricante</th>
               <th>Plataforma</th>
               <th>Hostname</th>
-              <th>Origen</th>
+              <th>Origen (Sonda)</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -636,7 +647,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
               <td>{{ dev.vendor || 'Desconocido' }}</td>
               <td>{{ dev.platform || '-' }}</td>
               <td>{{ dev.hostname || '-' }}</td>
-              <td>{{ getMaestroName(dev.maestro_id) }}</td>
+              <td>{{ getProbeName(dev.source_device_id || dev.maestro_id) }}</td>
               <td>
                 <button @click="deletePending(dev.mac_address)" class="btn-sm btn-del" title="Ignorar (Mover a Blacklist)">🚫</button>
               </td>
@@ -720,10 +731,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
         </div>
         <div class="form-body">
           <div class="form-group">
-            <label>Router Maestro</label>
-            <select v-model="scanConfig.maestro_id">
-              <option value="" disabled>-- Selecciona Router --</option>
-              <option v-for="m in maestros" :key="m.id" :value="m.id">{{ m.name || m.client_name }} ({{ m.ip_address }})</option>
+            <label>Sonda de Escaneo (Router)</label>
+            <select v-model="scanConfig.source_device_id">
+              <option value="" disabled>-- Selecciona Sonda --</option>
+              <option v-for="p in probes" :key="p.id" :value="p.id">
+                 {{ p.is_maestro ? '👑 (MAESTRO) ' : '📡 ' }}{{ p.client_name }} ({{ p.ip_address }})
+              </option>
             </select>
           </div>
           <div class="form-group">
@@ -816,7 +829,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 </div>
                                 <div class="chk-label attach-toggle" style="margin-bottom: 10px; padding: 5px; background: rgba(100, 200, 255, 0.1); border-radius: 4px; border: 1px solid var(--blue);">
                                     <input type="checkbox" :checked="sensor.attach_to === 'maestro'" @change="sensor.attach_to = $event.target.checked ? 'maestro' : 'device'" />
-                                    <span class="text-highlight font-weight-bold" style="font-size: 0.8rem;">📍 Ejecutar Ping desde el Maestro hacia este equipo</span>
+                                    <span class="text-highlight font-weight-bold" style="font-size: 0.8rem;">📍 Ejecutar Ping desde la Sonda hacia este equipo</span>
                                 </div>
                                 <div class="chk-label"><input type="checkbox" v-model="sensor.ui_alert_timeout.enabled" /> Alerta Timeout</div>
                                 <div v-if="sensor.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
@@ -908,7 +921,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
           <div v-if="scanProfiles.length === 0" class="empty-list">Sin tareas.</div>
           <div v-for="prof in scanProfiles" :key="prof.id" class="profile-card">
             <div class="profile-info">
-              <strong>{{ getMaestroName(prof.maestro_id) }}</strong>
+              <strong>{{ getProbeName(prof.source_device_id || prof.maestro_id) }}</strong>
               <div class="profile-details"><span>🌐 {{ prof.network_cidr }}</span><span>🔌 {{ prof.interface || 'Auto-detectada' }}</span></div>
               <div class="profile-sub-details">
                  <span class="cred-badge">🔐 {{ getCredentialName(prof.credential_profile_id) }}</span>
@@ -987,7 +1000,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                 </div>
                                 <div class="chk-label attach-toggle" style="margin-bottom: 10px; padding: 5px; background: rgba(100, 200, 255, 0.1); border-radius: 4px; border: 1px solid var(--blue);">
                                     <input type="checkbox" :checked="sensor.attach_to === 'maestro'" @change="sensor.attach_to = $event.target.checked ? 'maestro' : 'device'" />
-                                    <span class="text-highlight font-weight-bold" style="font-size: 0.8rem;">📍 Ejecutar Ping desde el Maestro hacia este equipo</span>
+                                    <span class="text-highlight font-weight-bold" style="font-size: 0.8rem;">📍 Ejecutar Ping desde la Sonda hacia este equipo</span>
                                 </div>
                                 <div class="chk-label"><input type="checkbox" v-model="sensor.ui_alert_timeout.enabled" /> Alerta Timeout</div>
                                 <div v-if="sensor.ui_alert_timeout.enabled" style="margin-top: 5px; padding-left: 10px; border-left: 2px solid #555;">
