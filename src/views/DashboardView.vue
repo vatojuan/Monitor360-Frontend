@@ -5,6 +5,7 @@ import api from '@/lib/api'
 import { connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
 import { waitForSession } from '@/lib/supabase'
 import draggable from 'vuedraggable'
+import SensorConfigurator from '@/components/SensorConfigurator.vue' // <-- NUEVO: Importamos la fuente de la verdad
 
 const router = useRouter()
 
@@ -48,8 +49,11 @@ const deviceComments = ref([])
 const newCommentContent = ref('')
 const isAddingComment = ref(false)
 
-// --- Nuevo Estado para Selector de IP Destino ---
+// --- Nuevo Estado para Componente Universal ---
 const allDevicesList = ref([])
+const autoTasks = ref([])
+const deviceInterfaces = ref([])
+const isLoadingInterfaces = ref(false)
 
 // --- COMPUTADOS ---
 const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
@@ -119,6 +123,12 @@ const createNewPingSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
   ui_alert_latency: {
     enabled: false,
@@ -127,6 +137,12 @@ const createNewPingSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
 })
 
@@ -141,6 +157,12 @@ const createNewEthernetSensor = () => ({
     cooldown_minutes: 10,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
   ui_alert_traffic: {
     enabled: false,
@@ -150,6 +172,12 @@ const createNewEthernetSensor = () => ({
     cooldown_minutes: 5,
     tolerance_count: 1,
     notify_recovery: false,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
 })
 
@@ -158,7 +186,8 @@ const createNewWirelessSensor = () => ({
   is_active: true,
   alerts_paused: false,
   config: {
-    interface_name: 'wlan1',
+    interface_name: '',
+    interval_sec: 60,
     thresholds: {
       min_signal_dbm: -80,
       min_ccq_percent: 75,
@@ -173,6 +202,12 @@ const createNewWirelessSensor = () => ({
     channel_id: null,
     cooldown_minutes: 10,
     notify_recovery: true,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
 })
 
@@ -181,6 +216,7 @@ const createNewSystemSensor = () => ({
   is_active: true,
   alerts_paused: false,
   config: {
+    interval_sec: 60,
     thresholds: {
       max_cpu_percent: 85,
       max_memory_percent: 90,
@@ -196,6 +232,12 @@ const createNewSystemSensor = () => ({
     channel_id: null,
     cooldown_minutes: 10,
     notify_recovery: true,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
 })
 
@@ -256,6 +298,28 @@ async function fetchAllDevices() {
     allDevicesList.value = Array.isArray(data) ? data : []
   } catch (err) {
     console.error('Error fetching devices list:', err)
+  }
+}
+
+async function fetchAutoTasks() {
+  try {
+    const { data } = await api.get('/scheduled-tasks/')
+    autoTasks.value = data || []
+  } catch (err) {
+    console.error('Error al cargar tareas automáticas:', err)
+  }
+}
+
+async function fetchDeviceInterfaces(deviceId) {
+  isLoadingInterfaces.value = true;
+  deviceInterfaces.value = [];
+  try {
+    const { data } = await api.get(`/devices/${deviceId}/interfaces`);
+    deviceInterfaces.value = data || [];
+  } catch (e) {
+    console.warn(`No se pudieron cargar las interfaces para el equipo ${deviceId}.`);
+  } finally {
+    isLoadingInterfaces.value = false;
   }
 }
 
@@ -535,6 +599,7 @@ onMounted(async () => {
   await fetchGroups()
   await fetchAllMonitors()
   await fetchAllDevices()
+  await fetchAutoTasks()
 
   await connectWebSocketWhenAuthenticated()
   wireWsSyncAndSubs()
@@ -761,79 +826,116 @@ async function requestReboot() {
   }
 }
 
-// --- EDICION SENSOR (Lápiz) ---
+// --- EDICION SENSOR CON SENSORCONFIGURATOR ---
+const mapAlert = (alerts, type) => alerts.find((a) => a.type === type) || {}
+
 async function showSensorDetails(s, m, e) {
   e?.stopPropagation()
   await ensureChannelsLoaded()
+  
   sensorDetailsToShow.value = s
   currentMonitorContext.value = m
-  const cfg = safeJsonParse(s.config)
+  
+  // Si el sensor pertenece a un equipo, cargamos sus interfaces para que el select se pueble
+  if (['ethernet', 'wireless'].includes(s.sensor_type) && m.device_id) {
+    fetchDeviceInterfaces(m.device_id)
+  }
+
+  const cfg = typeof s.config === 'string' ? safeJsonParse(s.config, {}) : s.config
+  const alerts = cfg?.alerts || []
 
   if (s.sensor_type === 'ping') {
-    const d = createNewPingSensor()
-    d.name = s.name
-    d.is_active = s.is_active !== false
-    d.alerts_paused = s.alerts_paused === true
-    d.config = { ...d.config, ...cfg }
-    if (!m.maestro_id) d.config.ping_type = 'device_to_external'
-    ;(cfg.alerts || []).forEach((a) => {
-      if (a.type === 'timeout') {
-        d.ui_alert_timeout = {
-          enabled: true,
-          channel_id: a.channel_id,
-          cooldown_minutes: a.cooldown_minutes ?? 5,
-          tolerance_count: a.tolerance_count ?? 1,
-          notify_recovery: a.notify_recovery ?? false,
-        }
+    const uiData = createNewPingSensor()
+    uiData.name = s.name
+    uiData.is_active = s.is_active !== false
+    uiData.alerts_paused = s.alerts_paused === true
+    uiData.config = { ...uiData.config, ...cfg }
+    if (!m.maestro_id) uiData.config.ping_type = 'device_to_external'
+
+    const tOut = mapAlert(alerts, 'timeout')
+    if (tOut.type) {
+      uiData.ui_alert_timeout = {
+        enabled: true,
+        ...tOut,
+        channel_id: tOut.channel_id ?? null,
+        notify_recovery: tOut.notify_recovery ?? false,
+        use_custom_message: !!tOut.custom_message,
+        custom_message: tOut.custom_message || '',
+        use_custom_recovery_message: !!tOut.custom_recovery_message,
+        custom_recovery_message: tOut.custom_recovery_message || '',
+        use_auto_task: !!tOut.trigger_task_id,
+        trigger_task_id: tOut.trigger_task_id || null,
       }
-      if (a.type === 'high_latency') {
-        d.ui_alert_latency = {
-          enabled: true,
-          channel_id: a.channel_id,
-          threshold_ms: a.threshold_ms ?? 200,
-          cooldown_minutes: a.cooldown_minutes ?? 5,
-          tolerance_count: a.tolerance_count ?? 1,
-          notify_recovery: a.notify_recovery ?? false,
-        }
+    }
+
+    const tLat = mapAlert(alerts, 'high_latency')
+    if (tLat.type) {
+      uiData.ui_alert_latency = {
+        enabled: true,
+        ...tLat,
+        channel_id: tLat.channel_id ?? null,
+        notify_recovery: tLat.notify_recovery ?? false,
+        use_custom_message: !!tLat.custom_message,
+        custom_message: tLat.custom_message || '',
+        use_custom_recovery_message: !!tLat.custom_recovery_message,
+        custom_recovery_message: tLat.custom_recovery_message || '',
+        use_auto_task: !!tLat.trigger_task_id,
+        trigger_task_id: tLat.trigger_task_id || null,
       }
-    })
-    newPingSensor.value = d
+    }
+    newPingSensor.value = uiData
+
   } else if (s.sensor_type === 'ethernet') {
-    const d = createNewEthernetSensor()
-    d.name = s.name
-    d.is_active = s.is_active !== false
-    d.alerts_paused = s.alerts_paused === true
-    d.config = { interface_name: cfg.interface_name || '', interval_sec: cfg.interval_sec || 30 }
-    ;(cfg.alerts || []).forEach((a) => {
-      if (a.type === 'speed_change') {
-        d.ui_alert_speed_change = {
-          enabled: true,
-          channel_id: a.channel_id,
-          cooldown_minutes: a.cooldown_minutes ?? 10,
-          tolerance_count: a.tolerance_count ?? 1,
-          notify_recovery: a.notify_recovery ?? false,
-        }
+    const uiData = createNewEthernetSensor()
+    uiData.name = s.name
+    uiData.is_active = s.is_active !== false
+    uiData.alerts_paused = s.alerts_paused === true
+    uiData.config = {
+      interface_name: cfg.interface_name || '',
+      interval_sec: cfg.interval_sec || 60,
+    }
+
+    const tSpd = mapAlert(alerts, 'speed_change')
+    if (tSpd.type) {
+      uiData.ui_alert_speed_change = {
+        enabled: true,
+        ...tSpd,
+        channel_id: tSpd.channel_id ?? null,
+        notify_recovery: tSpd.notify_recovery ?? false,
+        use_custom_message: !!tSpd.custom_message,
+        custom_message: tSpd.custom_message || '',
+        use_custom_recovery_message: !!tSpd.custom_recovery_message,
+        custom_recovery_message: tSpd.custom_recovery_message || '',
+        use_auto_task: !!tSpd.trigger_task_id,
+        trigger_task_id: tSpd.trigger_task_id || null,
       }
-      if (a.type === 'traffic_threshold') {
-        d.ui_alert_traffic = {
-          enabled: true,
-          channel_id: a.channel_id,
-          threshold_mbps: a.threshold_mbps ?? 100,
-          direction: a.direction || 'any',
-          cooldown_minutes: a.cooldown_minutes ?? 5,
-          tolerance_count: a.tolerance_count ?? 1,
-          notify_recovery: a.notify_recovery ?? false,
-        }
+    }
+
+    const tTrf = mapAlert(alerts, 'traffic_threshold')
+    if (tTrf.type) {
+      uiData.ui_alert_traffic = {
+        enabled: true,
+        ...tTrf,
+        channel_id: tTrf.channel_id ?? null,
+        notify_recovery: tTrf.notify_recovery ?? false,
+        use_custom_message: !!tTrf.custom_message,
+        custom_message: tTrf.custom_message || '',
+        use_custom_recovery_message: !!tTrf.custom_recovery_message,
+        custom_recovery_message: tTrf.custom_recovery_message || '',
+        use_auto_task: !!tTrf.trigger_task_id,
+        trigger_task_id: tTrf.trigger_task_id || null,
       }
-    })
-    newEthernetSensor.value = d
+    }
+    newEthernetSensor.value = uiData
+
   } else if (s.sensor_type === 'wireless') {
-    const d = createNewWirelessSensor()
-    d.name = s.name
-    d.is_active = s.is_active !== false
-    d.alerts_paused = s.alerts_paused === true
-    d.config = {
-      interface_name: cfg.interface_name || 'wlan1',
+    const uiData = createNewWirelessSensor()
+    uiData.name = s.name
+    uiData.is_active = s.is_active !== false
+    uiData.alerts_paused = s.alerts_paused === true
+    uiData.config = {
+      interface_name: cfg.interface_name || '',
+      interval_sec: cfg.interval_sec || 60,
       tolerance_checks: cfg.tolerance_checks ?? 3,
       thresholds: {
         min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
@@ -843,23 +945,31 @@ async function showSensorDetails(s, m, e) {
         min_rx_rate_mbps: cfg.thresholds?.min_rx_rate_mbps ?? 0,
       }
     }
-    ;(cfg.alerts || []).forEach((a) => {
-      if (a.type === 'wireless_status') {
-        d.ui_alert_status = {
-          enabled: true,
-          channel_id: a.channel_id,
-          cooldown_minutes: a.cooldown_minutes ?? 10,
-          notify_recovery: a.notify_recovery ?? true,
-        }
+
+    const tWir = mapAlert(alerts, 'wireless_status')
+    if (tWir.type) {
+      uiData.ui_alert_status = {
+        enabled: true,
+        ...tWir,
+        channel_id: tWir.channel_id ?? null,
+        notify_recovery: tWir.notify_recovery ?? true,
+        use_custom_message: !!tWir.custom_message,
+        custom_message: tWir.custom_message || '',
+        use_custom_recovery_message: !!tWir.custom_recovery_message,
+        custom_recovery_message: tWir.custom_recovery_message || '',
+        use_auto_task: !!tWir.trigger_task_id,
+        trigger_task_id: tWir.trigger_task_id || null,
       }
-    })
-    newWirelessSensor.value = d
+    }
+    newWirelessSensor.value = uiData
+
   } else if (s.sensor_type === 'system') {
-    const d = createNewSystemSensor()
-    d.name = s.name
-    d.is_active = s.is_active !== false
-    d.alerts_paused = s.alerts_paused === true
-    d.config = {
+    const uiData = createNewSystemSensor()
+    uiData.name = s.name
+    uiData.is_active = s.is_active !== false
+    uiData.alerts_paused = s.alerts_paused === true
+    uiData.config = {
+      interval_sec: cfg.interval_sec || 60,
       tolerance_checks: cfg.tolerance_checks ?? 3,
       thresholds: {
         max_cpu_percent: cfg.thresholds?.max_cpu_percent ?? null,
@@ -870,17 +980,23 @@ async function showSensorDetails(s, m, e) {
         restart_uptime_seconds: cfg.thresholds?.restart_uptime_seconds ?? 300,
       }
     }
-    ;(cfg.alerts || []).forEach((a) => {
-      if (a.type === 'system_status') {
-        d.ui_alert_status = {
-          enabled: true,
-          channel_id: a.channel_id,
-          cooldown_minutes: a.cooldown_minutes ?? 10,
-          notify_recovery: a.notify_recovery ?? true,
-        }
+
+    const tSys = mapAlert(alerts, 'system_status')
+    if (tSys.type) {
+      uiData.ui_alert_status = {
+        enabled: true,
+        ...tSys,
+        channel_id: tSys.channel_id ?? null,
+        notify_recovery: tSys.notify_recovery ?? true,
+        use_custom_message: !!tSys.custom_message,
+        custom_message: tSys.custom_message || '',
+        use_custom_recovery_message: !!tSys.custom_recovery_message,
+        custom_recovery_message: tSys.custom_recovery_message || '',
+        use_auto_task: !!tSys.trigger_task_id,
+        trigger_task_id: tSys.trigger_task_id || null,
       }
-    })
-    newSystemSensor.value = d
+    }
+    newSystemSensor.value = uiData
   }
 }
 
@@ -902,45 +1018,67 @@ async function handleUpdateSensor() {
 
   if (type === 'ping') {
     const t = uiData.ui_alert_timeout
-    if (t.enabled && t.channel_id)
-      config.alerts.push({
+    if (t.enabled && t.channel_id) {
+      const alertObj = {
         type: 'timeout',
         channel_id: t.channel_id,
         cooldown_minutes: num(t.cooldown_minutes, 5),
         tolerance_count: num(t.tolerance_count, 1),
         notify_recovery: !!t.notify_recovery,
-      })
+      }
+      if (t.use_custom_message && t.custom_message?.trim()) alertObj.custom_message = t.custom_message.trim()
+      if (t.use_custom_recovery_message && t.custom_recovery_message?.trim()) alertObj.custom_recovery_message = t.custom_recovery_message.trim()
+      if (t.use_auto_task && t.trigger_task_id) alertObj.trigger_task_id = t.trigger_task_id
+      config.alerts.push(alertObj)
+    }
+
     const l = uiData.ui_alert_latency
-    if (l.enabled && l.channel_id)
-      config.alerts.push({
+    if (l.enabled && l.channel_id) {
+      const alertObj = {
         type: 'high_latency',
         threshold_ms: num(l.threshold_ms, 200),
         channel_id: l.channel_id,
         cooldown_minutes: num(l.cooldown_minutes, 5),
         tolerance_count: num(l.tolerance_count, 1),
         notify_recovery: !!l.notify_recovery,
-      })
+      }
+      if (l.use_custom_message && l.custom_message?.trim()) alertObj.custom_message = l.custom_message.trim()
+      if (l.use_custom_recovery_message && l.custom_recovery_message?.trim()) alertObj.custom_recovery_message = l.custom_recovery_message.trim()
+      if (l.use_auto_task && l.trigger_task_id) alertObj.trigger_task_id = l.trigger_task_id
+      config.alerts.push(alertObj)
+    }
   } else if (type === 'ethernet') {
     const s = uiData.ui_alert_speed_change
-    if (s.enabled && s.channel_id)
-      config.alerts.push({
+    if (s.enabled && s.channel_id) {
+      const alertObj = {
         type: 'speed_change',
         channel_id: s.channel_id,
         cooldown_minutes: num(s.cooldown_minutes, 10),
         tolerance_count: num(s.tolerance_count, 1),
         notify_recovery: !!s.notify_recovery,
-      })
+      }
+      if (s.use_custom_message && s.custom_message?.trim()) alertObj.custom_message = s.custom_message.trim()
+      if (s.use_custom_recovery_message && s.custom_recovery_message?.trim()) alertObj.custom_recovery_message = s.custom_recovery_message.trim()
+      if (s.use_auto_task && s.trigger_task_id) alertObj.trigger_task_id = s.trigger_task_id
+      config.alerts.push(alertObj)
+    }
+
     const tr = uiData.ui_alert_traffic
-    if (tr.enabled && tr.channel_id)
-      config.alerts.push({
+    if (tr.enabled && tr.channel_id) {
+      const alertObj = {
         type: 'traffic_threshold',
         threshold_mbps: num(tr.threshold_mbps, 100),
-        direction: tr.direction,
+        direction: tr.direction || 'any',
         channel_id: tr.channel_id,
         cooldown_minutes: num(tr.cooldown_minutes, 5),
         tolerance_count: num(tr.tolerance_count, 1),
         notify_recovery: !!tr.notify_recovery,
-      })
+      }
+      if (tr.use_custom_message && tr.custom_message?.trim()) alertObj.custom_message = tr.custom_message.trim()
+      if (tr.use_custom_recovery_message && tr.custom_recovery_message?.trim()) alertObj.custom_recovery_message = tr.custom_recovery_message.trim()
+      if (tr.use_auto_task && tr.trigger_task_id) alertObj.trigger_task_id = tr.trigger_task_id
+      config.alerts.push(alertObj)
+    }
   } else if (type === 'wireless') {
     config.thresholds = {
       min_signal_dbm: num(uiData.config.thresholds.min_signal_dbm, -80),
@@ -953,12 +1091,16 @@ async function handleUpdateSensor() {
 
     const w = uiData.ui_alert_status
     if (w.enabled && w.channel_id) {
-      config.alerts.push({
+      const alertObj = {
         type: 'wireless_status',
         channel_id: w.channel_id,
         cooldown_minutes: num(w.cooldown_minutes, 10),
         notify_recovery: !!w.notify_recovery
-      })
+      }
+      if (w.use_custom_message && w.custom_message?.trim()) alertObj.custom_message = w.custom_message.trim()
+      if (w.use_custom_recovery_message && w.custom_recovery_message?.trim()) alertObj.custom_recovery_message = w.custom_recovery_message.trim()
+      if (w.use_auto_task && w.trigger_task_id) alertObj.trigger_task_id = w.trigger_task_id
+      config.alerts.push(alertObj)
     }
   } else if (type === 'system') {
     config.thresholds = {
@@ -973,12 +1115,16 @@ async function handleUpdateSensor() {
 
     const w = uiData.ui_alert_status
     if (w.enabled && w.channel_id) {
-      config.alerts.push({
+      const alertObj = {
         type: 'system_status',
         channel_id: w.channel_id,
         cooldown_minutes: num(w.cooldown_minutes, 10),
         notify_recovery: !!w.notify_recovery
-      })
+      }
+      if (w.use_custom_message && w.custom_message?.trim()) alertObj.custom_message = w.custom_message.trim()
+      if (w.use_custom_recovery_message && w.custom_recovery_message?.trim()) alertObj.custom_recovery_message = w.custom_recovery_message.trim()
+      if (w.use_auto_task && w.trigger_task_id) alertObj.trigger_task_id = w.trigger_task_id
+      config.alerts.push(alertObj)
     }
   }
 
@@ -1004,6 +1150,7 @@ async function handleUpdateSensor() {
     showNotification('Error al guardar sensor', 'error')
   }
 }
+
 function closeSensorDetails() {
   sensorDetailsToShow.value = null
   currentMonitorContext.value = null
@@ -1424,9 +1571,9 @@ function closeSensorDetails() {
       <div class="modal-content">
         <h3>Editar: {{ sensorDetailsToShow.name }}</h3>
 
-        <form @submit.prevent="handleUpdateSensor" class="config-form">
+        <form @submit.prevent="handleUpdateSensor" class="config-form-wrapper">
           <div class="sub-section span-3">
-            <h4>Configuración General</h4>
+            <h4>Estado del Sensor</h4>
             <div class="general-config-grid">
               <div class="form-group checkbox-group">
                 <input
@@ -1434,7 +1581,7 @@ function closeSensorDetails() {
                   v-model="(sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : sensorDetailsToShow.sensor_type === 'ethernet' ? newEthernetSensor : sensorDetailsToShow.sensor_type === 'wireless' ? newWirelessSensor : newSystemSensor).is_active"
                   id="gAct"
                 />
-                <label for="gAct">Encendido</label>
+                <label for="gAct">Encendido (Monitorear)</label>
               </div>
               <div class="form-group checkbox-group">
                 <input
@@ -1442,402 +1589,52 @@ function closeSensorDetails() {
                   v-model="(sensorDetailsToShow.sensor_type === 'ping' ? newPingSensor : sensorDetailsToShow.sensor_type === 'ethernet' ? newEthernetSensor : sensorDetailsToShow.sensor_type === 'wireless' ? newWirelessSensor : newSystemSensor).alerts_paused"
                   id="gPau"
                 />
-                <label for="gPau">Pausar Alertas</label>
+                <label for="gPau">Pausar Alertas de este Sensor</label>
               </div>
             </div>
           </div>
 
-          <template v-if="sensorDetailsToShow.sensor_type === 'ping'">
-            <div class="form-group span-3">
-              <label>Nombre</label><input type="text" v-model="newPingSensor.name" required />
-            </div>
+          <SensorConfigurator
+            v-if="sensorDetailsToShow.sensor_type === 'ping'"
+            v-model="newPingSensor"
+            sensor-type="ping"
+            :channels="channelsList"
+            :auto-tasks="autoTasks"
+            :suggested-target-devices="suggestedTargetDevicesForEdit"
+            :has-parent-maestro="hasParentMaestro"
+          />
 
-            <div class="form-group span-2">
-              <label>Tipo</label>
-              <select v-model="newPingSensor.config.ping_type" :disabled="!hasParentMaestro">
-                <option value="device_to_external">Salida</option>
-                <option value="maestro_to_device" v-if="hasParentMaestro">Entrada</option>
-              </select>
-            </div>
+          <SensorConfigurator
+            v-else-if="sensorDetailsToShow.sensor_type === 'ethernet'"
+            v-model="newEthernetSensor"
+            sensor-type="ethernet"
+            :channels="channelsList"
+            :auto-tasks="autoTasks"
+            :device-interfaces="deviceInterfaces"
+            :is-loading-interfaces="isLoadingInterfaces"
+          />
 
-            <div class="form-group" v-if="newPingSensor.config.ping_type === 'device_to_external'">
-              <label>IP Destino</label>
-              <div style="position: relative">
-                <input
-                  list="edit-target-devices"
-                  type="text"
-                  v-model="newPingSensor.config.target_ip"
-                  placeholder="Ej: 8.8.8.8 o selecciona de la lista"
-                  class="search-input"
-                />
-                <datalist id="edit-target-devices">
-                  <option
-                    v-for="d in suggestedTargetDevicesForEdit"
-                    :key="d.id"
-                    :value="d.ip_address"
-                  >
-                    {{ d.client_name }}
-                  </option>
-                </datalist>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Intervalo</label
-              ><input type="number" v-model.number="newPingSensor.config.interval_sec" />
-            </div>
-            <div class="form-group">
-              <label>Umbral (ms)</label
-              ><input type="number" v-model.number="newPingSensor.config.latency_threshold_ms" />
-            </div>
+          <SensorConfigurator
+            v-else-if="sensorDetailsToShow.sensor_type === 'wireless'"
+            v-model="newWirelessSensor"
+            sensor-type="wireless"
+            :channels="channelsList"
+            :auto-tasks="autoTasks"
+            :device-interfaces="deviceInterfaces"
+            :is-loading-interfaces="isLoadingInterfaces"
+          />
 
-            <div class="sub-section span-3">
-              <h4>Alertas</h4>
-
-              <div class="alert-config-item">
-                <div class="form-group checkbox-group">
-                  <input type="checkbox" v-model="newPingSensor.ui_alert_timeout.enabled" /><label
-                    >Timeout</label
-                  >
-                </div>
-                <div v-if="newPingSensor.ui_alert_timeout.enabled">
-                  <div class="config-grid">
-                    <div class="form-group">
-                      <label>Canal</label>
-                      <select v-model="newPingSensor.ui_alert_timeout.channel_id">
-                        <option v-for="c in channelsList" :key="c.id" :value="c.id">
-                          {{ c.name }}
-                        </option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label>Enfriamiento (min)</label>
-                      <input
-                        type="number"
-                        v-model.number="newPingSensor.ui_alert_timeout.cooldown_minutes"
-                      />
-                    </div>
-                    <div class="form-group">
-                      <span class="small-label">Tolerancia a Fallos:</span>
-                      <input
-                        type="number"
-                        v-model.number="newPingSensor.ui_alert_timeout.tolerance_count"
-                        class="tiny-input"
-                      />
-                    </div>
-                    <div class="form-group checkbox-group">
-                      <input
-                        type="checkbox"
-                        v-model="newPingSensor.ui_alert_timeout.notify_recovery"
-                      />
-                      <label>Notif. Recuperación 🟢</label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <hr class="separator" />
-
-              <div class="alert-config-item">
-                <div class="form-group checkbox-group">
-                  <input type="checkbox" v-model="newPingSensor.ui_alert_latency.enabled" /><label
-                    >Latencia Alta</label
-                  >
-                </div>
-                <div v-if="newPingSensor.ui_alert_latency.enabled">
-                  <div class="config-grid">
-                    <div class="form-group">
-                      <label>Canal</label>
-                      <select v-model="newPingSensor.ui_alert_latency.channel_id">
-                        <option v-for="c in channelsList" :key="c.id" :value="c.id">
-                          {{ c.name }}
-                        </option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label>Enfriamiento (min)</label>
-                      <input
-                        type="number"
-                        v-model.number="newPingSensor.ui_alert_latency.cooldown_minutes"
-                      />
-                    </div>
-                    <div class="form-group">
-                      <span class="small-label">Tolerancia a Fallos:</span>
-                      <input
-                        type="number"
-                        v-model.number="newPingSensor.ui_alert_latency.tolerance_count"
-                        class="tiny-input"
-                      />
-                    </div>
-                    <div class="form-group checkbox-group">
-                      <input
-                        type="checkbox"
-                        v-model="newPingSensor.ui_alert_latency.notify_recovery"
-                      />
-                      <label>Notif. Recuperación 🟢</label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <template v-if="sensorDetailsToShow.sensor_type === 'ethernet'">
-            <div class="form-group span-2">
-              <label>Nombre</label><input type="text" v-model="newEthernetSensor.name" required />
-            </div>
-            <div class="form-group">
-              <label>Interfaz</label
-              ><input type="text" v-model="newEthernetSensor.config.interface_name" />
-            </div>
-
-            <div class="sub-section span-3">
-              <h4>Alertas</h4>
-
-              <div class="alert-config-item">
-                <div class="form-group checkbox-group">
-                  <input
-                    type="checkbox"
-                    v-model="newEthernetSensor.ui_alert_speed_change.enabled"
-                  /><label>Cambio de Velocidad</label>
-                </div>
-                <div v-if="newEthernetSensor.ui_alert_speed_change.enabled">
-                  <div class="config-grid">
-                    <div class="form-group">
-                      <label>Canal</label>
-                      <select v-model="newEthernetSensor.ui_alert_speed_change.channel_id">
-                        <option v-for="c in channelsList" :key="c.id" :value="c.id">
-                          {{ c.name }}
-                        </option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label>Enfriamiento</label>
-                      <input
-                        type="number"
-                        v-model.number="newEthernetSensor.ui_alert_speed_change.cooldown_minutes"
-                      />
-                    </div>
-                    <div class="form-group">
-                      <span class="small-label">Tolerancia a Fallos:</span>
-                      <input
-                        type="number"
-                        v-model.number="newEthernetSensor.ui_alert_speed_change.tolerance_count"
-                        class="tiny-input"
-                      />
-                    </div>
-                    <div class="form-group checkbox-group">
-                      <input
-                        type="checkbox"
-                        v-model="newEthernetSensor.ui_alert_speed_change.notify_recovery"
-                      />
-                      <label>Recuperación 🟢</label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <hr class="separator" />
-
-              <div class="alert-config-item">
-                <div class="form-group checkbox-group">
-                  <input
-                    type="checkbox"
-                    v-model="newEthernetSensor.ui_alert_traffic.enabled"
-                  /><label>Umbral de Tráfico</label>
-                </div>
-                <div v-if="newEthernetSensor.ui_alert_traffic.enabled">
-                  <div class="config-grid">
-                    <div class="form-group">
-                      <label>Mbps</label>
-                      <input
-                        type="number"
-                        v-model.number="newEthernetSensor.ui_alert_traffic.threshold_mbps"
-                      />
-                    </div>
-                    <div class="form-group">
-                      <label>Dirección</label>
-                      <select v-model="newEthernetSensor.ui_alert_traffic.direction">
-                        <option value="any">Cualquiera</option>
-                        <option value="rx">Bajada</option>
-                        <option value="tx">Subida</option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label>Canal</label>
-                      <select v-model="newEthernetSensor.ui_alert_traffic.channel_id">
-                        <option v-for="c in channelsList" :key="c.id" :value="c.id">
-                          {{ c.name }}
-                        </option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label>Enfriamiento</label>
-                      <input
-                        type="number"
-                        v-model.number="newEthernetSensor.ui_alert_traffic.cooldown_minutes"
-                      />
-                    </div>
-                    <div class="form-group">
-                      <span class="small-label">Tolerancia a Fallos:</span>
-                      <input
-                        type="number"
-                        v-model.number="newEthernetSensor.ui_alert_traffic.tolerance_count"
-                        class="tiny-input"
-                      />
-                    </div>
-                    <div class="form-group checkbox-group">
-                      <input
-                        type="checkbox"
-                        v-model="newEthernetSensor.ui_alert_traffic.notify_recovery"
-                      />
-                      <label>Recuperación 🟢</label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <template v-if="sensorDetailsToShow.sensor_type === 'wireless'">
-            <div class="form-group span-2">
-              <label>Nombre</label><input type="text" v-model="newWirelessSensor.name" required />
-            </div>
-            <div class="form-group">
-              <label>Interfaz Inalámbrica</label>
-              <input type="text" v-model="newWirelessSensor.config.interface_name" required placeholder="wlan1" />
-            </div>
-
-            <div class="sub-section span-3">
-              <h4>Umbrales y Calidad de Enlace</h4>
-              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
-                <div class="form-group">
-                  <label>Señal Mínima (dBm)</label>
-                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_signal_dbm" />
-                </div>
-                <div class="form-group">
-                  <label>CCQ Mínimo (%)</label>
-                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_ccq_percent" />
-                </div>
-                <div class="form-group">
-                  <label>Clientes Mínimos (APs)</label>
-                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_client_count" />
-                </div>
-                <div class="form-group">
-                  <label>TX Rate Mín. (Mbps)</label>
-                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_tx_rate_mbps" />
-                </div>
-                <div class="form-group">
-                  <label>RX Rate Mín. (Mbps)</label>
-                  <input type="number" v-model.number="newWirelessSensor.config.thresholds.min_rx_rate_mbps" />
-                </div>
-              </div>
-              <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem; margin-top: 0.5rem;">
-                <label>Tolerancia Anti-Spam (Redis)</label>
-                <input type="number" v-model.number="newWirelessSensor.config.tolerance_checks" />
-              </div>
-            </div>
-
-            <div class="sub-section span-3">
-              <h4>Notificaciones Inalámbricas</h4>
-              <div class="alert-config-item">
-                <div class="form-group checkbox-group">
-                  <input type="checkbox" v-model="newWirelessSensor.ui_alert_status.enabled" id="wStatEdit" />
-                  <label for="wStatEdit">Alertar por Degradación</label>
-                </div>
-                <div v-if="newWirelessSensor.ui_alert_status.enabled">
-                  <div class="config-grid">
-                    <div class="form-group">
-                      <label>Canal</label>
-                      <select v-model="newWirelessSensor.ui_alert_status.channel_id">
-                        <option v-for="c in channelsList" :key="c.id" :value="c.id">{{ c.name }}</option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label>Enfriamiento (min)</label>
-                      <input type="number" v-model.number="newWirelessSensor.ui_alert_status.cooldown_minutes" />
-                    </div>
-                    <div class="form-group checkbox-group" style="grid-column: span 2;">
-                      <input type="checkbox" v-model="newWirelessSensor.ui_alert_status.notify_recovery" />
-                      <label>Notificar Reanudación 🟢</label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <template v-if="sensorDetailsToShow.sensor_type === 'system'">
-            <div class="form-group span-3">
-              <label>Nombre del Sensor</label>
-              <input type="text" v-model="newSystemSensor.name" required />
-            </div>
-
-            <div class="sub-section span-3">
-              <h4>Umbrales de Sistema</h4>
-              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
-                <div class="form-group">
-                  <label>CPU Máximo (%)</label>
-                  <input type="number" v-model.number="newSystemSensor.config.thresholds.max_cpu_percent" placeholder="85" />
-                </div>
-                <div class="form-group">
-                  <label>RAM Máxima (%)</label>
-                  <input type="number" v-model.number="newSystemSensor.config.thresholds.max_memory_percent" placeholder="90" />
-                </div>
-                <div class="form-group">
-                  <label>Temp. Máxima (°C)</label>
-                  <input type="number" v-model.number="newSystemSensor.config.thresholds.max_temperature" placeholder="75" />
-                </div>
-                <div class="form-group">
-                  <label>Voltaje Mín (V)</label>
-                  <input type="number" step="0.1" v-model.number="newSystemSensor.config.thresholds.min_voltage" placeholder="23.5" />
-                </div>
-                <div class="form-group">
-                  <label>Voltaje Máx (V)</label>
-                  <input type="number" step="0.1" v-model.number="newSystemSensor.config.thresholds.max_voltage" placeholder="28.0" />
-                </div>
-                <div class="form-group">
-                  <label>Uptime Reinicio (s)</label>
-                  <input type="number" v-model.number="newSystemSensor.config.thresholds.restart_uptime_seconds" placeholder="300" />
-                </div>
-              </div>
-              <div class="form-group span-3" style="border-top: 1px dashed var(--primary-color); padding-top: 1rem; margin-top: 0.5rem;">
-                <label>Tolerancia Anti-Spam (Redis)</label>
-                <input type="number" v-model.number="newSystemSensor.config.tolerance_checks" />
-              </div>
-            </div>
-
-            <div class="sub-section span-3">
-              <h4>Notificaciones de Sistema</h4>
-              <div class="alert-config-item">
-                <div class="form-group checkbox-group">
-                  <input type="checkbox" v-model="newSystemSensor.ui_alert_status.enabled" id="sysStatEdit" />
-                  <label for="sysStatEdit">Alertar por Exceso de Recursos</label>
-                </div>
-                <div v-if="newSystemSensor.ui_alert_status.enabled">
-                  <div class="config-grid">
-                    <div class="form-group">
-                      <label>Canal</label>
-                      <select v-model="newSystemSensor.ui_alert_status.channel_id">
-                        <option v-for="c in channelsList" :key="c.id" :value="c.id">{{ c.name }}</option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label>Enfriamiento (min)</label>
-                      <input type="number" v-model.number="newSystemSensor.ui_alert_status.cooldown_minutes" />
-                    </div>
-                    <div class="form-group checkbox-group" style="grid-column: span 2;">
-                      <input type="checkbox" v-model="newSystemSensor.ui_alert_status.notify_recovery" />
-                      <label>Notificar Reanudación 🟢</label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
+          <SensorConfigurator
+            v-else-if="sensorDetailsToShow.sensor_type === 'system'"
+            v-model="newSystemSensor"
+            sensor-type="system"
+            :channels="channelsList"
+            :auto-tasks="autoTasks"
+          />
 
           <div class="modal-actions span-3">
-            <button type="button" class="btn-secondary" @click="closeSensorDetails">Cancelar</button
-            ><button type="submit" class="btn-primary">Guardar</button>
+            <button type="button" class="btn-secondary" @click="closeSensorDetails">Cancelar</button>
+            <button type="submit" class="btn-add">Guardar Cambios</button>
           </div>
         </form>
       </div>
@@ -2301,6 +2098,8 @@ function closeSensorDetails() {
   border-radius: 8px;
   width: 90%;
   max-width: 650px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 .modal-content.small {
   max-width: 400px;
@@ -2317,10 +2116,21 @@ function closeSensorDetails() {
   gap: 1rem;
   margin-top: 1.5rem;
 }
-.config-form {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
+
+/* CLASE DEL FORMULARIO CONFIGURATOR */
+.config-form-wrapper {
+  padding: 1.5rem;
+  background-color: var(--bg-color);
+  border-radius: 8px;
+  border: 1px solid var(--primary-color);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.general-config-grid {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
 }
 
 /* HERRAMIENTAS Y BOTONES UNIFICADOS */
@@ -2441,12 +2251,6 @@ function closeSensorDetails() {
   flex-direction: column;
   gap: 0.4rem;
 }
-.form-group.span-2 {
-  grid-column: span 2;
-}
-.form-group.span-3 {
-  grid-column: span 3;
-}
 .form-group label {
   font-weight: bold;
   color: #888;
@@ -2470,15 +2274,9 @@ function closeSensorDetails() {
   color: white;
   font-family: inherit;
 }
-.general-config-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  align-items: end;
-}
 .sub-section {
   grid-column: span 3;
-  background: var(--bg-color);
+  background: var(--surface-color);
   padding: 1rem;
   border-radius: 6px;
   border: 1px solid var(--primary-color);
@@ -2490,21 +2288,7 @@ function closeSensorDetails() {
   padding-bottom: 0.5rem;
   color: #ccc;
 }
-.alert-config-item {
-  display: contents;
-}
-.config-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1rem;
-  margin-bottom: 1rem;
-  padding: 0.5rem 0;
-}
-.separator {
-  border: 0;
-  border-top: 1px solid var(--primary-color);
-  margin: 1rem 0;
-}
+
 /* CORRECCIÓN DE ALINEACIÓN DE CHECKBOXES */
 .checkbox-group {
   display: flex;
@@ -2515,18 +2299,7 @@ function closeSensorDetails() {
 .checkbox-group input[type='checkbox'] {
   width: auto;
   margin: 0;
-}
-
-/* Nueva clase para el label pequeño */
-.small-label {
-  font-size: 0.8rem;
-  color: #aaa;
-  white-space: nowrap;
-}
-/* Nueva clase para el input pequeño */
-.tiny-input {
-  width: 60px !important;
-  padding: 0.4rem !important;
+  accent-color: var(--blue);
 }
 
 .text-green {
@@ -2568,6 +2341,15 @@ function closeSensorDetails() {
 }
 .btn-warning:hover:not(:disabled) {
   background: #fbbf24;
+}
+.btn-add {
+  background-color: var(--blue);
+  color: white;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
 }
 .btn-danger-outline {
   width: 100%;

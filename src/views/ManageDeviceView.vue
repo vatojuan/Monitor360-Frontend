@@ -3,6 +3,7 @@ import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import SmartTerminalModal from '@/components/SmartTerminalModal.vue'
+import SensorConfigurator from '@/components/SensorConfigurator.vue' // <-- NUEVA FUENTE DE LA VERDAD
 import * as XLSX from 'xlsx' // <-- DEPENDENCIA PARA LEER EXCEL
 
 const router = useRouter()
@@ -52,6 +53,7 @@ const allDevices = ref([])
 const vpnProfiles = ref([])
 const credentialProfiles = ref([])
 const channels = ref([])
+const autoTasks = ref([]) // <-- NUEVO PARA AUTO-REMEDIACIÓN
 const isLoadingDevices = ref(false)
 const deletingId = ref(null)
 
@@ -89,9 +91,11 @@ const bulkRenameForm = ref({
 const bulkSensorType = ref('ping')
 const bulkNameTemplate = ref('{{hostname}} - Sensor')
 
-// Modelos de configuración
+// Modelos de configuración COMPLETO
 const createNewPingSensor = () => ({
   config: {
+    ping_type: 'device_to_external',
+    target_ip: '',
     interval_sec: 60,
     latency_threshold_ms: 150,
     display_mode: 'realtime',
@@ -107,6 +111,8 @@ const createNewPingSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
   ui_alert_latency: {
     enabled: false,
@@ -119,6 +125,8 @@ const createNewPingSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
   is_active: true,
   alerts_paused: false,
@@ -126,7 +134,7 @@ const createNewPingSensor = () => ({
 
 const createNewEthernetSensor = () => ({
   config: {
-    interface_name: 'ether1',
+    interface_name: '',
     interval_sec: 30,
   },
   ui_alert_speed_change: {
@@ -139,6 +147,8 @@ const createNewEthernetSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
   ui_alert_traffic: {
     enabled: false,
@@ -152,6 +162,66 @@ const createNewEthernetSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
+  },
+  is_active: true,
+  alerts_paused: false,
+})
+
+const createNewWirelessSensor = () => ({
+  config: {
+    interface_name: '',
+    interval_sec: 60,
+    thresholds: {
+      min_signal_dbm: -80,
+      min_ccq_percent: 75,
+      min_client_count: 0,
+      min_tx_rate_mbps: 0,
+      min_rx_rate_mbps: 0,
+    },
+    tolerance_checks: 3,
+  },
+  ui_alert_status: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    notify_recovery: true,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
+  },
+  is_active: true,
+  alerts_paused: false,
+})
+
+const createNewSystemSensor = () => ({
+  config: {
+    interval_sec: 60,
+    thresholds: {
+      max_cpu_percent: 85,
+      max_memory_percent: 90,
+      max_temperature: 75,
+      min_voltage: null,
+      max_voltage: null,
+      restart_uptime_seconds: 300,
+    },
+    tolerance_checks: 3,
+  },
+  ui_alert_status: {
+    enabled: false,
+    channel_id: null,
+    cooldown_minutes: 10,
+    notify_recovery: true,
+    use_custom_message: false,
+    custom_message: '',
+    use_custom_recovery_message: false,
+    custom_recovery_message: '',
+    use_auto_task: false,
+    trigger_task_id: null,
   },
   is_active: true,
   alerts_paused: false,
@@ -159,6 +229,8 @@ const createNewEthernetSensor = () => ({
 
 const bulkPingConfig = ref(createNewPingSensor())
 const bulkEthernetConfig = ref(createNewEthernetSensor())
+const bulkWirelessConfig = ref(createNewWirelessSensor())
+const bulkSystemConfig = ref(createNewSystemSensor())
 
 // ===== BITÁCORA =====
 const showCommentsModal = ref(false)
@@ -776,6 +848,15 @@ async function fetchChannels() {
   }
 }
 
+async function fetchAutoTasks() {
+  try {
+    const { data } = await api.get('/scheduled-tasks/')
+    autoTasks.value = data || []
+  } catch (error) {
+    console.error(error)
+  }
+}
+
 // ===== FUNCIONES ALTA =====
 async function handleAddDeviceOneStep(forceGeneric = false) {
   const isForced = typeof forceGeneric === 'boolean' ? forceGeneric : false
@@ -981,86 +1062,142 @@ function openBulkModal() {
   if (selectedDevices.value.length === 0) return
   bulkPingConfig.value = createNewPingSensor()
   bulkEthernetConfig.value = createNewEthernetSensor()
+  bulkWirelessConfig.value = createNewWirelessSensor()
+  bulkSystemConfig.value = createNewSystemSensor()
   bulkNameTemplate.value = '{{hostname}} - Sensor'
   showBulkModal.value = true
 }
 
 function buildSensorConfig(type, data) {
   const finalConfig = { ...data.config }
-  const alerts = []
-  const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
+  finalConfig.alerts = []
+  const num = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
 
   if (type === 'ping') {
     finalConfig.ping_type = 'device_to_external'
     if (!finalConfig.target_ip) finalConfig.target_ip = '8.8.8.8'
 
-    if (data.ui_alert_timeout.enabled) {
+    if (data.ui_alert_timeout?.enabled) {
       const a = data.ui_alert_timeout
       if (a.channel_id) {
         const alertObj = {
           type: 'timeout',
           channel_id: a.channel_id,
-          cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
-          tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+          cooldown_minutes: num(a.cooldown_minutes, 5),
+          tolerance_count: Math.max(1, num(a.tolerance_count, 1)),
           notify_recovery: !!a.notify_recovery,
         }
         if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
         if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-        alerts.push(alertObj)
+        if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
+        finalConfig.alerts.push(alertObj)
       }
     }
-    if (data.ui_alert_latency.enabled) {
+    if (data.ui_alert_latency?.enabled) {
       const a = data.ui_alert_latency
       if (a.channel_id) {
         const alertObj = {
           type: 'high_latency',
-          threshold_ms: onlyNums(a.threshold_ms, 200),
+          threshold_ms: num(a.threshold_ms, 200),
           channel_id: a.channel_id,
-          cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
-          tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+          cooldown_minutes: num(a.cooldown_minutes, 5),
+          tolerance_count: Math.max(1, num(a.tolerance_count, 1)),
           notify_recovery: !!a.notify_recovery,
         }
         if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
         if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-        alerts.push(alertObj)
+        if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
+        finalConfig.alerts.push(alertObj)
       }
     }
   } else if (type === 'ethernet') {
-    if (data.ui_alert_speed_change.enabled) {
+    if (data.ui_alert_speed_change?.enabled) {
       const a = data.ui_alert_speed_change
       if (a.channel_id) {
         const alertObj = {
           type: 'speed_change',
           channel_id: a.channel_id,
-          cooldown_minutes: onlyNums(a.cooldown_minutes, 10),
-          tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+          cooldown_minutes: num(a.cooldown_minutes, 10),
+          tolerance_count: Math.max(1, num(a.tolerance_count, 1)),
           notify_recovery: !!a.notify_recovery,
         }
         if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
         if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-        alerts.push(alertObj)
+        if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
+        finalConfig.alerts.push(alertObj)
       }
     }
-    if (data.ui_alert_traffic.enabled) {
+    if (data.ui_alert_traffic?.enabled) {
       const a = data.ui_alert_traffic
       if (a.channel_id) {
         const alertObj = {
           type: 'traffic_threshold',
-          threshold_mbps: onlyNums(a.threshold_mbps, 100),
+          threshold_mbps: num(a.threshold_mbps, 100),
           direction: a.direction || 'any',
           channel_id: a.channel_id,
-          cooldown_minutes: onlyNums(a.cooldown_minutes, 5),
-          tolerance_count: Math.max(1, onlyNums(a.tolerance_count, 1)),
+          cooldown_minutes: num(a.cooldown_minutes, 5),
+          tolerance_count: Math.max(1, num(a.tolerance_count, 1)),
           notify_recovery: !!a.notify_recovery,
         }
         if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
         if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-        alerts.push(alertObj)
+        if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
+        finalConfig.alerts.push(alertObj)
+      }
+    }
+  } else if (type === 'wireless') {
+    finalConfig.thresholds = {
+      min_signal_dbm: num(data.config.thresholds?.min_signal_dbm, -80),
+      min_ccq_percent: num(data.config.thresholds?.min_ccq_percent, 75),
+      min_client_count: num(data.config.thresholds?.min_client_count, 0),
+      min_tx_rate_mbps: num(data.config.thresholds?.min_tx_rate_mbps, 0),
+      min_rx_rate_mbps: num(data.config.thresholds?.min_rx_rate_mbps, 0),
+    }
+    finalConfig.tolerance_checks = Math.max(1, num(data.config.tolerance_checks, 3))
+
+    if (data.ui_alert_status?.enabled) {
+      const a = data.ui_alert_status
+      if (a.channel_id) {
+        const alertObj = {
+          type: 'wireless_status',
+          channel_id: a.channel_id,
+          cooldown_minutes: num(a.cooldown_minutes, 10),
+          notify_recovery: !!a.notify_recovery,
+        }
+        if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+        if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+        if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
+        finalConfig.alerts.push(alertObj)
+      }
+    }
+  } else if (type === 'system') {
+    finalConfig.thresholds = {
+      max_cpu_percent: num(data.config.thresholds?.max_cpu_percent, null),
+      max_memory_percent: num(data.config.thresholds?.max_memory_percent, null),
+      max_temperature: num(data.config.thresholds?.max_temperature, null),
+      min_voltage: num(data.config.thresholds?.min_voltage, null),
+      max_voltage: num(data.config.thresholds?.max_voltage, null),
+      restart_uptime_seconds: num(data.config.thresholds?.restart_uptime_seconds, 300),
+    }
+    finalConfig.tolerance_checks = Math.max(1, num(data.config.tolerance_checks, 3))
+
+    if (data.ui_alert_status?.enabled) {
+      const a = data.ui_alert_status
+      if (a.channel_id) {
+        const alertObj = {
+          type: 'system_status',
+          channel_id: a.channel_id,
+          cooldown_minutes: num(a.cooldown_minutes, 10),
+          notify_recovery: !!a.notify_recovery,
+        }
+        if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
+        if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
+        if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
+        finalConfig.alerts.push(alertObj)
       }
     }
   }
 
-  finalConfig.alerts = alerts
   return {
     sensor_type: type,
     name_template: bulkNameTemplate.value,
@@ -1074,7 +1211,11 @@ async function submitBulkMonitors() {
   if (!bulkNameTemplate.value) return showNotification('Define una plantilla de nombre', 'error')
 
   const sourceData =
-    bulkSensorType.value === 'ping' ? bulkPingConfig.value : bulkEthernetConfig.value
+    bulkSensorType.value === 'ping' ? bulkPingConfig.value :
+    bulkSensorType.value === 'ethernet' ? bulkEthernetConfig.value :
+    bulkSensorType.value === 'wireless' ? bulkWirelessConfig.value :
+    bulkSystemConfig.value
+    
   const sensorConfigPayload = buildSensorConfig(bulkSensorType.value, sourceData)
 
   isBulking.value = true
@@ -1107,6 +1248,7 @@ onMounted(() => {
   fetchVpnProfiles()
   fetchCredentials()
   fetchChannels()
+  fetchAutoTasks()
 })
 
 onUnmounted(() => {
@@ -1708,18 +1850,18 @@ onUnmounted(() => {
         <div class="bulk-form">
           <div class="form-group">
             <label>Tipo de Sensor</label>
-            <div class="sensor-type-selector">
-              <button
-                :class="{ active: bulkSensorType === 'ping' }"
-                @click="bulkSensorType = 'ping'"
-              >
+            <div class="sensor-type-selector" style="flex-wrap: wrap;">
+              <button :class="{ active: bulkSensorType === 'ping' }" @click="bulkSensorType = 'ping'">
                 PING (ICMP)
               </button>
-              <button
-                :class="{ active: bulkSensorType === 'ethernet' }"
-                @click="bulkSensorType = 'ethernet'"
-              >
-                ETHERNET (Tráfico)
+              <button :class="{ active: bulkSensorType === 'ethernet' }" @click="bulkSensorType = 'ethernet'">
+                ETHERNET
+              </button>
+              <button :class="{ active: bulkSensorType === 'wireless' }" @click="bulkSensorType = 'wireless'">
+                WIRELESS 📡
+              </button>
+              <button :class="{ active: bulkSensorType === 'system' }" @click="bulkSensorType = 'system'">
+                SISTEMA 💻
               </button>
             </div>
           </div>
@@ -1727,232 +1869,53 @@ onUnmounted(() => {
           <div class="form-group">
             <label>Plantilla de Nombre</label>
             <input v-model="bulkNameTemplate" placeholder="{{hostname}} - Sensor" />
-            <small
-              >Variables: <code v-pre>{{ hostname }}</code
-              >, <code v-pre>{{ ip }}</code></small
-            >
+            <small>Variables: <code v-pre>{{ hostname }}</code>, <code v-pre>{{ ip }}</code></small>
           </div>
 
           <hr class="separator" />
 
-          <div v-if="bulkSensorType === 'ping'" class="config-grid">
-            <div class="form-group">
-              <label>Destino (Fallback si no es P2P)</label>
-              <div style="position: relative">
-                <input
-                  list="bulk-target-devices"
-                  type="text"
-                  v-model="bulkPingConfig.config.target_ip"
-                  placeholder="Ej: 8.8.8.8 o selecciona de la lista"
-                  class="search-input"
-                />
-                <datalist id="bulk-target-devices">
-                  <option
-                    v-for="d in suggestedTargetDevicesForBulk"
-                    :key="d.id"
-                    :value="d.ip_address"
-                  >
-                    {{ d.client_name }}
-                  </option>
-                </datalist>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Intervalo (s)</label>
-              <input type="number" v-model.number="bulkPingConfig.config.interval_sec" />
-            </div>
-
-            <div class="alert-section span-2">
-              <h4>Alertas</h4>
-
-              <div class="alert-row">
-                <div class="chk-label">
-                  <input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.enabled" />
-                  Timeout
-                </div>
-                <select
-                  v-model="bulkPingConfig.ui_alert_timeout.channel_id"
-                  :disabled="!bulkPingConfig.ui_alert_timeout.enabled"
-                >
-                  <option :value="null">-- Canal --</option>
-                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                </select>
-                <span class="small-label">Tolerancia a Fallos:</span>
-                <input
-                  type="number"
-                  placeholder="Tolerancia"
-                  v-model.number="bulkPingConfig.ui_alert_timeout.tolerance_count"
-                  class="tiny-input"
-                />
-                <label class="tiny-chk"
-                  ><input
-                    type="checkbox"
-                    v-model="bulkPingConfig.ui_alert_timeout.notify_recovery"
-                  />
-                  Recup.</label
-                >
-              </div>
-              
-              <div v-if="bulkPingConfig.ui_alert_timeout.enabled" style="margin-bottom: 1.5rem; padding-left: 10px; border-left: 2px solid #555;">
-                 <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.use_custom_message" /> ✏️ Personalizar Msj. Alerta</div>
-                 <textarea v-if="bulkPingConfig.ui_alert_timeout.use_custom_message" v-model="bulkPingConfig.ui_alert_timeout.custom_message" class="search-input custom-textarea" placeholder="Ej: {client_name} ({ip}) no responde. Estado: {status}"></textarea>
-                 
-                 <template v-if="bulkPingConfig.ui_alert_timeout.notify_recovery">
-                     <div class="chk-label" style="margin-bottom: 5px; margin-top: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" /> ✏️ Personalizar Msj. Recuperación</div>
-                     <textarea v-if="bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" v-model="bulkPingConfig.ui_alert_timeout.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 {client_name} ha vuelto a la normalidad."></textarea>
-                 </template>
-                 <span v-if="bulkPingConfig.ui_alert_timeout.use_custom_message || bulkPingConfig.ui_alert_timeout.use_custom_recovery_message" class="form-hint" style="display: block; margin-top: 5px;">Variables: {client_name}, {ip}, {status}, {sensor_name}</span>
-              </div>
-
-
-              <div class="alert-row">
-                <div class="chk-label">
-                  <input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.enabled" />
-                  Latencia > {{ bulkPingConfig.ui_alert_latency.threshold_ms }}ms
-                </div>
-                <select
-                  v-model="bulkPingConfig.ui_alert_latency.channel_id"
-                  :disabled="!bulkPingConfig.ui_alert_latency.enabled"
-                >
-                  <option :value="null">-- Canal --</option>
-                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                </select>
-                <span class="small-label">Tolerancia a Fallos:</span>
-                <input
-                  type="number"
-                  placeholder="Tolerancia"
-                  v-model.number="bulkPingConfig.ui_alert_latency.tolerance_count"
-                  class="tiny-input"
-                />
-                <label class="tiny-chk"
-                  ><input
-                    type="checkbox"
-                    v-model="bulkPingConfig.ui_alert_latency.notify_recovery"
-                  />
-                  Recup.</label
-                >
-              </div>
-
-              <div v-if="bulkPingConfig.ui_alert_latency.enabled" style="margin-bottom: 1.5rem; padding-left: 10px; border-left: 2px solid #555;">
-                 <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.use_custom_message" /> ✏️ Personalizar Msj. Alerta</div>
-                 <textarea v-if="bulkPingConfig.ui_alert_latency.use_custom_message" v-model="bulkPingConfig.ui_alert_latency.custom_message" class="search-input custom-textarea" placeholder="Ej: Latencia alta de {latency_ms}ms en {client_name}"></textarea>
-                 
-                 <template v-if="bulkPingConfig.ui_alert_latency.notify_recovery">
-                     <div class="chk-label" style="margin-bottom: 5px; margin-top: 5px;"><input type="checkbox" v-model="bulkPingConfig.ui_alert_latency.use_custom_recovery_message" /> ✏️ Personalizar Msj. Recuperación</div>
-                     <textarea v-if="bulkPingConfig.ui_alert_latency.use_custom_recovery_message" v-model="bulkPingConfig.ui_alert_latency.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 La latencia en {client_name} se estabilizó."></textarea>
-                 </template>
-                 <span v-if="bulkPingConfig.ui_alert_latency.use_custom_message || bulkPingConfig.ui_alert_latency.use_custom_recovery_message" class="form-hint" style="display: block; margin-top: 5px;">Variables: {client_name}, {ip}, {status}, {sensor_name}, {latency_ms}</span>
-              </div>
-
-            </div>
+          <div class="config-form-wrapper">
+            <SensorConfigurator
+              v-if="bulkSensorType === 'ping'"
+              v-model="bulkPingConfig"
+              sensor-type="ping"
+              :channels="channels"
+              :auto-tasks="autoTasks"
+              :suggested-target-devices="suggestedTargetDevicesForBulk"
+              hide-name
+            />
+            <SensorConfigurator
+              v-else-if="bulkSensorType === 'ethernet'"
+              v-model="bulkEthernetConfig"
+              sensor-type="ethernet"
+              :channels="channels"
+              :auto-tasks="autoTasks"
+              hide-name
+            />
+            <SensorConfigurator
+              v-else-if="bulkSensorType === 'wireless'"
+              v-model="bulkWirelessConfig"
+              sensor-type="wireless"
+              :channels="channels"
+              :auto-tasks="autoTasks"
+              hide-name
+            />
+            <SensorConfigurator
+              v-else-if="bulkSensorType === 'system'"
+              v-model="bulkSystemConfig"
+              sensor-type="system"
+              :channels="channels"
+              :auto-tasks="autoTasks"
+              hide-name
+            />
           </div>
 
-          <div v-if="bulkSensorType === 'ethernet'" class="config-grid">
-            <div class="form-group">
-              <label>Interfaz</label>
-              <input v-model="bulkEthernetConfig.config.interface_name" placeholder="ether1" />
-            </div>
-            <div class="form-group">
-              <label>Intervalo (s)</label>
-              <input type="number" v-model.number="bulkEthernetConfig.config.interval_sec" />
-            </div>
-
-            <div class="alert-section span-2">
-              <h4>Alertas</h4>
-
-              <div class="alert-row">
-                <div class="chk-label">
-                  <input
-                    type="checkbox"
-                    v-model="bulkEthernetConfig.ui_alert_speed_change.enabled"
-                  />
-                  Cambio Velocidad
-                </div>
-                <select
-                  v-model="bulkEthernetConfig.ui_alert_speed_change.channel_id"
-                  :disabled="!bulkEthernetConfig.ui_alert_speed_change.enabled"
-                >
-                  <option :value="null">-- Canal --</option>
-                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                </select>
-                <span class="small-label">Tolerancia a Fallos:</span>
-                <input
-                  type="number"
-                  placeholder="Tolerancia"
-                  v-model.number="bulkEthernetConfig.ui_alert_speed_change.tolerance_count"
-                  class="tiny-input"
-                />
-                <label class="tiny-chk"
-                  ><input
-                    type="checkbox"
-                    v-model="bulkEthernetConfig.ui_alert_speed_change.notify_recovery"
-                  />
-                  Recup.</label
-                >
-              </div>
-
-              <div v-if="bulkEthernetConfig.ui_alert_speed_change.enabled" style="margin-bottom: 1.5rem; padding-left: 10px; border-left: 2px solid #555;">
-                 <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.use_custom_message" /> ✏️ Personalizar Msj. Alerta</div>
-                 <textarea v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_message" v-model="bulkEthernetConfig.ui_alert_speed_change.custom_message" class="search-input custom-textarea" placeholder="Ej: Cable desconectado en el equipo {client_name}"></textarea>
-                 
-                 <template v-if="bulkEthernetConfig.ui_alert_speed_change.notify_recovery">
-                     <div class="chk-label" style="margin-bottom: 5px; margin-top: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" /> ✏️ Personalizar Msj. Recuperación</div>
-                     <textarea v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" v-model="bulkEthernetConfig.ui_alert_speed_change.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 La interfaz en {client_name} reconectó a {speed}"></textarea>
-                 </template>
-                 <span v-if="bulkEthernetConfig.ui_alert_speed_change.use_custom_message || bulkEthernetConfig.ui_alert_speed_change.use_custom_recovery_message" class="form-hint" style="display: block; margin-top: 5px;">Variables: {client_name}, {ip}, {status}, {sensor_name}, {speed}</span>
-              </div>
-
-
-              <div class="alert-row">
-                <div class="chk-label">
-                  <input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.enabled" />
-                  Tráfico > {{ bulkEthernetConfig.ui_alert_traffic.threshold_mbps }}Mbps
-                </div>
-                <select
-                  v-model="bulkEthernetConfig.ui_alert_traffic.channel_id"
-                  :disabled="!bulkEthernetConfig.ui_alert_traffic.enabled"
-                >
-                  <option :value="null">-- Canal --</option>
-                  <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-                </select>
-                <span class="small-label">Tolerancia a Fallos:</span>
-                <input
-                  type="number"
-                  placeholder="Tolerancia"
-                  v-model.number="bulkEthernetConfig.ui_alert_traffic.tolerance_count"
-                  class="tiny-input"
-                />
-                <label class="tiny-chk"
-                  ><input
-                    type="checkbox"
-                    v-model="bulkEthernetConfig.ui_alert_traffic.notify_recovery"
-                  />
-                  Recup.</label
-                >
-              </div>
-
-              <div v-if="bulkEthernetConfig.ui_alert_traffic.enabled" style="margin-bottom: 1.5rem; padding-left: 10px; border-left: 2px solid #555;">
-                 <div class="chk-label" style="margin-bottom: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.use_custom_message" /> ✏️ Personalizar Msj. Alerta</div>
-                 <textarea v-if="bulkEthernetConfig.ui_alert_traffic.use_custom_message" v-model="bulkEthernetConfig.ui_alert_traffic.custom_message" class="search-input custom-textarea" placeholder="Ej: Tráfico elevado detectado en {client_name}"></textarea>
-                 
-                 <template v-if="bulkEthernetConfig.ui_alert_traffic.notify_recovery">
-                     <div class="chk-label" style="margin-bottom: 5px; margin-top: 5px;"><input type="checkbox" v-model="bulkEthernetConfig.ui_alert_traffic.use_custom_recovery_message" /> ✏️ Personalizar Msj. Recuperación</div>
-                     <textarea v-if="bulkEthernetConfig.ui_alert_traffic.use_custom_recovery_message" v-model="bulkEthernetConfig.ui_alert_traffic.custom_recovery_message" class="search-input custom-textarea" placeholder="Ej: 🟢 El tráfico en {client_name} se normalizó."></textarea>
-                 </template>
-                 <span v-if="bulkEthernetConfig.ui_alert_traffic.use_custom_message || bulkEthernetConfig.ui_alert_traffic.use_custom_recovery_message" class="form-hint" style="display: block; margin-top: 5px;">Variables: {client_name}, {ip}, {status}, {sensor_name}, {tx_bitrate}, {rx_bitrate}</span>
-              </div>
-
-            </div>
-          </div>
-
-          <div class="form-group checkbox" style="margin-top: 1rem">
+          <div class="form-group checkbox" style="margin-top: 1.5rem">
             <label>
-              <input
-                type="checkbox"
-                v-model="
-                  (bulkSensorType === 'ping' ? bulkPingConfig : bulkEthernetConfig).is_active
-                "
-              />
+              <input type="checkbox" v-if="bulkSensorType === 'ping'" v-model="bulkPingConfig.is_active" />
+              <input type="checkbox" v-if="bulkSensorType === 'ethernet'" v-model="bulkEthernetConfig.is_active" />
+              <input type="checkbox" v-if="bulkSensorType === 'wireless'" v-model="bulkWirelessConfig.is_active" />
+              <input type="checkbox" v-if="bulkSensorType === 'system'" v-model="bulkSystemConfig.is_active" />
               Activar monitores inmediatamente
             </label>
           </div>
@@ -2559,7 +2522,7 @@ label {
 }
 
 /* =========================================
-   MODALES
+   MODALES Y CONFIGURADOR DE SENSORES
    ========================================= */
 .modal-overlay {
   position: fixed;
@@ -2582,7 +2545,7 @@ label {
   color: white;
 }
 .large-modal {
-  width: 700px;
+  width: 750px;
   max-width: 95%;
   max-height: 90vh;
   overflow-y: auto;
@@ -2630,6 +2593,17 @@ label {
   border-color: white;
 }
 
+/* CLASE DEL FORMULARIO CONFIGURATOR */
+.config-form-wrapper {
+  padding: 1.5rem;
+  background-color: var(--bg-color);
+  border-radius: 8px;
+  border: 1px solid var(--primary-color);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
 .separator {
   border: 0;
   border-top: 1px solid var(--primary-color);
@@ -2639,58 +2613,6 @@ label {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
-}
-.alert-section {
-  background: rgba(0, 0, 0, 0.2);
-  padding: 1rem;
-  border-radius: 6px;
-  margin-top: 0.5rem;
-}
-.span-2 {
-  grid-column: span 2;
-}
-.alert-row {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  margin-bottom: 0.8rem;
-}
-.alert-row:last-child {
-  margin-bottom: 0;
-}
-.chk-label {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
-}
-.small-label {
-  font-size: 0.8rem;
-  color: #aaa;
-  white-space: nowrap;
-}
-.tiny-input {
-  width: 60px !important;
-  padding: 0.4rem !important;
-}
-.tiny-chk {
-  font-size: 0.8rem;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-weight: normal;
-  color: #ccc;
-}
-.custom-textarea { 
-  padding: 6px 10px; 
-  min-height: 45px; 
-  margin-bottom: 5px; 
-  resize: vertical; 
-}
-.form-hint {
-  font-size: 0.8rem;
-  color: var(--gray);
 }
 .modal-actions {
   display: flex;
