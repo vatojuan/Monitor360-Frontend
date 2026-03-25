@@ -660,26 +660,26 @@ function goToSensorDetail(id) {
   router.push(`/sensor/${id}`)
 }
 
-async function deleteSensor(sensor, e) {
+async function deleteSensor(sensor, monitor, e) {
   e?.stopPropagation()
   if (!confirm(`¿Eliminar sensor "${sensor.name}"?`)) return
 
   try {
+    // 1. Borramos en Base de Datos
     await api.delete(`/sensors/${sensor.id}`)
 
-    const monitor = allMonitors.value.find((m) => m.monitor_id === sensor.monitor_id)
+    // 2. Usamos directamente el objeto 'monitor' que nos pasaron desde el HTML (¡infalible!)
     if (monitor && monitor.sensors) {
       monitor.sensors = monitor.sensors.filter((s) => s.id !== sensor.id)
-      monitor.sensors = [...monitor.sensors]
     }
 
+    // 3. Forzamos a Vue a redibujar el grupo activo
     if (activeGroup.value && groupedMonitors.value[activeGroup.value]) {
-      const groupMonitor = groupedMonitors.value[activeGroup.value].find(
-        (m) => m.monitor_id === sensor.monitor_id,
-      )
-      if (groupMonitor && groupMonitor.sensors) {
-        groupMonitor.sensors = groupMonitor.sensors.filter((s) => s.id !== sensor.id)
-      }
+        // Encontramos el monitor dentro del grupo local y actualizamos su lista
+        const groupMonitor = groupedMonitors.value[activeGroup.value].find(m => m.monitor_id === monitor.monitor_id);
+        if (groupMonitor && groupMonitor.sensors) {
+            groupMonitor.sensors = groupMonitor.sensors.filter((s) => s.id !== sensor.id);
+        }
     }
 
     showNotification('Sensor eliminado correctamente.', 'success')

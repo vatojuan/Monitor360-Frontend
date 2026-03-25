@@ -908,9 +908,9 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     :sensor-type="sensor.sensor_type"
                                     :channels="channels"
                                     :auto-tasks="autoTasks"
-                                    :suggested-target-devices="suggestedTargetDevices"
+                                    :suggested-target-devices="[]"
                                     :has-parent-maestro="true"
-                                    :device-interfaces="maestroInterfaces"
+                                    :device-interfaces="[]"
                                     :is-loading-interfaces="isLoadingInterfaces"
                                     hide-name
                                     is-compact
@@ -1011,10 +1011,10 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     :sensor-type="sensor.sensor_type"
                                     :channels="channels"
                                     :auto-tasks="autoTasks"
-                                    :suggested-target-devices="suggestedTargetDevices"
+                                    :suggested-target-devices="[]"
                                     :has-parent-maestro="true"
-                                    :device-interfaces="maestroInterfaces"
-                                    :is-loading-interfaces="isLoadingInterfaces"
+                                    :device-interfaces="[]"
+                                    :is-loading-interfaces="false"
                                     hide-name
                                     is-compact
                                 />
