@@ -114,6 +114,14 @@ function attachWsListener() {
     if (!msg || typeof msg !== 'object') return
     const ts = (typeof msg.timestamp === 'string' && msg.timestamp) || new Date().toISOString()
     live.lastMsgIso = ts
+    
+    // --- PUENTE UNIVERSAL WEBSOCKET -> VUE (NUEVO) ---
+    // Si el mensaje del backend trae un "type" (ej: "discovery_device_found"), 
+    // lo convertimos mágicamente en un evento global de la ventana (window).
+    if (msg.type) {
+      window.dispatchEvent(new CustomEvent(msg.type, { detail: msg }))
+    }
+    // -------------------------------------------------
   })
 }
 function detachWsListener() {
