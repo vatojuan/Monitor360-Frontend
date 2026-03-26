@@ -11,6 +11,7 @@ const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- ESTADO CREDENCIALES (BÓVEDA) ---
 const savedCredentials = ref([])
+const showPasswordVault = ref(false) // <-- NUEVO: Controla el ojito en Bóveda
 const newCredential = ref({
   name: '',
   username: '',
@@ -35,6 +36,7 @@ const profileForm = ref({
 
 // --- ESTADO ROTACIÓN MASIVA ---
 const isRotateModalOpen = ref(false)
+const showPasswordRotate = ref(false) // <-- NUEVO: Controla el ojito en Rotación Masiva
 const rotateSourceCred = ref(null)
 const rotateMode = ref('new') // 'new' | 'existing'
 const rotateTargetId = ref(null)
@@ -521,8 +523,13 @@ async function confirmDeleteProfile() {
           <input v-if="!rotateNewCred.is_password_only" type="text" v-model="rotateNewCred.username" 
                  :placeholder="rotateNewCred.vendor === 'SNMP' ? 'Community String *' : 'Nuevo Usuario *'" />
 
-          <input type="password" v-model="rotateNewCred.password" 
-                 :placeholder="rotateNewCred.vendor === 'SNMP' ? 'Contraseña (Opcional)' : 'Nueva Contraseña *'" />
+          <div class="password-wrapper">
+            <input :type="showPasswordRotate ? 'text' : 'password'" v-model="rotateNewCred.password" 
+                  :placeholder="rotateNewCred.vendor === 'SNMP' ? 'Contraseña (Opcional)' : 'Nueva Contraseña *'" />
+            <button type="button" class="toggle-password-btn" @click="showPasswordRotate = !showPasswordRotate">
+              {{ showPasswordRotate ? '🙈' : '👁️' }}
+            </button>
+          </div>
         </div>
 
         <div v-if="rotateMode === 'existing'" class="credential-form mt-1">
@@ -759,13 +766,16 @@ async function confirmDeleteProfile() {
             :placeholder="newCredential.vendor === 'SNMP' ? 'Community String *' : 'Usuario *'"
           />
 
-          <input
-            type="password"
-            v-model="newCredential.password"
-            :placeholder="
-              newCredential.vendor === 'SNMP' ? 'Contraseña (Opcional)' : 'Contraseña'
-            "
-          />
+          <div class="password-wrapper">
+            <input
+              :type="showPasswordVault ? 'text' : 'password'"
+              v-model="newCredential.password"
+              :placeholder="newCredential.vendor === 'SNMP' ? 'Contraseña (Opcional)' : 'Contraseña *'"
+            />
+            <button type="button" class="toggle-password-btn" @click="showPasswordVault = !showPasswordVault">
+              {{ showPasswordVault ? '🙈' : '👁️' }}
+            </button>
+          </div>
 
           <button type="submit">Guardar en Bóveda</button>
         </form>
@@ -887,6 +897,40 @@ async function confirmDeleteProfile() {
   color: var(--blue);
   border-bottom: 3px solid var(--blue);
   background-color: var(--surface-color);
+}
+
+/* --- ESTILOS PARA EL OJITO DE CONTRASEÑA --- */
+.password-wrapper {
+  position: relative;
+  width: 100%;
+  display: flex;
+}
+
+.password-wrapper input {
+  width: 100%;
+  padding-right: 2.5rem !important; /* Deja espacio para el botón */
+  box-sizing: border-box;
+}
+
+/* Sobrescribir estilos genéricos de botones de la clase .credential-form */
+button.toggle-password-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent !important;
+  border: none;
+  padding: 0;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: var(--gray);
+  width: auto;
+  height: auto;
+  opacity: 0.7;
+}
+
+button.toggle-password-btn:hover {
+  opacity: 1;
 }
 
 /* CREDENTIALS LAYOUT (TAB 1) */
