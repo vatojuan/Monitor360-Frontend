@@ -227,16 +227,16 @@ const handleScanFinished = async () => {
 
 onMounted(async () => { 
   await loadGlobalData();
-  // CORRECCIÓN: Se cambió 'discovery-refresh' por 'discovery_refresh' para que coincida con el backend
   window.addEventListener('discovery_refresh', handleDiscoveryRefresh);
-  window.addEventListener('discovery_device_found', handleDeviceFound);
+  window.addEventListener('discovery_device_found', handleDeviceFound); // Para automáticos
+  window.addEventListener('discovery_manual_device_found', handleDeviceFound); // <-- NUEVO: Para manuales
   window.addEventListener('discovery_scan_finished', handleScanFinished);
 })
 
 onUnmounted(() => {
-  // CORRECCIÓN: Se cambió 'discovery-refresh' por 'discovery_refresh'
   window.removeEventListener('discovery_refresh', handleDiscoveryRefresh);
   window.removeEventListener('discovery_device_found', handleDeviceFound);
+  window.removeEventListener('discovery_manual_device_found', handleDeviceFound); // <-- NUEVO: Limpieza
   window.removeEventListener('discovery_scan_finished', handleScanFinished);
 })
 
