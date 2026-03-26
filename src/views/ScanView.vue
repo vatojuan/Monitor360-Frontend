@@ -197,23 +197,45 @@ const ignoredVendors = computed(() => [...new Set(ignoredDevices.value.map(d => 
 
 
 // =============================================================================
-// LIFECYCLE & API
+// LIFECYCLE & EVENTOS WEBSOCKET REACTIVOS (NUEVO)
 // =============================================================================
 
 const handleDiscoveryRefresh = async () => {
-  console.log("WebSocket dice: ¡Refrescar Bandeja de Descubrimiento!");
-  isScanning.value = false; 
+  // Solo refresca datos, ya no apaga el spinner obligatoriamente
   await fetchPendingDevices();
   await fetchIgnoredDevices();
+};
+
+const handleDeviceFound = (event) => {
+  // Inyección en tiempo real del dispositivo en la tabla
+  const newDevice = event.detail?.device || event.detail;
+  if (newDevice && newDevice.mac_address) {
+    const exists = pendingDevices.value.some(d => d.mac_address === newDevice.mac_address);
+    if (!exists) {
+      pendingDevices.value.push(newDevice);
+    }
+  }
+};
+
+const handleScanFinished = async () => {
+  if (isScanning.value) {
+    isScanning.value = false;
+    showNotification('✅ Escaneo finalizado. Red peinada.', 'success');
+    await fetchPendingDevices(); // Sincronización final por si hubo desfase
+  }
 };
 
 onMounted(async () => { 
   await loadGlobalData();
   window.addEventListener('discovery-refresh', handleDiscoveryRefresh);
+  window.addEventListener('discovery_device_found', handleDeviceFound);
+  window.addEventListener('discovery_scan_finished', handleScanFinished);
 })
 
 onUnmounted(() => {
   window.removeEventListener('discovery-refresh', handleDiscoveryRefresh);
+  window.removeEventListener('discovery_device_found', handleDeviceFound);
+  window.removeEventListener('discovery_scan_finished', handleScanFinished);
 })
 
 async function loadGlobalData() {
@@ -232,7 +254,7 @@ async function fetchMaestrosAndDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevicesList.value = data || []
-    maestros.value = (data || []).filter((d) => d.is_maestro === true)
+    maestro.value = (data || []).filter((d) => d.is_maestro === true)
   } catch (e) { maestros.value = []; allDevicesList.value = [] }
 }
 async function fetchProbes() {
@@ -411,7 +433,7 @@ function restoreSensorConfig(sensors) {
 }
 
 // =============================================================================
-// ACCIONES DE ESCANEO
+// ACCIONES DE ESCANEO RE-ESTRUCTURADAS (SIN POLLING)
 // =============================================================================
 
 async function runScan() {
@@ -428,20 +450,24 @@ async function runScan() {
        await api.post('/discovery/config', payload); 
        showNotification(scanConfig.value.id ? '✅ Tarea actualizada' : '✅ Nueva tarea creada', 'success'); 
        resetConfigForm();
-       isScanning.value = false;
+       isScanning.value = false; // Como es solo guardar configuración, no queda escaneando.
     } else {
         const { data } = await api.post(`/discovery/scan/${scanConfig.value.source_device_id}`, payload); 
         if (data.status === 'started') {
-          showNotification('🚀 Escaneo iniciado en segundo plano.', 'info');
+          showNotification('🚀 Escaneo iniciado. Recibiendo datos en tiempo real...', 'info');
           
-          [6000, 12000].forEach(delay => {
-            setTimeout(async () => {
-              if (isScanning.value) { 
-                await fetchPendingDevices();
-                if (delay === 12000) isScanning.value = false; 
+          // Eliminamos el polling ruidoso (los 6s y 12s). 
+          // Ahora dependemos de los WebSockets para ver los resultados en vivo (handleDeviceFound y handleScanFinished).
+          // Solo dejamos un Fallback de seguridad extrema (ej. 3 minutos) por si el worker muere silenciosamente.
+          setTimeout(() => {
+              if (isScanning.value) {
+                  isScanning.value = false;
+                  fetchPendingDevices();
               }
-            }, delay);
-          });
+          }, 180000); 
+
+        } else {
+          isScanning.value = false;
         }
     }
     await fetchScanProfiles()
