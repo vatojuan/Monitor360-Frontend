@@ -10,6 +10,9 @@ const isScanning = ref(false)
 const isAdopting = ref(false)
 const notification = ref({ show: false, message: '', type: 'success' })
 
+// --- POLLING INTELIGENTE (LA MAGIA DEL TIEMPO REAL SIN WEBSOCKETS ROTOS) ---
+let scanPollingInterval = null;
+
 // --- DATOS ---
 const maestros = ref([])
 const allDevicesList = ref([]) // Inventario completo
@@ -214,15 +217,24 @@ const handleDeviceFound = (event) => {
     // Evitamos duplicados en la tabla reactiva
     const exists = pendingDevices.value.some(d => d.mac_address === newDevice.mac_address);
     if (!exists) {
-      console.log("Tiempo Real: Inyectando equipo hallado ->", newDevice.ip_address);
+      console.log("Tiempo Real (WS): Inyectando equipo hallado ->", newDevice.ip_address);
       pendingDevices.value.push(newDevice);
     }
   }
 };
 
+const stopPolling = () => {
+    if (scanPollingInterval) {
+        clearInterval(scanPollingInterval);
+        scanPollingInterval = null;
+        console.log("Polling detenido.");
+    }
+};
+
 const handleScanFinished = async () => {
   if (isScanning.value) {
     isScanning.value = false;
+    stopPolling(); // Apagamos el motor "chupa-datos"
     showNotification('✅ Escaneo finalizado. Red peinada.', 'success');
     await fetchPendingDevices(); // Sincronización final por si algún paquete de red se perdió
   }
@@ -237,7 +249,7 @@ onMounted(async () => {
   // 2. Escuchar hallazgos automáticos (estos sí podrían sonar en la campanita)
   window.addEventListener('discovery_device_found', handleDeviceFound); 
   
-  // 3. ESCUCHA SILENCIOSA (MANUAL): Para recibir datos sin activar la Campanita
+  // 3. ESCUCHA SILENCIOSA (MANUAL): Por si acaso el Celery logra enviarlo
   window.addEventListener('discovery_manual_hit', handleDeviceFound); 
   
   // 4. Escuchar fin de tarea
@@ -245,6 +257,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopPolling(); // Importante para no dejar bucles fantasma si el usuario cambia de página
+  
   // Limpieza de todos los listeners para evitar fugas de memoria
   window.removeEventListener('discovery_refresh', handleDiscoveryRefresh);
   window.removeEventListener('discovery_device_found', handleDeviceFound);
@@ -279,7 +293,28 @@ async function fetchProbes() {
 }
 
 async function fetchCredentialProfiles() { const { data } = await api.get('/credentials/profiles'); credentialProfiles.value = data || [] }
-async function fetchPendingDevices() { const { data } = await api.get('/discovery/pending', { params: { include_manual: true } }); pendingDevices.value = data || [] }
+
+// --- FUNCIÓN ADAPTADA PARA PEDIR LOS MANUALES EXPLÍCITAMENTE ---
+async function fetchPendingDevices() { 
+    try {
+        const { data } = await api.get('/discovery/pending', { params: { include_manual: true } }); 
+        
+        // Lógica inteligente de inyección (para no pestañear la UI)
+        if (data && Array.isArray(data)) {
+            data.forEach(incomingDevice => {
+                const exists = pendingDevices.value.some(d => d.mac_address === incomingDevice.mac_address);
+                if (!exists) {
+                    pendingDevices.value.push(incomingDevice);
+                }
+            });
+            // Remover los que ya no están (fueron ignorados/adoptados)
+            pendingDevices.value = pendingDevices.value.filter(d => data.some(inc => inc.mac_address === d.mac_address));
+        }
+    } catch(e) {
+        console.error("Error fetching pending devices", e);
+    }
+}
+
 async function fetchIgnoredDevices() { try { const { data } = await api.get('/discovery/ignored'); ignoredDevices.value = data || [] } catch (e) {} }
 async function fetchScanProfiles() { try { const { data } = await api.get('/discovery/profiles'); scanProfiles.value = data || [] } catch (e) {} }
 async function fetchChannels() { try { const { data } = await api.get('/channels'); channels.value = data || [] } catch (e) {} }
@@ -447,7 +482,7 @@ function restoreSensorConfig(sensors) {
 }
 
 // =============================================================================
-// ACCIONES DE ESCANEO RE-ESTRUCTURADAS (SIN POLLING)
+// ACCIONES DE ESCANEO RE-ESTRUCTURADAS (CON POLLING DINÁMICO)
 // =============================================================================
 
 async function runScan() {
@@ -468,14 +503,21 @@ async function runScan() {
     } else {
         const { data } = await api.post(`/discovery/scan/${scanConfig.value.source_device_id}`, payload); 
         if (data.status === 'started') {
-          showNotification('🚀 Escaneo iniciado. Recibiendo datos en tiempo real...', 'info');
+          showNotification('🚀 Escaneo iniciado. Buscando equipos...', 'info');
           
-          // Eliminamos el polling ruidoso (los 6s y 12s). 
-          // Ahora dependemos de los WebSockets para ver los resultados en vivo (handleDeviceFound y handleScanFinished).
-          // Solo dejamos un Fallback de seguridad extrema (ej. 3 minutos) por si el worker muere silenciosamente.
+          // --- AQUÍ ESTÁ LA MAGIA DEL POLLING DINÁMICO ---
+          // Arrancamos el motor "chupa-datos" que consultará cada 3 segundos
+          stopPolling(); // Por si quedó uno pegado
+          scanPollingInterval = setInterval(() => {
+              console.log("Polling: Consultando nuevos equipos...");
+              fetchPendingDevices();
+          }, 3000);
+          
+          // Fallback de seguridad extrema (ej. 3 minutos) por si el worker muere silenciosamente.
           setTimeout(() => {
               if (isScanning.value) {
                   isScanning.value = false;
+                  stopPolling();
                   fetchPendingDevices();
               }
           }, 180000); 
@@ -488,6 +530,7 @@ async function runScan() {
   } catch (e) { 
     showNotification(e.response?.data?.detail || 'Error', 'error'); 
     isScanning.value = false;
+    stopPolling();
   }
 }
 
