@@ -129,9 +129,6 @@ async function handleAddCredential() {
   if (!newCredential.value.is_password_only && !newCredential.value.username.trim()) {
     return showNotification('El usuario es obligatorio.', 'error')
   }
-  if (!newCredential.value.password.trim() && newCredential.value.vendor !== 'SNMP') {
-    return showNotification('La contraseña es obligatoria.', 'error')
-  }
 
   try {
     const payload = {
@@ -241,7 +238,6 @@ async function submitBulkRotation() {
   if (rotateMode.value === 'new') {
     if (!rotateNewCred.value.name.trim()) return showNotification('Nombre obligatorio.', 'error')
     if (!rotateNewCred.value.is_password_only && !rotateNewCred.value.username.trim()) return showNotification('Usuario obligatorio.', 'error')
-    if (!rotateNewCred.value.password.trim() && rotateNewCred.value.vendor !== 'SNMP') return showNotification('Contraseña obligatoria.', 'error')
   }
 
   const payload = {
