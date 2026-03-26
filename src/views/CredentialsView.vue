@@ -763,7 +763,7 @@ async function confirmDeleteProfile() {
             type="password"
             v-model="newCredential.password"
             :placeholder="
-              newCredential.vendor === 'SNMP' ? 'Contraseña (Opcional)' : 'Contraseña *'
+              newCredential.vendor === 'SNMP' ? 'Contraseña (Opcional)' : 'Contraseña'
             "
           />
 
