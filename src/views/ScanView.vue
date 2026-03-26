@@ -197,21 +197,24 @@ const ignoredVendors = computed(() => [...new Set(ignoredDevices.value.map(d => 
 
 
 // =============================================================================
-// LIFECYCLE & EVENTOS WEBSOCKET REACTIVOS (NUEVO)
+// LIFECYCLE & EVENTOS WEBSOCKET REACTIVOS (CORREGIDO)
 // =============================================================================
 
 const handleDiscoveryRefresh = async () => {
-  // Solo refresca datos, ya no apaga el spinner obligatoriamente
+  // Refresco de seguridad para sincronizar listas completas
   await fetchPendingDevices();
   await fetchIgnoredDevices();
 };
 
 const handleDeviceFound = (event) => {
-  // Inyección en tiempo real del dispositivo en la tabla
+  // Extraemos el dispositivo del 'detail' del CustomEvent enviado por AppLayout
   const newDevice = event.detail?.device || event.detail;
+  
   if (newDevice && newDevice.mac_address) {
+    // Evitamos duplicados en la tabla reactiva
     const exists = pendingDevices.value.some(d => d.mac_address === newDevice.mac_address);
     if (!exists) {
+      console.log("Tiempo Real: Inyectando equipo hallado ->", newDevice.ip_address);
       pendingDevices.value.push(newDevice);
     }
   }
@@ -221,22 +224,31 @@ const handleScanFinished = async () => {
   if (isScanning.value) {
     isScanning.value = false;
     showNotification('✅ Escaneo finalizado. Red peinada.', 'success');
-    await fetchPendingDevices(); // Sincronización final por si hubo desfase
+    await fetchPendingDevices(); // Sincronización final por si algún paquete de red se perdió
   }
 };
 
 onMounted(async () => { 
   await loadGlobalData();
+  
+  // 1. Escuchar señal de refresco (general)
   window.addEventListener('discovery_refresh', handleDiscoveryRefresh);
-  window.addEventListener('discovery_device_found', handleDeviceFound); // Para automáticos
-  window.addEventListener('discovery_manual_device_found', handleDeviceFound); // <-- NUEVO: Para manuales
+  
+  // 2. Escuchar hallazgos automáticos (estos sí podrían sonar en la campanita)
+  window.addEventListener('discovery_device_found', handleDeviceFound); 
+  
+  // 3. ESCUCHA SILENCIOSA (MANUAL): Para recibir datos sin activar la Campanita
+  window.addEventListener('discovery_manual_hit', handleDeviceFound); 
+  
+  // 4. Escuchar fin de tarea
   window.addEventListener('discovery_scan_finished', handleScanFinished);
 })
 
 onUnmounted(() => {
+  // Limpieza de todos los listeners para evitar fugas de memoria
   window.removeEventListener('discovery_refresh', handleDiscoveryRefresh);
   window.removeEventListener('discovery_device_found', handleDeviceFound);
-  window.removeEventListener('discovery_manual_device_found', handleDeviceFound); // <-- NUEVO: Limpieza
+  window.removeEventListener('discovery_manual_hit', handleDeviceFound);
   window.removeEventListener('discovery_scan_finished', handleScanFinished);
 })
 
