@@ -106,6 +106,12 @@ async function copyToClipboard(text) {
   }
 }
 
+// NUEVO: Función para generar y copiar el script MikroTik directamente
+async function copyMikrotikScript(iniText) {
+  const scriptText = buildMikrotikCmdFromIni(iniText)
+  await copyToClipboard(scriptText)
+}
+
 /* ====== Estado UI ====== */
 const newProfile = ref({ name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' })
 const vpnProfiles = ref([])
@@ -469,12 +475,14 @@ onBeforeUnmount(() => {
 function proposeProfileName(iniText) {
   try {
     const conf = parseWgIni(iniText)
-    if (conf.address && conf.endpoint) return `${conf.address.split('/')[0]} @ ${conf.endpoint}`
-    if (conf.endpoint) return conf.endpoint
-    if (conf.address) return conf.address.split('/')[0]
+    // CORRECCIÓN: Evitamos exponer la IP interna (conf.address). 
+    // Sugerimos el nombre basándonos solo en el endpoint/host.
+    if (conf.endpoint) {
+      const host = conf.endpoint.split(':')[0]
+      return `Router @ ${host}`
+    }
   } catch (e) {
     console.debug('Error proponiendo nombre:', e)
-    return ''
   }
   return ''
 }
