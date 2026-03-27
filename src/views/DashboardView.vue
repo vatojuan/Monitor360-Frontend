@@ -20,7 +20,7 @@ const dbGroups = ref([])
 
 // Estado Reactivo de Sensores
 const liveSensorStatus = ref({})
-// Caché Reactivo de Alertas de Monitores (Para no recalcular en HTML)
+// Caché Reactivo de Alertas de Monitores (Ahora devuelve 'ok', 'warning', o 'critical')
 const liveMonitorAlerts = ref({}) 
 
 const monitorToDelete = ref(null)
@@ -37,6 +37,9 @@ const showGroupModal = ref(false)
 const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
 const isRebooting = ref(false)
+
+// Estado para Kebab Menu Flotante
+const openKebabId = ref(null)
 
 // Estado para Rotación de Credenciales
 const showRotateCredentialsModal = ref(false)
@@ -67,10 +70,8 @@ const availableGroups = computed(() => [...dbGroups.value].sort())
 const suggestedTargetDevicesForEdit = computed(() => {
   if (!currentMonitorContext.value) return []
 
-  // 1. Identificar el contexto de red del monitor actual
   let currentVpnId = currentMonitorContext.value.vpn_profile_id
 
-  // Si tiene maestro, usamos el perfil del maestro
   if (currentMonitorContext.value.maestro_id) {
     const maestro = allDevicesList.value.find(
       (d) => d.id === currentMonitorContext.value.maestro_id,
@@ -80,26 +81,16 @@ const suggestedTargetDevicesForEdit = computed(() => {
     }
   }
 
-  // 2. Filtrar dispositivos que compartan ese contexto
   return allDevicesList.value.filter((d) => {
-    // Excluirse a sí mismo
     if (d.id === currentMonitorContext.value.device_id) return false
-
-    // Si no detectamos VPN, mostramos todos (fallback)
     if (!currentVpnId) return true
-
-    // Si el destino es un maestro, chequear su VPN directa
     if (d.is_maestro) {
       return d.vpn_profile_id === currentVpnId
     }
-
-    // Si el destino es un esclavo, chequear la VPN de SU maestro
     if (d.maestro_id) {
       const destMaestro = allDevicesList.value.find((m) => m.id === d.maestro_id)
       return destMaestro && destMaestro.vpn_profile_id === currentVpnId
     }
-
-    // Si tiene VPN directa asignada
     return d.vpn_profile_id === currentVpnId
   })
 })
@@ -117,33 +108,8 @@ const createNewPingSensor = () => ({
     display_mode: 'realtime',
     average_count: 5,
   },
-  ui_alert_timeout: {
-    enabled: false,
-    channel_id: null,
-    cooldown_minutes: 5,
-    tolerance_count: 1,
-    notify_recovery: false,
-    use_custom_message: false,
-    custom_message: '',
-    use_custom_recovery_message: false,
-    custom_recovery_message: '',
-    use_auto_task: false,
-    trigger_task_id: null,
-  },
-  ui_alert_latency: {
-    enabled: false,
-    threshold_ms: 200,
-    channel_id: null,
-    cooldown_minutes: 5,
-    tolerance_count: 1,
-    notify_recovery: false,
-    use_custom_message: false,
-    custom_message: '',
-    use_custom_recovery_message: false,
-    custom_recovery_message: '',
-    use_auto_task: false,
-    trigger_task_id: null,
-  },
+  ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
+  ui_alert_latency: { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
 })
 
 const createNewEthernetSensor = () => ({
@@ -151,34 +117,8 @@ const createNewEthernetSensor = () => ({
   is_active: true,
   alerts_paused: false,
   config: { interface_name: '', interval_sec: 30 },
-  ui_alert_speed_change: {
-    enabled: false,
-    channel_id: null,
-    cooldown_minutes: 10,
-    tolerance_count: 1,
-    notify_recovery: false,
-    use_custom_message: false,
-    custom_message: '',
-    use_custom_recovery_message: false,
-    custom_recovery_message: '',
-    use_auto_task: false,
-    trigger_task_id: null,
-  },
-  ui_alert_traffic: {
-    enabled: false,
-    threshold_mbps: 100,
-    direction: 'any',
-    channel_id: null,
-    cooldown_minutes: 5,
-    tolerance_count: 1,
-    notify_recovery: false,
-    use_custom_message: false,
-    custom_message: '',
-    use_custom_recovery_message: false,
-    custom_recovery_message: '',
-    use_auto_task: false,
-    trigger_task_id: null,
-  },
+  ui_alert_speed_change: { enabled: false, channel_id: null, cooldown_minutes: 10, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
+  ui_alert_traffic: { enabled: false, threshold_mbps: 100, direction: 'any', channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
 })
 
 const createNewWirelessSensor = () => ({
@@ -188,28 +128,11 @@ const createNewWirelessSensor = () => ({
   config: {
     interface_name: '',
     interval_sec: 60,
-    ignore_degraded: false, // <-- NUEVA PROPIEDAD
-    thresholds: {
-      min_signal_dbm: -80,
-      min_ccq_percent: 75,
-      min_client_count: 0,
-      min_tx_rate_mbps: 0,
-      min_rx_rate_mbps: 0,
-    },
+    ignore_degraded: false,
+    thresholds: { min_signal_dbm: -80, min_ccq_percent: 75, min_client_count: 0, min_tx_rate_mbps: 0, min_rx_rate_mbps: 0 },
     tolerance_checks: 3,
   },
-  ui_alert_status: {
-    enabled: false,
-    channel_id: null,
-    cooldown_minutes: 10,
-    notify_recovery: true,
-    use_custom_message: false,
-    custom_message: '',
-    use_custom_recovery_message: false,
-    custom_recovery_message: '',
-    use_auto_task: false,
-    trigger_task_id: null,
-  },
+  ui_alert_status: { enabled: false, channel_id: null, cooldown_minutes: 10, notify_recovery: true, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
 })
 
 const createNewSystemSensor = () => ({
@@ -218,28 +141,10 @@ const createNewSystemSensor = () => ({
   alerts_paused: false,
   config: {
     interval_sec: 60,
-    thresholds: {
-      max_cpu_percent: 85,
-      max_memory_percent: 90,
-      max_temperature: 75,
-      min_voltage: null,
-      max_voltage: null,
-      restart_uptime_seconds: 300,
-    },
+    thresholds: { max_cpu_percent: 85, max_memory_percent: 90, max_temperature: 75, min_voltage: null, max_voltage: null, restart_uptime_seconds: 300 },
     tolerance_checks: 3,
   },
-  ui_alert_status: {
-    enabled: false,
-    channel_id: null,
-    cooldown_minutes: 10,
-    notify_recovery: true,
-    use_custom_message: false,
-    custom_message: '',
-    use_custom_recovery_message: false,
-    custom_recovery_message: '',
-    use_auto_task: false,
-    trigger_task_id: null,
-  },
+  ui_alert_status: { enabled: false, channel_id: null, cooldown_minutes: 10, notify_recovery: true, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
 })
 
 const newPingSensor = ref(createNewPingSensor())
@@ -247,24 +152,47 @@ const newEthernetSensor = ref(createNewEthernetSensor())
 const newWirelessSensor = ref(createNewWirelessSensor())
 const newSystemSensor = ref(createNewSystemSensor())
 
-// --- LOGICA UNIFICADA DE ALERTAS ---
-function checkIfMonitorHasAlert(monitor) {
-  if (!monitor || monitor.is_active === false) return false;
-  if (!monitor.sensors || monitor.sensors.length === 0) return false;
 
-  return monitor.sensors.some(s => {
-    if (s.is_active === false) return false;
+// --- FUNCIONES KEBAB MENU ---
+const toggleKebab = (id, e) => {
+  e?.stopPropagation()
+  openKebabId.value = openKebabId.value === id ? null : id
+}
+const closeKebab = () => {
+  openKebabId.value = null
+}
+
+
+// --- LOGICA UNIFICADA DE ALERTAS (NIVELES NOC) ---
+function checkIfMonitorHasAlert(monitor) {
+  if (!monitor || monitor.is_active === false) return 'ok';
+  if (monitor.alerts_paused) return 'ok';
+  if (!monitor.sensors || monitor.sensors.length === 0) return 'ok';
+
+  let highestSeverity = 'ok';
+
+  for (const s of monitor.sensors) {
+    if (s.is_active === false || s.alerts_paused === true) continue;
     
     const status = liveSensorStatus.value[String(s.id)]?.status;
     const cfg = typeof s.config === 'string' ? safeJsonParse(s.config, {}) : (s.config || {});
 
-    // Si el estado es degraded pero tenemos la flag activada, lo ignoramos
-    if (status === 'degraded' && cfg.ignore_degraded === true) {
-      return false;
+    // Estado Crítico (Rojo)
+    if (['timeout', 'error', 'link_down', 'critical'].includes(status)) {
+      return 'critical'; // El rojo tiene prioridad absoluta, cortamos el bucle.
     }
 
-    return ['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(status);
-  });
+    // Estado Degraddo (Amarillo)
+    if (['high_latency', 'degraded', 'searching'].includes(status)) {
+      // Excepción si el sensor lo ignora expresamente
+      if (status === 'degraded' && cfg.ignore_degraded === true) {
+        continue;
+      }
+      highestSeverity = 'warning'; // Guardamos amarillo, pero seguimos buscando por si hay un crítico
+    }
+  }
+
+  return highestSeverity;
 }
 
 // --- API FETCHERS ---
@@ -295,7 +223,6 @@ async function fetchAllMonitors() {
         else initialStatus[sid] = liveSensorStatus.value[sid]
       })
       
-      // Usamos la logica unificada
       initialAlerts[m.monitor_id] = checkIfMonitorHasAlert(m)
     })
     
@@ -387,13 +314,14 @@ function refreshGroupedMonitors() {
 
 function getGroupStatusClass(groupName) {
   const monitors = groupedMonitors.value[groupName] || []
+  let hasWarning = false;
   for (const m of monitors) {
     if (!m.is_active) continue
-    if (liveMonitorAlerts.value[m.monitor_id]) {
-      return 'dot-red'
-    }
+    const state = liveMonitorAlerts.value[m.monitor_id];
+    if (state === 'critical') return 'dot-red';
+    if (state === 'warning') hasWarning = true;
   }
-  return 'dot-green'
+  return hasWarning ? 'dot-warning' : 'dot-green';
 }
 
 // --- CONTROLES DE TARJETAS MASIVAS ---
@@ -410,10 +338,11 @@ function collapseAll() {
 function expandAlertsOnly() {
   if (!activeGroup.value || !groupedMonitors.value[activeGroup.value]) return
   groupedMonitors.value[activeGroup.value].forEach(m => {
-    if (liveMonitorAlerts.value[m.monitor_id]) {
-      collapsedCards.value.delete(m.monitor_id) // Abrir si tiene alerta
+    const state = liveMonitorAlerts.value[m.monitor_id];
+    if (state === 'critical' || state === 'warning') {
+      collapsedCards.value.delete(m.monitor_id)
     } else {
-      collapsedCards.value.add(m.monitor_id)    // Cerrar si está OK
+      collapsedCards.value.add(m.monitor_id)
     }
   })
 }
@@ -481,7 +410,6 @@ function safeJsonParse(v, f = {}) {
 }
 function toggleCardCollapse(mid) {
   collapsedCards.value.has(mid) ? collapsedCards.value.delete(mid) : collapsedCards.value.add(mid)
-  // Forzamos un reajuste visual (Masonry) al cambiar el estado de colapso
   nextTick(resizeAllGridItems)
 }
 function formatDate(dateString) {
@@ -498,17 +426,14 @@ let gridResizeObserver = null;
 
 function resizeGridItem(item) {
   if (!item) return;
-  // Obtenemos la grilla contenedora y el gap
   const grid = item.closest('.dashboard-grid');
   if (!grid) return;
   
   const rowHeight = parseInt(window.getComputedStyle(grid).getPropertyValue('grid-auto-rows'));
   const rowGap = parseInt(window.getComputedStyle(grid).getPropertyValue('gap'));
   
-  // Calculamos cuántas filas ocupa basado en el tamaño real del contenido
   const rowSpan = Math.ceil((item.querySelector('.monitor-card-inner').getBoundingClientRect().height + rowGap) / (rowHeight + rowGap));
   
-  // Aplicamos el span dinámico a la tarjeta
   item.style.gridRowEnd = "span " + rowSpan;
 }
 
@@ -519,7 +444,6 @@ function resizeAllGridItems() {
   }
 }
 
-// Observador para detectar cambios de tamaño en el DOM de las tarjetas
 function setupGridResizeObserver() {
   if (gridResizeObserver) {
     gridResizeObserver.disconnect();
@@ -527,17 +451,15 @@ function setupGridResizeObserver() {
   
   gridResizeObserver = new ResizeObserver((entries) => {
     for (let entry of entries) {
-      // Si el tamaño del inner-content cambió (por ej. llegaron nuevos sensores por WS), reajustamos el contenedor
       const wrapper = entry.target.closest('.monitor-card-wrapper');
       if (wrapper) resizeGridItem(wrapper);
     }
   });
 
-  // Empezar a observar después de que Vue renderice
   nextTick(() => {
     const inners = document.querySelectorAll('.monitor-card-inner');
     inners.forEach(inner => gridResizeObserver.observe(inner));
-    resizeAllGridItems(); // Ajuste inicial
+    resizeAllGridItems();
   });
 }
 
@@ -568,7 +490,6 @@ function currentSensorIds() {
   )
 }
 
-// --- ESCUDO ANTI-AMETRALLADORA (DEBOUNCE) ---
 let subscribeTimeout = null;
 
 function trySubscribeSensors() {
@@ -587,11 +508,9 @@ function trySubscribeSensors() {
 
 watch(() => allMonitors.value.length, () => {
   trySubscribeSensors();
-  // Al cambiar la cantidad de monitores (por ej. cambio de grupo), rehacemos el observer
   setupGridResizeObserver();
 })
 
-// Observamos el grupo activo para reajustar la grilla al cambiar
 watch(activeGroup, () => {
   nextTick(setupGridResizeObserver);
 })
@@ -615,10 +534,7 @@ let wsBufferTimer = null
 function flushWsUpdates() {
   if (Object.keys(pendingWsUpdates).length === 0) return
   
-  // 1. Actualización Atómica de Sensores (Cero estrés a Vue)
   liveSensorStatus.value = { ...liveSensorStatus.value, ...pendingWsUpdates }
-
-  // 2. Pre-Cálculo de Alertas Globales (Para no hacerlo en HTML)
   const newAlerts = { ...liveMonitorAlerts.value }
   
   const affectedMonitorIds = new Set()
@@ -634,7 +550,6 @@ function flushWsUpdates() {
       if (mid) affectedMonitorIds.add(mid)
   })
 
-  // Recalculamos SOLO los monitores que sufrieron cambios
   affectedMonitorIds.forEach(mid => {
       const m = allMonitors.value.find(x => x.monitor_id === mid)
       newAlerts[mid] = checkIfMonitorHasAlert(m)
@@ -707,11 +622,11 @@ onMounted(async () => {
   await connectWebSocketWhenAuthenticated()
   wireWsSyncAndSubs()
 
-  // Iniciamos el Reloj del Buffer
   wsBufferTimer = setInterval(flushWsUpdates, 500)
-  
-  // Escuchar evento de resize de ventana general
   window.addEventListener("resize", resizeAllGridItems);
+  
+  // Click listener para cerrar el menú kebab
+  document.addEventListener('click', closeKebab)
 })
 
 onUnmounted(() => {
@@ -720,6 +635,7 @@ onUnmounted(() => {
   if (wsBufferTimer) clearInterval(wsBufferTimer)
   window.removeEventListener("resize", resizeAllGridItems);
   if (gridResizeObserver) gridResizeObserver.disconnect();
+  document.removeEventListener('click', closeKebab)
 })
 
 // --- ACCIONES DE TARJETA ---
@@ -770,6 +686,7 @@ function goToSensorDetail(id) {
 
 async function deleteSensor(sensor, monitor, e) {
   e?.stopPropagation()
+  closeKebab()
   if (!confirm(`¿Eliminar sensor "${sensor.name}"?`)) return
 
   try {
@@ -793,9 +710,39 @@ async function deleteSensor(sensor, monitor, e) {
   }
 }
 
-// Acción Específica: Ignorar Estado Degraded (Persistente)
+// --- ACCIONES ESPECÍFICAS DE SENSOR (KEBAB) ---
+async function toggleSensorPause(sensor, monitor, e) {
+  e?.stopPropagation()
+  closeKebab()
+  
+  const newVal = !sensor.alerts_paused
+  sensor.alerts_paused = newVal
+
+  try {
+    const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : { ...(sensor.config || {}) }
+    const payload = {
+      name: sensor.name,
+      is_active: sensor.is_active,
+      alerts_paused: newVal,
+      config: cfg
+    }
+    
+    await api.put(`/sensors/${sensor.id}`, payload)
+    
+    // Recalcular alertas locales
+    liveMonitorAlerts.value[monitor.monitor_id] = checkIfMonitorHasAlert(monitor)
+    
+    showNotification(newVal ? 'Alertas pausadas para este sensor.' : 'Alertas reactivadas.', 'success')
+  } catch (err) {
+    console.error(err)
+    sensor.alerts_paused = !newVal // rollback
+    showNotification('Error al cambiar estado del sensor.', 'error')
+  }
+}
+
 async function toggleIgnoreDegraded(sensor, monitor, e) {
   e?.stopPropagation()
+  closeKebab()
   
   const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : { ...(sensor.config || {}) }
   const currentIgnore = !!cfg.ignore_degraded
@@ -804,7 +751,6 @@ async function toggleIgnoreDegraded(sensor, monitor, e) {
   cfg.ignore_degraded = newIgnore
 
   try {
-    // Persistimos en base de datos para no perderlo al recargar
     const payload = {
       name: sensor.name,
       is_active: sensor.is_active,
@@ -813,11 +759,8 @@ async function toggleIgnoreDegraded(sensor, monitor, e) {
     }
     
     await api.put(`/sensors/${sensor.id}`, payload)
-    
-    // Actualizamos el estado local
     sensor.config = cfg
     
-    // Recalculamos alerta visual del grupo
     liveMonitorAlerts.value[monitor.monitor_id] = checkIfMonitorHasAlert(monitor)
     
     showNotification(newIgnore ? 'Avisos "Degraded" silenciados para este sensor.' : 'Avisos "Degraded" reactivados.', 'success')
@@ -842,7 +785,6 @@ function openTerminal() {
   window.open(routeData.href, '_blank')
 }
 
-// Lógica de Bitácora
 async function openCommentsModal() {
   if (!monitorToEdit.value?.device_id) return
   showCommentsModal.value = true
@@ -873,7 +815,6 @@ async function addComment() {
   }
 }
 
-// Lógica de Rotación de Credenciales
 function triggerRotateCredentials() {
   rotateCredentialsForm.value = {
     newUsername: '',
@@ -916,7 +857,6 @@ async function submitRotateCredentials() {
   }
 }
 
-// Configuración de Monitor y Reinicio
 async function saveMonitorSettings() {
   if (!monitorToEdit.value) return
   const newGroup = editMonitorGroup.value
@@ -964,11 +904,12 @@ async function requestReboot() {
   }
 }
 
-// --- EDICION SENSOR CON SENSORCONFIGURATOR ---
+// --- EDICION SENSOR ---
 const mapAlert = (alerts, type) => alerts.find((a) => a.type === type) || {}
 
 async function showSensorDetails(s, m, e) {
   e?.stopPropagation()
+  closeKebab()
   await ensureChannelsLoaded()
   
   sensorDetailsToShow.value = s
@@ -1363,7 +1304,8 @@ function closeSensorDetails() {
               <div
                 class="monitor-card monitor-card-inner"
                 :class="{
-                  'status-alert': liveMonitorAlerts[monitor.monitor_id],
+                  'status-critical': liveMonitorAlerts[monitor.monitor_id] === 'critical',
+                  'status-warning': liveMonitorAlerts[monitor.monitor_id] === 'warning',
                   'is-inactive': !monitor.is_active,
                   'is-collapsed': collapsedCards.has(monitor.monitor_id),
                 }"
@@ -1384,7 +1326,9 @@ function closeSensorDetails() {
                     <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">
                       {{ monitor.ip_address }}
                     </span>
-                    <span v-if="liveMonitorAlerts[monitor.monitor_id]" class="alert-icon">⚠️</span>
+                    
+                    <span v-if="liveMonitorAlerts[monitor.monitor_id] === 'critical'" class="alert-icon" title="Estado Crítico">🔴</span>
+                    <span v-if="liveMonitorAlerts[monitor.monitor_id] === 'warning'" class="alert-icon" title="Advertencia">🟡</span>
 
                     <button
                       class="action-icon-btn"
@@ -1438,9 +1382,8 @@ function closeSensorDetails() {
                         'row-inactive': !sensor.is_active,
                         'row-paused': sensor.alerts_paused,
                       }"
-                      @click="goToSensorDetail(sensor.id)"
                     >
-                      <div class="sensor-tier-top">
+                      <div class="sensor-tier-top" @click="goToSensorDetail(sensor.id)">
                         <span class="sensor-name" :title="sensor.name">
                           {{ sensor.name }}
                           <small v-if="sensor.alerts_paused" title="Alertas Pausadas">⏸️</small>
@@ -1482,31 +1425,26 @@ function closeSensorDetails() {
                             </template>
                           </div>
 
-                          <div class="sensor-row-actions">
-                            <button
-                              v-if="sensor.sensor_type === 'wireless'"
-                              class="details-btn"
-                              :class="{ 'text-orange': isDegradedIgnored(sensor) }"
-                              @click="toggleIgnoreDegraded(sensor, monitor, $event)"
-                              :title="isDegradedIgnored(sensor) ? 'Reactivar Alerta Degraded' : 'Ignorar Alerta Degraded'"
-                            >
-                              {{ isDegradedIgnored(sensor) ? '🙈' : '🙉' }}
-                            </button>
-
-                            <button
-                              class="details-btn"
-                              @click="showSensorDetails(sensor, monitor, $event)"
-                              title="Editar"
-                            >
-                              ✎
-                            </button>
-                            <button
-                              class="details-btn delete-btn-sensor"
-                              @click="deleteSensor(sensor, monitor, $event)"
-                              title="Eliminar Sensor"
-                            >
-                              ✕
-                            </button>
+                          <div class="kebab-container" @click.stop>
+                            <button class="kebab-btn" @click="toggleKebab(sensor.id, $event)">⋮</button>
+                            <div v-if="openKebabId === sensor.id" class="kebab-dropdown">
+                              <button class="kebab-item" @click="toggleSensorPause(sensor, monitor, $event)">
+                                {{ sensor.alerts_paused ? '▶ Reanudar Alertas' : '⏸ Pausar Alertas' }}
+                              </button>
+                              <button 
+                                v-if="sensor.sensor_type === 'wireless'" 
+                                class="kebab-item" 
+                                @click="toggleIgnoreDegraded(sensor, monitor, $event)"
+                              >
+                                {{ isDegradedIgnored(sensor) ? '🙉 Avisar Degraded' : '🙈 Ignorar Degraded' }}
+                              </button>
+                              <button class="kebab-item" @click="showSensorDetails(sensor, monitor, $event)">
+                                ✎ Editar Sensor
+                              </button>
+                              <button class="kebab-item text-danger" @click="deleteSensor(sensor, monitor, $event)">
+                                ✕ Eliminar Sensor
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1563,11 +1501,13 @@ function closeSensorDetails() {
                 <div
                   v-else
                   class="card-body collapsed-summary"
-                  :class="{ 'has-alert': liveMonitorAlerts[monitor.monitor_id] }"
+                  :class="{ 
+                    'has-critical': liveMonitorAlerts[monitor.monitor_id] === 'critical',
+                    'has-warning': liveMonitorAlerts[monitor.monitor_id] === 'warning'
+                  }"
                 >
-                  <span v-if="liveMonitorAlerts[monitor.monitor_id]" class="summary-alert"
-                    >⚠️ Atención Requerida</span
-                  >
+                  <span v-if="liveMonitorAlerts[monitor.monitor_id] === 'critical'" class="summary-alert">🔴 Atención Requerida</span>
+                  <span v-else-if="liveMonitorAlerts[monitor.monitor_id] === 'warning'" class="summary-warning">🟡 Advertencia</span>
                   <span v-else class="summary-ok">✓ Sistema Operativo</span>
                 </div>
               </div>
@@ -1902,16 +1842,23 @@ function closeSensorDetails() {
   color: #aaa;
   border: 1px solid var(--primary-color);
 }
+
+/* ESTADOS DE LOS DOTS LATERALES */
 .status-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   display: block;
   flex-shrink: 0;
+  transition: background-color 0.3s, box-shadow 0.3s;
 }
 .dot-green {
   background-color: var(--green);
   box-shadow: 0 0 5px var(--green);
+}
+.dot-warning {
+  background-color: #fbbf24;
+  box-shadow: 0 0 5px #fbbf24;
 }
 .dot-red {
   background-color: var(--secondary-color);
@@ -1987,14 +1934,11 @@ function closeSensorDetails() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 1.5rem;
-  /* MASONRY: Definimos filas muy pequeñas (10px) */
   grid-auto-rows: 10px; 
   align-items: start; 
 }
 
-/* NUEVO: Wrapper para aislar la tarjeta del span de Grid */
 .monitor-card-wrapper {
-  /* El span será inyectado por JS aquí */
   transition: grid-row-end 0.2s ease;
 }
 
@@ -2007,10 +1951,17 @@ function closeSensorDetails() {
   overflow: hidden;
   transition: all 0.2s;
 }
-.monitor-card.status-alert {
+
+/* ESTADOS DE GRAVEDAD PARA LA TARJETA */
+.monitor-card.status-critical {
   border-color: var(--secondary-color);
-  box-shadow: 0 0 8px rgba(255, 100, 100, 0.2);
+  box-shadow: 0 0 10px rgba(255, 107, 107, 0.3);
 }
+.monitor-card.status-warning {
+  border-color: #fbbf24;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.2);
+}
+
 .monitor-card.is-inactive {
   opacity: 0.7;
   border-style: dashed;
@@ -2104,7 +2055,7 @@ function closeSensorDetails() {
 }
 
 /* =========================================
-   SENSORES: DISEÑO "TWO-TIER" (Dos Niveles)
+   SENSORES & KEBAB MENU
    ========================================= */
 .sensors-container {
   display: flex;
@@ -2120,7 +2071,7 @@ function closeSensorDetails() {
   padding: 0.6rem 0.8rem;
   border-radius: 6px;
   border-left: 3px solid transparent;
-  cursor: pointer;
+  cursor: default; /* Eliminado cursor pointer general, ahora en sensor-tier-top */
   transition: background 0.2s;
 }
 .sensor-row:hover {
@@ -2133,12 +2084,12 @@ function closeSensorDetails() {
   opacity: 0.5;
 }
 
-/* NIVEL SUPERIOR: Cabecera del sensor */
 .sensor-tier-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  cursor: pointer; /* Área clickeable principal */
 }
 
 .sensor-name {
@@ -2172,6 +2123,73 @@ function closeSensorDetails() {
   font-weight: bold;
   font-size: 0.8rem;
 }
+
+/* NUEVO: ESTILOS DEL MENÚ KEBAB */
+.kebab-container {
+  position: relative;
+  display: inline-block;
+}
+
+.kebab-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 1.4rem;
+  cursor: pointer;
+  padding: 0 5px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: color 0.2s, background 0.2s;
+}
+
+.kebab-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.kebab-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background-color: var(--surface-color);
+  border: 1px solid var(--primary-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  border-radius: 6px;
+  min-width: 180px;
+  z-index: 100; /* Siempre por encima */
+  display: flex;
+  flex-direction: column;
+  padding: 0.4rem 0;
+  margin-top: 5px;
+}
+
+.kebab-item {
+  background: none;
+  border: none;
+  color: #ddd;
+  padding: 0.6rem 1rem;
+  text-align: left;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.kebab-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.text-danger {
+  color: #ff6b6b;
+}
+.text-danger:hover {
+  background-color: rgba(255, 107, 107, 0.1) !important;
+  color: #ff6b6b;
+}
+
 
 /* NIVEL INFERIOR: Caja de Métricas */
 .sensor-tier-bottom {
@@ -2212,36 +2230,7 @@ function closeSensorDetails() {
   color: var(--gray);
 }
 
-/* BOTONES DE ACCIÓN PARA SENSORES */
-.sensor-row-actions {
-  display: flex;
-  gap: 6px;
-  margin-left: 4px;
-}
-
-.details-btn {
-  background: none;
-  border: none;
-  color: #666;
-  font-size: 1.1rem;
-  cursor: pointer;
-  padding: 2px;
-  transition: color 0.2s;
-}
-.details-btn:hover {
-  color: var(--blue);
-}
-
-.delete-btn-sensor {
-  color: #888;
-  font-size: 1.2rem;
-  line-height: 1;
-}
-.delete-btn-sensor:hover {
-  color: var(--secondary-color);
-}
-
-/* OTROS ESTILOS */
+/* ESTILOS SUMMARY */
 .collapsed-summary {
   padding: 0.5rem 1rem;
   background: var(--bg-color);
@@ -2249,9 +2238,14 @@ function closeSensorDetails() {
   text-align: center;
   color: #888;
 }
-.collapsed-summary.has-alert {
+.collapsed-summary.has-critical {
   background: rgba(255, 107, 107, 0.1);
   color: var(--secondary-color);
+  font-weight: bold;
+}
+.collapsed-summary.has-warning {
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
   font-weight: bold;
 }
 .summary-ok {
@@ -2259,6 +2253,9 @@ function closeSensorDetails() {
 }
 .summary-alert {
   color: var(--secondary-color);
+}
+.summary-warning {
+  color: #fbbf24;
 }
 
 /* MODALES */
