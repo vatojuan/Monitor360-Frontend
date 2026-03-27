@@ -1948,8 +1948,20 @@ function closeSensorDetails() {
   border-radius: 8px;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  /* overflow: hidden; ELIMINADO PARA QUE EL KEBAB PUEDA SALIR */
   transition: all 0.2s;
+  position: relative; /* Asegura el contexto de posicionamiento */
+}
+
+/* NUEVO: Redondeamos las esquinas de los elementos internos para compensar la falta de overflow: hidden */
+.card-header {
+  border-top-left-radius: 7px;
+  border-top-right-radius: 7px;
+}
+
+.card-body.collapsed-summary {
+  border-bottom-left-radius: 7px;
+  border-bottom-right-radius: 7px;
 }
 
 /* ESTADOS DE GRAVEDAD PARA LA TARJETA */
@@ -2156,7 +2168,7 @@ function closeSensorDetails() {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   border-radius: 6px;
   min-width: 180px;
-  z-index: 100; /* Siempre por encima */
+  z-index: 9999; /* Z-index altísimo para superar a la grilla y otras tarjetas */
   display: flex;
   flex-direction: column;
   padding: 0.4rem 0;
