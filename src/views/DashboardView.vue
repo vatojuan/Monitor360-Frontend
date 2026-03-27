@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
@@ -481,6 +481,8 @@ function safeJsonParse(v, f = {}) {
 }
 function toggleCardCollapse(mid) {
   collapsedCards.value.has(mid) ? collapsedCards.value.delete(mid) : collapsedCards.value.add(mid)
+  // Forzamos un reajuste visual (Masonry) al cambiar el estado de colapso
+  nextTick(resizeAllGridItems)
 }
 function formatDate(dateString) {
   if (!dateString) return ''
@@ -489,6 +491,54 @@ function formatDate(dateString) {
 function isDegradedIgnored(sensor) {
   const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : (sensor.config || {});
   return !!cfg.ignore_degraded;
+}
+
+// --- LOGICA "MASONRY" (CSS GRID DINÁMICO) ---
+let gridResizeObserver = null;
+
+function resizeGridItem(item) {
+  if (!item) return;
+  // Obtenemos la grilla contenedora y el gap
+  const grid = item.closest('.dashboard-grid');
+  if (!grid) return;
+  
+  const rowHeight = parseInt(window.getComputedStyle(grid).getPropertyValue('grid-auto-rows'));
+  const rowGap = parseInt(window.getComputedStyle(grid).getPropertyValue('gap'));
+  
+  // Calculamos cuántas filas ocupa basado en el tamaño real del contenido
+  const rowSpan = Math.ceil((item.querySelector('.monitor-card-inner').getBoundingClientRect().height + rowGap) / (rowHeight + rowGap));
+  
+  // Aplicamos el span dinámico a la tarjeta
+  item.style.gridRowEnd = "span " + rowSpan;
+}
+
+function resizeAllGridItems() {
+  const allItems = document.getElementsByClassName("monitor-card-wrapper");
+  for (let x = 0; x < allItems.length; x++) {
+    resizeGridItem(allItems[x]);
+  }
+}
+
+// Observador para detectar cambios de tamaño en el DOM de las tarjetas
+function setupGridResizeObserver() {
+  if (gridResizeObserver) {
+    gridResizeObserver.disconnect();
+  }
+  
+  gridResizeObserver = new ResizeObserver((entries) => {
+    for (let entry of entries) {
+      // Si el tamaño del inner-content cambió (por ej. llegaron nuevos sensores por WS), reajustamos el contenedor
+      const wrapper = entry.target.closest('.monitor-card-wrapper');
+      if (wrapper) resizeGridItem(wrapper);
+    }
+  });
+
+  // Empezar a observar después de que Vue renderice
+  nextTick(() => {
+    const inners = document.querySelectorAll('.monitor-card-inner');
+    inners.forEach(inner => gridResizeObserver.observe(inner));
+    resizeAllGridItems(); // Ajuste inicial
+  });
 }
 
 // --- WEBSOCKETS OPTIMIZADOS (BUFFERING) ---
@@ -535,7 +585,17 @@ function trySubscribeSensors() {
   }, 500);
 }
 
-watch(() => allMonitors.value.length, trySubscribeSensors)
+watch(() => allMonitors.value.length, () => {
+  trySubscribeSensors();
+  // Al cambiar la cantidad de monitores (por ej. cambio de grupo), rehacemos el observer
+  setupGridResizeObserver();
+})
+
+// Observamos el grupo activo para reajustar la grilla al cambiar
+watch(activeGroup, () => {
+  nextTick(setupGridResizeObserver);
+})
+
 
 async function ensureChannelsLoaded() {
   if (!Object.keys(channelsById.value).length) {
@@ -649,12 +709,17 @@ onMounted(async () => {
 
   // Iniciamos el Reloj del Buffer
   wsBufferTimer = setInterval(flushWsUpdates, 500)
+  
+  // Escuchar evento de resize de ventana general
+  window.addEventListener("resize", resizeAllGridItems);
 })
 
 onUnmounted(() => {
   if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
   if (typeof directMsgUnbind === 'function') directMsgUnbind()
   if (wsBufferTimer) clearInterval(wsBufferTimer)
+  window.removeEventListener("resize", resizeAllGridItems);
+  if (gridResizeObserver) gridResizeObserver.disconnect();
 })
 
 // --- ACCIONES DE TARJETA ---
@@ -1294,217 +1359,217 @@ function closeSensorDetails() {
           handle=".drag-handle"
         >
           <template #item="{ element: monitor }">
-            <div
-              :class="[
-                'monitor-card',
-                {
+            <div class="monitor-card-wrapper" :data-id="monitor.monitor_id">
+              <div
+                class="monitor-card monitor-card-inner"
+                :class="{
                   'status-alert': liveMonitorAlerts[monitor.monitor_id],
                   'is-inactive': !monitor.is_active,
                   'is-collapsed': collapsedCards.has(monitor.monitor_id),
-                },
-              ]"
-            >
-              <div class="card-header" @dblclick="toggleCardCollapse(monitor.monitor_id)">
-                <div class="header-left">
-                  <span class="drag-handle">::</span>
-                  <div class="title-container">
-                    <h3>{{ monitor.client_name }}</h3>
-                    <div class="badges-row">
-                      <span v-if="!monitor.is_active" class="off-badge">OFF</span>
-                      <span v-if="monitor.alerts_paused" class="pause-badge">⏸️</span>
+                }"
+              >
+                <div class="card-header" @dblclick="toggleCardCollapse(monitor.monitor_id)">
+                  <div class="header-left">
+                    <span class="drag-handle">::</span>
+                    <div class="title-container">
+                      <h3>{{ monitor.client_name }}</h3>
+                      <div class="badges-row">
+                        <span v-if="!monitor.is_active" class="off-badge">OFF</span>
+                        <span v-if="monitor.alerts_paused" class="pause-badge">⏸️</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div class="card-actions-right">
-                  <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">
-                    {{ monitor.ip_address }}
-                  </span>
-                  <span v-if="liveMonitorAlerts[monitor.monitor_id]" class="alert-icon">⚠️</span>
+                  <div class="card-actions-right">
+                    <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">
+                      {{ monitor.ip_address }}
+                    </span>
+                    <span v-if="liveMonitorAlerts[monitor.monitor_id]" class="alert-icon">⚠️</span>
 
-                  <button
-                    class="action-icon-btn"
-                    @click="openMonitorSettings(monitor)"
-                    title="Configuración y Herramientas"
-                  >
-                    ⚙️
-                  </button>
+                    <button
+                      class="action-icon-btn"
+                      @click="openMonitorSettings(monitor)"
+                      title="Configuración y Herramientas"
+                    >
+                      ⚙️
+                    </button>
 
-                  <button
-                    class="action-icon-btn"
-                    @click="toggleCardCollapse(monitor.monitor_id)"
-                    :title="collapsedCards.has(monitor.monitor_id) ? 'Expandir' : 'Colapsar'"
-                  >
-                    {{ collapsedCards.has(monitor.monitor_id) ? '🔽' : '🔼' }}
-                  </button>
-                  <button
-                    class="action-icon-btn"
-                    :class="{ 'active-orange': monitor.alerts_paused }"
-                    @click="toggleMonitorPause(monitor)"
-                    title="Pausar Alertas"
-                  >
-                    {{ monitor.alerts_paused ? '🔕' : '🔔' }}
-                  </button>
-                  <button
-                    class="action-icon-btn"
-                    :class="{ 'active-red': !monitor.is_active }"
-                    @click="toggleMonitorActive(monitor)"
-                    title="Encender/Apagar"
-                  >
-                    {{ monitor.is_active ? '🔌' : '⚫' }}
-                  </button>
-                  <button class="remove-btn" @click="requestDeleteMonitor(monitor, $event)">
-                    ×
-                  </button>
-                </div>
-              </div>
-
-              <div v-if="!collapsedCards.has(monitor.monitor_id)" class="card-body">
-                <div class="sensors-container">
-                  <div v-if="!monitor.sensors || monitor.sensors.length === 0" class="no-sensors">
-                    Sin sensores.
+                    <button
+                      class="action-icon-btn"
+                      @click="toggleCardCollapse(monitor.monitor_id)"
+                      :title="collapsedCards.has(monitor.monitor_id) ? 'Expandir' : 'Colapsar'"
+                    >
+                      {{ collapsedCards.has(monitor.monitor_id) ? '🔽' : '🔼' }}
+                    </button>
+                    <button
+                      class="action-icon-btn"
+                      :class="{ 'active-orange': monitor.alerts_paused }"
+                      @click="toggleMonitorPause(monitor)"
+                      title="Pausar Alertas"
+                    >
+                      {{ monitor.alerts_paused ? '🔕' : '🔔' }}
+                    </button>
+                    <button
+                      class="action-icon-btn"
+                      :class="{ 'active-red': !monitor.is_active }"
+                      @click="toggleMonitorActive(monitor)"
+                      title="Encender/Apagar"
+                    >
+                      {{ monitor.is_active ? '🔌' : '⚫' }}
+                    </button>
+                    <button class="remove-btn" @click="requestDeleteMonitor(monitor, $event)">
+                      ×
+                    </button>
                   </div>
+                </div>
 
-                  <div
-                    v-else
-                    v-for="sensor in monitor.sensors"
-                    :key="sensor.id"
-                    class="sensor-row"
-                    :class="{
-                      'row-inactive': !sensor.is_active,
-                      'row-paused': sensor.alerts_paused,
-                    }"
-                    @click="goToSensorDetail(sensor.id)"
-                  >
-                    <div class="sensor-tier-top">
-                      <span class="sensor-name" :title="sensor.name">
-                        {{ sensor.name }}
-                        <small v-if="sensor.alerts_paused" title="Alertas Pausadas">⏸️</small>
-                      </span>
-
-                      <div class="sensor-top-right">
-                        <div
-                          class="sensor-main-status"
-                          :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
-                        >
-                          <template v-if="!sensor.is_active">
-                            <span class="text-off">OFF</span>
-                          </template>
-
-                          <template v-else-if="sensor.sensor_type === 'ping'">
-                            <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'">Timeout</span>
-                            <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'error'">Error</span>
-                            <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'">...</span>
-                            <span v-else>{{ formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms) }} ms</span>
-                          </template>
-
-                          <template v-else-if="sensor.sensor_type === 'ethernet'">
-                            {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace('_', ' ').toUpperCase() }}
-                          </template>
-
-                          <template v-else-if="sensor.sensor_type === 'wireless'">
-                            <span v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Punto de Acceso">📡 AP</span>
-                            <span v-else-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'CPE'" title="Estación / Cliente">📶 CPE</span>
-                            <span v-else>📡</span>
-                            {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
-                          </template>
-
-                          <template v-else-if="sensor.sensor_type === 'system'">
-                            💻 {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
-                          </template>
-
-                          <template v-else>
-                            {{ liveSensorStatus[String(sensor.id)]?.status || 'pending' }}
-                          </template>
-                        </div>
-
-                        <div class="sensor-row-actions">
-                          <button
-                            v-if="sensor.sensor_type === 'wireless'"
-                            class="details-btn"
-                            :class="{ 'text-orange': isDegradedIgnored(sensor) }"
-                            @click="toggleIgnoreDegraded(sensor, monitor, $event)"
-                            :title="isDegradedIgnored(sensor) ? 'Reactivar Alerta Degraded' : 'Ignorar Alerta Degraded'"
-                          >
-                            {{ isDegradedIgnored(sensor) ? '🙈' : '🙉' }}
-                          </button>
-
-                          <button
-                            class="details-btn"
-                            @click="showSensorDetails(sensor, monitor, $event)"
-                            title="Editar"
-                          >
-                            ✎
-                          </button>
-                          <button
-                            class="details-btn delete-btn-sensor"
-                            @click="deleteSensor(sensor, monitor, $event)"
-                            title="Eliminar Sensor"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
+                <div v-if="!collapsedCards.has(monitor.monitor_id)" class="card-body">
+                  <div class="sensors-container">
+                    <div v-if="!monitor.sensors || monitor.sensors.length === 0" class="no-sensors">
+                      Sin sensores.
                     </div>
 
                     <div
-                      class="sensor-tier-bottom"
-                      v-if="sensor.is_active && sensor.sensor_type !== 'ping' && !['pending', 'timeout', 'error'].includes(liveSensorStatus[String(sensor.id)]?.status)"
+                      v-else
+                      v-for="sensor in monitor.sensors"
+                      :key="sensor.id"
+                      class="sensor-row"
+                      :class="{
+                        'row-inactive': !sensor.is_active,
+                        'row-paused': sensor.alerts_paused,
+                      }"
+                      @click="goToSensorDetail(sensor.id)"
                     >
-                      <template v-if="sensor.sensor_type === 'ethernet'">
-                        <span class="metric-item speed" v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'">
-                          🔗 {{ liveSensorStatus[String(sensor.id)]?.speed || '—' }}
+                      <div class="sensor-tier-top">
+                        <span class="sensor-name" :title="sensor.name">
+                          {{ sensor.name }}
+                          <small v-if="sensor.alerts_paused" title="Alertas Pausadas">⏸️</small>
                         </span>
-                        <span class="metric-item">↓ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate) }}</span>
-                        <span class="metric-item">↑ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}</span>
-                      </template>
 
-                      <template v-else-if="sensor.sensor_type === 'wireless'">
-                        <span class="metric-item" title="Señal">
-                          📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} dBm
-                        </span>
-                        <span class="metric-item" title="CCQ (TX)">
-                          📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }}%
-                        </span>
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">
-                          👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}
-                        </span>
-                        <span class="metric-item" title="TX / RX Rate (Mbps)">
-                          🚀 {{ formatRateString(liveSensorStatus[String(sensor.id)]?.tx_rate) }} / {{ formatRateString(liveSensorStatus[String(sensor.id)]?.rx_rate) }} Mbps
-                        </span>
-                      </template>
+                        <div class="sensor-top-right">
+                          <div
+                            class="sensor-main-status"
+                            :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)"
+                          >
+                            <template v-if="!sensor.is_active">
+                              <span class="text-off">OFF</span>
+                            </template>
 
-                      <template v-else-if="sensor.sensor_type === 'system'">
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.cpu_percent != null" title="Uso de CPU">
-                          ⚙️ {{ Number(liveSensorStatus[String(sensor.id)]?.cpu_percent || 0).toFixed(1) }}%
-                        </span>
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.memory_percent != null" title="Uso de RAM">
-                          🧠 {{ Number(liveSensorStatus[String(sensor.id)]?.memory_percent || 0).toFixed(1) }}%
-                        </span>
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.temperature != null" title="Temperatura">
-                          🌡️ {{ liveSensorStatus[String(sensor.id)]?.temperature }}°C
-                        </span>
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.voltage != null" title="Voltaje">
-                          ⚡ {{ Number(liveSensorStatus[String(sensor.id)]?.voltage || 0).toFixed(1) }}V
-                        </span>
-                        <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.uptime_seconds != null" title="Tiempo de Actividad">
-                          ⏱️ {{ formatUptimeShort(liveSensorStatus[String(sensor.id)]?.uptime_seconds) }}
-                        </span>
-                      </template>
+                            <template v-else-if="sensor.sensor_type === 'ping'">
+                              <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'">Timeout</span>
+                              <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'error'">Error</span>
+                              <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'">...</span>
+                              <span v-else>{{ formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms) }} ms</span>
+                            </template>
+
+                            <template v-else-if="sensor.sensor_type === 'ethernet'">
+                              {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace('_', ' ').toUpperCase() }}
+                            </template>
+
+                            <template v-else-if="sensor.sensor_type === 'wireless'">
+                              <span v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Punto de Acceso">📡 AP</span>
+                              <span v-else-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'CPE'" title="Estación / Cliente">📶 CPE</span>
+                              <span v-else>📡</span>
+                              {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
+                            </template>
+
+                            <template v-else-if="sensor.sensor_type === 'system'">
+                              💻 {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
+                            </template>
+
+                            <template v-else>
+                              {{ liveSensorStatus[String(sensor.id)]?.status || 'pending' }}
+                            </template>
+                          </div>
+
+                          <div class="sensor-row-actions">
+                            <button
+                              v-if="sensor.sensor_type === 'wireless'"
+                              class="details-btn"
+                              :class="{ 'text-orange': isDegradedIgnored(sensor) }"
+                              @click="toggleIgnoreDegraded(sensor, monitor, $event)"
+                              :title="isDegradedIgnored(sensor) ? 'Reactivar Alerta Degraded' : 'Ignorar Alerta Degraded'"
+                            >
+                              {{ isDegradedIgnored(sensor) ? '🙈' : '🙉' }}
+                            </button>
+
+                            <button
+                              class="details-btn"
+                              @click="showSensorDetails(sensor, monitor, $event)"
+                              title="Editar"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              class="details-btn delete-btn-sensor"
+                              @click="deleteSensor(sensor, monitor, $event)"
+                              title="Eliminar Sensor"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div
+                        class="sensor-tier-bottom"
+                        v-if="sensor.is_active && sensor.sensor_type !== 'ping' && !['pending', 'timeout', 'error'].includes(liveSensorStatus[String(sensor.id)]?.status)"
+                      >
+                        <template v-if="sensor.sensor_type === 'ethernet'">
+                          <span class="metric-item speed" v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'">
+                            🔗 {{ liveSensorStatus[String(sensor.id)]?.speed || '—' }}
+                          </span>
+                          <span class="metric-item">↓ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate) }}</span>
+                          <span class="metric-item">↑ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}</span>
+                        </template>
+
+                        <template v-else-if="sensor.sensor_type === 'wireless'">
+                          <span class="metric-item" title="Señal">
+                            📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} dBm
+                          </span>
+                          <span class="metric-item" title="CCQ (TX)">
+                            📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }}%
+                          </span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">
+                            👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}
+                          </span>
+                          <span class="metric-item" title="TX / RX Rate (Mbps)">
+                            🚀 {{ formatRateString(liveSensorStatus[String(sensor.id)]?.tx_rate) }} / {{ formatRateString(liveSensorStatus[String(sensor.id)]?.rx_rate) }} Mbps
+                          </span>
+                        </template>
+
+                        <template v-else-if="sensor.sensor_type === 'system'">
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.cpu_percent != null" title="Uso de CPU">
+                            ⚙️ {{ Number(liveSensorStatus[String(sensor.id)]?.cpu_percent || 0).toFixed(1) }}%
+                          </span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.memory_percent != null" title="Uso de RAM">
+                            🧠 {{ Number(liveSensorStatus[String(sensor.id)]?.memory_percent || 0).toFixed(1) }}%
+                          </span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.temperature != null" title="Temperatura">
+                            🌡️ {{ liveSensorStatus[String(sensor.id)]?.temperature }}°C
+                          </span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.voltage != null" title="Voltaje">
+                            ⚡ {{ Number(liveSensorStatus[String(sensor.id)]?.voltage || 0).toFixed(1) }}V
+                          </span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.uptime_seconds != null" title="Tiempo de Actividad">
+                            ⏱️ {{ formatUptimeShort(liveSensorStatus[String(sensor.id)]?.uptime_seconds) }}
+                          </span>
+                        </template>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div
-                v-else
-                class="card-body collapsed-summary"
-                :class="{ 'has-alert': liveMonitorAlerts[monitor.monitor_id] }"
-              >
-                <span v-if="liveMonitorAlerts[monitor.monitor_id]" class="summary-alert"
-                  >⚠️ Atención Requerida</span
+                <div
+                  v-else
+                  class="card-body collapsed-summary"
+                  :class="{ 'has-alert': liveMonitorAlerts[monitor.monitor_id] }"
                 >
-                <span v-else class="summary-ok">✓ Sistema Operativo</span>
+                  <span v-if="liveMonitorAlerts[monitor.monitor_id]" class="summary-alert"
+                    >⚠️ Atención Requerida</span
+                  >
+                  <span v-else class="summary-ok">✓ Sistema Operativo</span>
+                </div>
               </div>
             </div>
           </template>
@@ -1922,8 +1987,15 @@ function closeSensorDetails() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 1.5rem;
-  /* AQUI ESTÁ LA MAGIA PARA QUE NO SE ESTIREN LAS ALEDAÑAS */
+  /* MASONRY: Definimos filas muy pequeñas (10px) */
+  grid-auto-rows: 10px; 
   align-items: start; 
+}
+
+/* NUEVO: Wrapper para aislar la tarjeta del span de Grid */
+.monitor-card-wrapper {
+  /* El span será inyectado por JS aquí */
+  transition: grid-row-end 0.2s ease;
 }
 
 .monitor-card {
