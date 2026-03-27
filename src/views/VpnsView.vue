@@ -629,8 +629,7 @@ onMounted(async () => {
               ></span>
               <strong>{{ p.name }}</strong>
               <span class="alert-badge" v-if="p.alerts_enabled" title="Alertas habilitadas">🔔</span>
-              <span class="ip-tag" v-if="p.check_ip">{{ p.check_ip }}</span>
-            </div>
+              </div>
 
             <div class="header-actions">
               <span class="toggle-icon">{{ p._expanded ? '▲' : '▼' }}</span>
@@ -1348,15 +1347,7 @@ button {
   filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.2));
 }
 
-.ip-tag {
-  background: var(--bg-color);
-  border: 1px solid var(--primary-color);
-  font-family: monospace;
-  font-size: 0.8rem;
-  padding: 2px 8px;
-  border-radius: 4px;
-  color: var(--gray, #888);
-}
+/* ESTILO ELIMINADO: .ip-tag { ... } */
 
 .toggle-icon {
   font-size: 0.8rem;
