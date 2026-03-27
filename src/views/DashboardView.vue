@@ -41,12 +41,27 @@ const isRebooting = ref(false)
 // Estado para Kebab Menu Flotante
 const openKebabId = ref(null)
 
-// --- SISTEMA NOC: AUDIO Y ACKNOWLEDGE ---
-const audioMode = ref('mute') // 'mute', 'critical', 'all'
-const acknowledgedAlerts = ref(new Set())
-let audioCtx = null
+// --- SISTEMA NOC: AUDIO, MEMORIA Y ACKNOWLEDGE ---
 
-// Inicializador de Audio (Requiere interacción del usuario)
+// 1. Memoria del Modo de Audio
+const audioMode = ref(localStorage.getItem('noc_audio_mode') || 'mute') // 'mute', 'critical', 'all'
+
+// 2. Memoria de Reconocimientos (Acknowledge)
+let initialAcked = []
+try {
+  initialAcked = JSON.parse(localStorage.getItem('noc_acked_alerts') || '[]')
+} catch(e) {}
+const acknowledgedAlerts = ref(new Set(initialAcked))
+
+// Función para guardar silencios permanentemente
+function saveAckedAlerts() {
+  localStorage.setItem('noc_acked_alerts', JSON.stringify(Array.from(acknowledgedAlerts.value)))
+}
+
+let audioCtx = null
+let hasInteracted = false
+
+// Inicializador de Audio
 function initAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)()
@@ -56,17 +71,49 @@ function initAudio() {
   }
 }
 
-// Alternar modos de audio
+// Analizador Global: Busca alertas activas no silenciadas y hace sonar el resumen
+function checkAndPlayExistingAlerts() {
+  if (audioMode.value === 'mute') return;
+  let hasCritical = false;
+  let hasWarning = false;
+
+  for (const mid in liveMonitorAlerts.value) {
+    const state = liveMonitorAlerts.value[mid];
+    const isAcked = acknowledgedAlerts.value.has(mid) || acknowledgedAlerts.value.has(Number(mid));
+    
+    if (!isAcked) {
+      if (state === 'critical') hasCritical = true;
+      if (state === 'warning') hasWarning = true;
+    }
+  }
+
+  if (hasCritical) playCriticalSound();
+  else if (hasWarning && audioMode.value === 'all') playWarningSound();
+}
+
+// Desbloqueo Maestro de Autoplay (Se dispara al primer clic en la pantalla)
+function handleFirstInteraction() {
+  if (hasInteracted) return;
+  hasInteracted = true;
+  initAudio();
+  checkAndPlayExistingAlerts(); // Si cargas la página y ya había fallos, te avisa ahora
+  document.removeEventListener('click', handleFirstInteraction);
+}
+
+// Alternar modos de audio y guardar en memoria
 function toggleAudioMode() {
   initAudio()
   if (audioMode.value === 'mute') audioMode.value = 'critical'
   else if (audioMode.value === 'critical') audioMode.value = 'all'
   else audioMode.value = 'mute'
   
+  localStorage.setItem('noc_audio_mode', audioMode.value)
   showNotification(`Modo de audio: ${audioMode.value.toUpperCase()}`, 'success')
+  
+  checkAndPlayExistingAlerts() // Verifica inmediatamente al cambiar de modo
 }
 
-// Sintetizador: Tono Warning (Bip Suave)
+// Sintetizador: Tono Warning (Bip Suave - VOLUMEN SUBIDO)
 function playWarningSound() {
   if (audioMode.value !== 'all') return
   initAudio()
@@ -76,15 +123,15 @@ function playWarningSound() {
   osc.connect(gain)
   gain.connect(audioCtx.destination)
   osc.type = 'sine'
-  osc.frequency.setValueAtTime(600, audioCtx.currentTime) // Frecuencia media
+  osc.frequency.setValueAtTime(600, audioCtx.currentTime) 
   gain.gain.setValueAtTime(0, audioCtx.currentTime)
-  gain.gain.linearRampToValueAtTime(0.15, audioCtx.currentTime + 0.05)
+  gain.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.05) // Mayor potencia
   gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5)
   osc.start(audioCtx.currentTime)
   osc.stop(audioCtx.currentTime + 0.5)
 }
 
-// Sintetizador: Tono Crítico (Triple Bip Rápido y Agudo)
+// Sintetizador: Tono Crítico (Triple Bip Rápido - VOLUMEN SUBIDO)
 function playCriticalSound() {
   if (audioMode.value === 'mute') return
   initAudio()
@@ -94,10 +141,10 @@ function playCriticalSound() {
     const gain = audioCtx.createGain()
     osc.connect(gain)
     gain.connect(audioCtx.destination)
-    osc.type = 'square' // Sonido más agresivo/digital
+    osc.type = 'square' 
     osc.frequency.setValueAtTime(800 + (i % 2) * 200, audioCtx.currentTime + i * 0.2)
     gain.gain.setValueAtTime(0, audioCtx.currentTime + i * 0.2)
-    gain.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + i * 0.2 + 0.02)
+    gain.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + i * 0.2 + 0.02) // Mayor potencia
     gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + i * 0.2 + 0.15)
     osc.start(audioCtx.currentTime + i * 0.2)
     osc.stop(audioCtx.currentTime + i * 0.2 + 0.15)
@@ -112,6 +159,7 @@ function toggleAcknowledge(monitorId, e) {
   } else {
     acknowledgedAlerts.value.add(monitorId)
   }
+  saveAckedAlerts() // Guardamos en disco al instante
 }
 // --- FIN SISTEMA NOC ---
 
@@ -628,13 +676,15 @@ function flushWsUpdates() {
       
       newAlerts[mid] = newState
 
-      // Si el equipo se recuperó, quitamos el "Acknowledge" automáticamente
+      // Si el equipo se recuperó, quitamos el "Acknowledge" automáticamente y de la memoria
       if (newState === 'ok' && acknowledgedAlerts.value.has(mid)) {
         acknowledgedAlerts.value.delete(mid)
+        saveAckedAlerts()
       }
 
-      // Evaluamos si necesitamos emitir un sonido (Solo si empeora y NO está silenciado)
-      if (!acknowledgedAlerts.value.has(mid)) {
+      // Evaluamos si necesitamos emitir un sonido (Solo si empeora y NO está silenciado en la RAM ni en LocalStorage)
+      const isAcked = acknowledgedAlerts.value.has(mid) || acknowledgedAlerts.value.has(Number(mid)) || acknowledgedAlerts.value.has(String(mid));
+      if (!isAcked) {
         if (newState === 'critical' && oldState !== 'critical') {
           triggeredCriticalSound = true // Empeoró a crítico
         } else if (newState === 'warning' && oldState === 'ok') {
@@ -721,6 +771,9 @@ onMounted(async () => {
   window.addEventListener("resize", resizeAllGridItems);
   
   document.addEventListener('click', closeKebab)
+  
+  // NUEVO: Escuchador global de primera interacción para destrabar el Autoplay del navegador
+  document.addEventListener('click', handleFirstInteraction)
 })
 
 onUnmounted(() => {
@@ -730,6 +783,7 @@ onUnmounted(() => {
   window.removeEventListener("resize", resizeAllGridItems);
   if (gridResizeObserver) gridResizeObserver.disconnect();
   document.removeEventListener('click', closeKebab)
+  document.removeEventListener('click', handleFirstInteraction)
 })
 
 // --- ACCIONES DE TARJETA ---
@@ -1413,7 +1467,7 @@ function closeSensorDetails() {
                   'status-warning': liveMonitorAlerts[monitor.monitor_id] === 'warning',
                   'is-inactive': !monitor.is_active,
                   'is-collapsed': collapsedCards.has(monitor.monitor_id),
-                  'is-acknowledged': acknowledgedAlerts.has(monitor.monitor_id)
+                  'is-acknowledged': acknowledgedAlerts.has(monitor.monitor_id) || acknowledgedAlerts.has(String(monitor.monitor_id))
                 }"
               >
                 <div class="card-header" @dblclick="toggleCardCollapse(monitor.monitor_id)">
@@ -1436,11 +1490,11 @@ function closeSensorDetails() {
                     <template v-if="liveMonitorAlerts[monitor.monitor_id] === 'critical' || liveMonitorAlerts[monitor.monitor_id] === 'warning'">
                       <button 
                         class="action-icon-btn ack-btn"
-                        :class="{'is-acked': acknowledgedAlerts.has(monitor.monitor_id)}"
+                        :class="{'is-acked': acknowledgedAlerts.has(monitor.monitor_id) || acknowledgedAlerts.has(String(monitor.monitor_id))}"
                         @click="toggleAcknowledge(monitor.monitor_id, $event)"
-                        :title="acknowledgedAlerts.has(monitor.monitor_id) ? 'Reactivar Alarma' : 'Reconocer / Silenciar Alarma (Acknowledge)'"
+                        :title="(acknowledgedAlerts.has(monitor.monitor_id) || acknowledgedAlerts.has(String(monitor.monitor_id))) ? 'Reactivar Alarma' : 'Reconocer / Silenciar Alarma (Acknowledge)'"
                       >
-                        {{ acknowledgedAlerts.has(monitor.monitor_id) ? '🔕' : '🔔' }}
+                        {{ (acknowledgedAlerts.has(monitor.monitor_id) || acknowledgedAlerts.has(String(monitor.monitor_id))) ? '🔕' : '🔔' }}
                       </button>
                     </template>
 
