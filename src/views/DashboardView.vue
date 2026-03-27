@@ -20,7 +20,7 @@ const dbGroups = ref([])
 
 // Estado Reactivo de Sensores
 const liveSensorStatus = ref({})
-// Caché Reactivo de Alertas de Monitores (Ahora devuelve 'ok', 'warning', o 'critical')
+// Caché Reactivo de Alertas de Monitores (Devuelve 'ok', 'warning', o 'critical')
 const liveMonitorAlerts = ref({}) 
 
 const monitorToDelete = ref(null)
@@ -40,6 +40,80 @@ const isRebooting = ref(false)
 
 // Estado para Kebab Menu Flotante
 const openKebabId = ref(null)
+
+// --- SISTEMA NOC: AUDIO Y ACKNOWLEDGE ---
+const audioMode = ref('mute') // 'mute', 'critical', 'all'
+const acknowledgedAlerts = ref(new Set())
+let audioCtx = null
+
+// Inicializador de Audio (Requiere interacción del usuario)
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume()
+  }
+}
+
+// Alternar modos de audio
+function toggleAudioMode() {
+  initAudio()
+  if (audioMode.value === 'mute') audioMode.value = 'critical'
+  else if (audioMode.value === 'critical') audioMode.value = 'all'
+  else audioMode.value = 'mute'
+  
+  showNotification(`Modo de audio: ${audioMode.value.toUpperCase()}`, 'success')
+}
+
+// Sintetizador: Tono Warning (Bip Suave)
+function playWarningSound() {
+  if (audioMode.value !== 'all') return
+  initAudio()
+  if (!audioCtx) return
+  const osc = audioCtx.createOscillator()
+  const gain = audioCtx.createGain()
+  osc.connect(gain)
+  gain.connect(audioCtx.destination)
+  osc.type = 'sine'
+  osc.frequency.setValueAtTime(600, audioCtx.currentTime) // Frecuencia media
+  gain.gain.setValueAtTime(0, audioCtx.currentTime)
+  gain.gain.linearRampToValueAtTime(0.15, audioCtx.currentTime + 0.05)
+  gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5)
+  osc.start(audioCtx.currentTime)
+  osc.stop(audioCtx.currentTime + 0.5)
+}
+
+// Sintetizador: Tono Crítico (Triple Bip Rápido y Agudo)
+function playCriticalSound() {
+  if (audioMode.value === 'mute') return
+  initAudio()
+  if (!audioCtx) return
+  for (let i = 0; i < 3; i++) {
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.type = 'square' // Sonido más agresivo/digital
+    osc.frequency.setValueAtTime(800 + (i % 2) * 200, audioCtx.currentTime + i * 0.2)
+    gain.gain.setValueAtTime(0, audioCtx.currentTime + i * 0.2)
+    gain.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + i * 0.2 + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + i * 0.2 + 0.15)
+    osc.start(audioCtx.currentTime + i * 0.2)
+    osc.stop(audioCtx.currentTime + i * 0.2 + 0.15)
+  }
+}
+
+// Reconocer alerta (Acknowledge)
+function toggleAcknowledge(monitorId, e) {
+  e?.stopPropagation()
+  if (acknowledgedAlerts.value.has(monitorId)) {
+    acknowledgedAlerts.value.delete(monitorId)
+  } else {
+    acknowledgedAlerts.value.add(monitorId)
+  }
+}
+// --- FIN SISTEMA NOC ---
 
 // Estado para Rotación de Credenciales
 const showRotateCredentialsModal = ref(false)
@@ -152,7 +226,6 @@ const newEthernetSensor = ref(createNewEthernetSensor())
 const newWirelessSensor = ref(createNewWirelessSensor())
 const newSystemSensor = ref(createNewSystemSensor())
 
-
 // --- FUNCIONES KEBAB MENU ---
 const toggleKebab = (id, e) => {
   e?.stopPropagation()
@@ -161,7 +234,6 @@ const toggleKebab = (id, e) => {
 const closeKebab = () => {
   openKebabId.value = null
 }
-
 
 // --- LOGICA UNIFICADA DE ALERTAS (NIVELES NOC) ---
 function checkIfMonitorHasAlert(monitor) {
@@ -177,18 +249,15 @@ function checkIfMonitorHasAlert(monitor) {
     const status = liveSensorStatus.value[String(s.id)]?.status;
     const cfg = typeof s.config === 'string' ? safeJsonParse(s.config, {}) : (s.config || {});
 
-    // Estado Crítico (Rojo)
     if (['timeout', 'error', 'link_down', 'critical'].includes(status)) {
-      return 'critical'; // El rojo tiene prioridad absoluta, cortamos el bucle.
+      return 'critical'; 
     }
 
-    // Estado Degraddo (Amarillo)
     if (['high_latency', 'degraded', 'searching'].includes(status)) {
-      // Excepción si el sensor lo ignora expresamente
       if (status === 'degraded' && cfg.ignore_degraded === true) {
         continue;
       }
-      highestSeverity = 'warning'; // Guardamos amarillo, pero seguimos buscando por si hay un crítico
+      highestSeverity = 'warning'; 
     }
   }
 
@@ -463,7 +532,7 @@ function setupGridResizeObserver() {
   });
 }
 
-// --- WEBSOCKETS OPTIMIZADOS (BUFFERING) ---
+// --- WEBSOCKETS OPTIMIZADOS (BUFFERING & AUDIO TRIGGER) ---
 function normalizeWsPayload(raw) {
   if (Array.isArray(raw)) return raw.flatMap(normalizeWsPayload)
   if (typeof raw === 'string') {
@@ -515,7 +584,6 @@ watch(activeGroup, () => {
   nextTick(setupGridResizeObserver);
 })
 
-
 async function ensureChannelsLoaded() {
   if (!Object.keys(channelsById.value).length) {
     try {
@@ -527,7 +595,7 @@ async function ensureChannelsLoaded() {
   }
 }
 
-// BUZÓN TEMPORAL
+// BUZÓN TEMPORAL Y LÓGICA DE ESCALADA DE ALERTAS
 let pendingWsUpdates = {}
 let wsBufferTimer = null
 
@@ -550,10 +618,37 @@ function flushWsUpdates() {
       if (mid) affectedMonitorIds.add(mid)
   })
 
+  let triggeredCriticalSound = false
+  let triggeredWarningSound = false
+
   affectedMonitorIds.forEach(mid => {
       const m = allMonitors.value.find(x => x.monitor_id === mid)
-      newAlerts[mid] = checkIfMonitorHasAlert(m)
+      const newState = checkIfMonitorHasAlert(m)
+      const oldState = liveMonitorAlerts.value[mid] || 'ok'
+      
+      newAlerts[mid] = newState
+
+      // Si el equipo se recuperó, quitamos el "Acknowledge" automáticamente
+      if (newState === 'ok' && acknowledgedAlerts.value.has(mid)) {
+        acknowledgedAlerts.value.delete(mid)
+      }
+
+      // Evaluamos si necesitamos emitir un sonido (Solo si empeora y NO está silenciado)
+      if (!acknowledgedAlerts.value.has(mid)) {
+        if (newState === 'critical' && oldState !== 'critical') {
+          triggeredCriticalSound = true // Empeoró a crítico
+        } else if (newState === 'warning' && oldState === 'ok') {
+          triggeredWarningSound = true // Empeoró a warning
+        }
+      }
   })
+
+  // Ejecución de sonido centralizada (Evita ametralladora)
+  if (triggeredCriticalSound) {
+    playCriticalSound()
+  } else if (triggeredWarningSound) {
+    playWarningSound()
+  }
 
   liveMonitorAlerts.value = newAlerts
   pendingWsUpdates = {}
@@ -625,7 +720,6 @@ onMounted(async () => {
   wsBufferTimer = setInterval(flushWsUpdates, 500)
   window.addEventListener("resize", resizeAllGridItems);
   
-  // Click listener para cerrar el menú kebab
   document.addEventListener('click', closeKebab)
 })
 
@@ -729,9 +823,7 @@ async function toggleSensorPause(sensor, monitor, e) {
     
     await api.put(`/sensors/${sensor.id}`, payload)
     
-    // Recalcular alertas locales
     liveMonitorAlerts.value[monitor.monitor_id] = checkIfMonitorHasAlert(monitor)
-    
     showNotification(newVal ? 'Alertas pausadas para este sensor.' : 'Alertas reactivadas.', 'success')
   } catch (err) {
     console.error(err)
@@ -762,7 +854,6 @@ async function toggleIgnoreDegraded(sensor, monitor, e) {
     sensor.config = cfg
     
     liveMonitorAlerts.value[monitor.monitor_id] = checkIfMonitorHasAlert(monitor)
-    
     showNotification(newIgnore ? 'Avisos "Degraded" silenciados para este sensor.' : 'Avisos "Degraded" reactivados.', 'success')
   } catch (err) {
     console.error(err)
@@ -1273,6 +1364,20 @@ function closeSensorDetails() {
       <header class="content-header" v-if="activeGroup">
         <h2>{{ activeGroup }}</h2>
         <div class="header-actions">
+          
+          <div class="view-controls" style="margin-right: 15px;">
+            <button 
+              class="action-icon-btn audio-btn" 
+              :class="{'is-muted': audioMode === 'mute'}"
+              @click="toggleAudioMode" 
+              :title="'Modo Audio NOC: ' + audioMode.toUpperCase()"
+            >
+              <template v-if="audioMode === 'all'">🔊 Todo</template>
+              <template v-else-if="audioMode === 'critical'">⚠️ Crítico</template>
+              <template v-else>🔇 Mute</template>
+            </button>
+          </div>
+
           <div class="view-controls">
             <button class="action-icon-btn" @click="expandAll" title="Abrir todas las tarjetas">🔽</button>
             <button class="action-icon-btn" @click="collapseAll" title="Cerrar todas las tarjetas">🔼</button>
@@ -1308,6 +1413,7 @@ function closeSensorDetails() {
                   'status-warning': liveMonitorAlerts[monitor.monitor_id] === 'warning',
                   'is-inactive': !monitor.is_active,
                   'is-collapsed': collapsedCards.has(monitor.monitor_id),
+                  'is-acknowledged': acknowledgedAlerts.has(monitor.monitor_id)
                 }"
               >
                 <div class="card-header" @dblclick="toggleCardCollapse(monitor.monitor_id)">
@@ -1327,8 +1433,16 @@ function closeSensorDetails() {
                       {{ monitor.ip_address }}
                     </span>
                     
-                    <span v-if="liveMonitorAlerts[monitor.monitor_id] === 'critical'" class="alert-icon" title="Estado Crítico">🔴</span>
-                    <span v-if="liveMonitorAlerts[monitor.monitor_id] === 'warning'" class="alert-icon" title="Advertencia">🟡</span>
+                    <template v-if="liveMonitorAlerts[monitor.monitor_id] === 'critical' || liveMonitorAlerts[monitor.monitor_id] === 'warning'">
+                      <button 
+                        class="action-icon-btn ack-btn"
+                        :class="{'is-acked': acknowledgedAlerts.has(monitor.monitor_id)}"
+                        @click="toggleAcknowledge(monitor.monitor_id, $event)"
+                        :title="acknowledgedAlerts.has(monitor.monitor_id) ? 'Reactivar Alarma' : 'Reconocer / Silenciar Alarma (Acknowledge)'"
+                      >
+                        {{ acknowledgedAlerts.has(monitor.monitor_id) ? '🔕' : '🔔' }}
+                      </button>
+                    </template>
 
                     <button
                       class="action-icon-btn"
@@ -1904,6 +2018,16 @@ function closeSensorDetails() {
   border: 1px solid var(--primary-color);
 }
 
+.audio-btn {
+  font-weight: bold;
+  padding: 4px 10px !important;
+  color: #eee;
+}
+.audio-btn.is-muted {
+  color: #888;
+  opacity: 0.6;
+}
+
 .btn-primary {
   background: var(--blue);
   color: white;
@@ -1948,30 +2072,49 @@ function closeSensorDetails() {
   border-radius: 8px;
   display: flex;
   flex-direction: column;
-  /* overflow: hidden; ELIMINADO PARA QUE EL KEBAB PUEDA SALIR */
   transition: all 0.2s;
-  position: relative; /* Asegura el contexto de posicionamiento */
+  position: relative; /* Asegura el contexto de posicionamiento para Kebab */
 }
 
-/* NUEVO: Redondeamos las esquinas de los elementos internos para compensar la falta de overflow: hidden */
+/* Redondeamos internas para compensar falta de overflow:hidden */
 .card-header {
   border-top-left-radius: 7px;
   border-top-right-radius: 7px;
 }
-
 .card-body.collapsed-summary {
   border-bottom-left-radius: 7px;
   border-bottom-right-radius: 7px;
 }
 
-/* ESTADOS DE GRAVEDAD PARA LA TARJETA */
-.monitor-card.status-critical {
-  border-color: var(--secondary-color);
-  box-shadow: 0 0 10px rgba(255, 107, 107, 0.3);
+/* ANIMACIONES NOC (PULSO DE ALARMA) */
+@keyframes pulse-critical {
+  0% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7); border-color: var(--secondary-color); }
+  70% { box-shadow: 0 0 0 10px rgba(255, 107, 107, 0); border-color: var(--secondary-color); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0); border-color: var(--secondary-color); }
 }
-.monitor-card.status-warning {
+
+@keyframes pulse-warning {
+  0% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.7); border-color: #fbbf24; }
+  70% { box-shadow: 0 0 0 10px rgba(251, 191, 36, 0); border-color: #fbbf24; }
+  100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); border-color: #fbbf24; }
+}
+
+/* ESTADOS DE GRAVEDAD PARA LA TARJETA */
+.monitor-card.status-critical:not(.is-acknowledged) {
+  animation: pulse-critical 2s infinite;
+}
+.monitor-card.status-warning:not(.is-acknowledged) {
+  animation: pulse-warning 2s infinite;
+}
+
+/* ESTADOS ACKNOWLEDGED (Dejan de parpadear pero mantienen color estático) */
+.monitor-card.status-critical.is-acknowledged {
+  border-color: var(--secondary-color);
+  box-shadow: 0 0 5px rgba(255, 107, 107, 0.3);
+}
+.monitor-card.status-warning.is-acknowledged {
   border-color: #fbbf24;
-  box-shadow: 0 0 10px rgba(251, 191, 36, 0.2);
+  box-shadow: 0 0 5px rgba(251, 191, 36, 0.2);
 }
 
 .monitor-card.is-inactive {
@@ -2044,6 +2187,25 @@ function closeSensorDetails() {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* BOTÓN ACKNOWLEDGE */
+@keyframes shake {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(15deg); }
+  50% { transform: rotate(0deg); }
+  75% { transform: rotate(-15deg); }
+  100% { transform: rotate(0deg); }
+}
+.ack-btn:not(.is-acked) {
+  color: var(--blue);
+  animation: shake 0.5s ease-in-out infinite;
+  display: inline-block;
+}
+.ack-btn.is-acked {
+  opacity: 0.5;
+  animation: none;
+}
+
 .active-orange {
   color: #fbbf24;
   opacity: 1;
@@ -2083,7 +2245,7 @@ function closeSensorDetails() {
   padding: 0.6rem 0.8rem;
   border-radius: 6px;
   border-left: 3px solid transparent;
-  cursor: default; /* Eliminado cursor pointer general, ahora en sensor-tier-top */
+  cursor: default;
   transition: background 0.2s;
 }
 .sensor-row:hover {
@@ -2101,7 +2263,7 @@ function closeSensorDetails() {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  cursor: pointer; /* Área clickeable principal */
+  cursor: pointer;
 }
 
 .sensor-name {
