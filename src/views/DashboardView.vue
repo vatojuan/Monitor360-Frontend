@@ -60,6 +60,7 @@ function saveAckedAlerts() {
 
 let audioCtx = null
 let hasInteracted = false
+let audioLoopTimer = null // NUEVO: Timer para el bucle de sonido constante
 
 // Inicializador de Audio
 function initAudio() {
@@ -71,15 +72,15 @@ function initAudio() {
   }
 }
 
-// Analizador Global: Busca alertas activas no silenciadas y hace sonar el resumen
+// Analizador Global: Busca la peor alerta activa NO silenciada y la reproduce
 function checkAndPlayExistingAlerts() {
-  if (audioMode.value === 'mute') return;
+  if (audioMode.value === 'mute' || !hasInteracted) return;
   let hasCritical = false;
   let hasWarning = false;
 
   for (const mid in liveMonitorAlerts.value) {
     const state = liveMonitorAlerts.value[mid];
-    const isAcked = acknowledgedAlerts.value.has(mid) || acknowledgedAlerts.value.has(Number(mid));
+    const isAcked = acknowledgedAlerts.value.has(mid) || acknowledgedAlerts.value.has(Number(mid)) || acknowledgedAlerts.value.has(String(mid));
     
     if (!isAcked) {
       if (state === 'critical') hasCritical = true;
@@ -87,8 +88,18 @@ function checkAndPlayExistingAlerts() {
     }
   }
 
-  if (hasCritical) playCriticalSound();
-  else if (hasWarning && audioMode.value === 'all') playWarningSound();
+  // LÓGICA DE PRIORIDAD: Rojo siempre gana sobre Amarillo
+  if (hasCritical) {
+    playCriticalSound();
+  } else if (hasWarning && audioMode.value === 'all') {
+    playWarningSound();
+  }
+}
+
+// Iniciar el bucle de sonido que se repetirá cada 5 segundos
+function startAudioLoop() {
+  if (audioLoopTimer) clearInterval(audioLoopTimer)
+  audioLoopTimer = setInterval(checkAndPlayExistingAlerts, 5000)
 }
 
 // Desbloqueo Maestro de Autoplay (Se dispara al primer clic en la pantalla)
@@ -96,7 +107,8 @@ function handleFirstInteraction() {
   if (hasInteracted) return;
   hasInteracted = true;
   initAudio();
-  checkAndPlayExistingAlerts(); // Si cargas la página y ya había fallos, te avisa ahora
+  checkAndPlayExistingAlerts();
+  startAudioLoop(); // Inicia la repetición continua
   document.removeEventListener('click', handleFirstInteraction);
 }
 
@@ -113,7 +125,7 @@ function toggleAudioMode() {
   checkAndPlayExistingAlerts() // Verifica inmediatamente al cambiar de modo
 }
 
-// Sintetizador: Tono Warning (Bip Suave - VOLUMEN SUBIDO)
+// Sintetizador: Tono Warning (Bip Suave)
 function playWarningSound() {
   if (audioMode.value !== 'all') return
   initAudio()
@@ -125,13 +137,13 @@ function playWarningSound() {
   osc.type = 'sine'
   osc.frequency.setValueAtTime(600, audioCtx.currentTime) 
   gain.gain.setValueAtTime(0, audioCtx.currentTime)
-  gain.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.05) // Mayor potencia
+  gain.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.05)
   gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5)
   osc.start(audioCtx.currentTime)
   osc.stop(audioCtx.currentTime + 0.5)
 }
 
-// Sintetizador: Tono Crítico (Triple Bip Rápido - VOLUMEN SUBIDO)
+// Sintetizador: Tono Crítico (Triple Bip Rápido)
 function playCriticalSound() {
   if (audioMode.value === 'mute') return
   initAudio()
@@ -144,7 +156,7 @@ function playCriticalSound() {
     osc.type = 'square' 
     osc.frequency.setValueAtTime(800 + (i % 2) * 200, audioCtx.currentTime + i * 0.2)
     gain.gain.setValueAtTime(0, audioCtx.currentTime + i * 0.2)
-    gain.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + i * 0.2 + 0.02) // Mayor potencia
+    gain.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + i * 0.2 + 0.02)
     gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + i * 0.2 + 0.15)
     osc.start(audioCtx.currentTime + i * 0.2)
     osc.stop(audioCtx.currentTime + i * 0.2 + 0.15)
@@ -159,7 +171,7 @@ function toggleAcknowledge(monitorId, e) {
   } else {
     acknowledgedAlerts.value.add(monitorId)
   }
-  saveAckedAlerts() // Guardamos en disco al instante
+  saveAckedAlerts()
 }
 // --- FIN SISTEMA NOC ---
 
@@ -666,13 +678,9 @@ function flushWsUpdates() {
       if (mid) affectedMonitorIds.add(mid)
   })
 
-  let triggeredCriticalSound = false
-  let triggeredWarningSound = false
-
   affectedMonitorIds.forEach(mid => {
       const m = allMonitors.value.find(x => x.monitor_id === mid)
       const newState = checkIfMonitorHasAlert(m)
-      const oldState = liveMonitorAlerts.value[mid] || 'ok'
       
       newAlerts[mid] = newState
 
@@ -681,24 +689,9 @@ function flushWsUpdates() {
         acknowledgedAlerts.value.delete(mid)
         saveAckedAlerts()
       }
-
-      // Evaluamos si necesitamos emitir un sonido (Solo si empeora y NO está silenciado en la RAM ni en LocalStorage)
-      const isAcked = acknowledgedAlerts.value.has(mid) || acknowledgedAlerts.value.has(Number(mid)) || acknowledgedAlerts.value.has(String(mid));
-      if (!isAcked) {
-        if (newState === 'critical' && oldState !== 'critical') {
-          triggeredCriticalSound = true // Empeoró a crítico
-        } else if (newState === 'warning' && oldState === 'ok') {
-          triggeredWarningSound = true // Empeoró a warning
-        }
-      }
   })
 
-  // Ejecución de sonido centralizada (Evita ametralladora)
-  if (triggeredCriticalSound) {
-    playCriticalSound()
-  } else if (triggeredWarningSound) {
-    playWarningSound()
-  }
+  // (La ejecución del sonido ahora la maneja el bucle independiente startAudioLoop)
 
   liveMonitorAlerts.value = newAlerts
   pendingWsUpdates = {}
@@ -780,6 +773,10 @@ onUnmounted(() => {
   if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
   if (typeof directMsgUnbind === 'function') directMsgUnbind()
   if (wsBufferTimer) clearInterval(wsBufferTimer)
+  
+  // Limpieza del bucle NOC
+  if (typeof audioLoopTimer !== 'undefined' && audioLoopTimer) clearInterval(audioLoopTimer)
+  
   window.removeEventListener("resize", resizeAllGridItems);
   if (gridResizeObserver) gridResizeObserver.disconnect();
   document.removeEventListener('click', closeKebab)
