@@ -5,7 +5,7 @@ import api from '@/lib/api'
 import { connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
 import { waitForSession } from '@/lib/supabase'
 import draggable from 'vuedraggable'
-import SensorConfigurator from '@/components/SensorConfigurator.vue' // <-- NUEVO: Importamos la fuente de la verdad
+import SensorConfigurator from '@/components/SensorConfigurator.vue'
 
 const router = useRouter()
 
@@ -474,13 +474,26 @@ function currentSensorIds() {
       : [],
   )
 }
+
+// --- ESCUDO ANTI-AMETRALLADORA (DEBOUNCE) ---
+let subscribeTimeout = null;
+
 function trySubscribeSensors() {
-  const ws = getCurrentWebSocket()
-  if (!ws || ws.readyState !== 1) return
-  const ids = currentSensorIds()
-  if (ids.length > 0) ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
+  if (subscribeTimeout) clearTimeout(subscribeTimeout);
+  
+  subscribeTimeout = setTimeout(() => {
+    const ws = getCurrentWebSocket()
+    if (!ws || ws.readyState !== 1) return
+    
+    const ids = currentSensorIds()
+    if (ids.length > 0) {
+      ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
+    }
+  }, 500); // Espera 500ms antes de disparar al servidor para agrupar múltiples llamadas
 }
-watch(() => allMonitors.value, trySubscribeSensors, { deep: true })
+
+// Observamos la longitud en lugar de hacer deep watch, esto rompe el bucle infinito
+watch(() => allMonitors.value.length, trySubscribeSensors)
 
 async function ensureChannelsLoaded() {
   if (!Object.keys(channelsById.value).length) {
