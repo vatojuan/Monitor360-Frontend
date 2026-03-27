@@ -188,6 +188,7 @@ const createNewWirelessSensor = () => ({
   config: {
     interface_name: '',
     interval_sec: 60,
+    ignore_degraded: false, // <-- NUEVA PROPIEDAD
     thresholds: {
       min_signal_dbm: -80,
       min_ccq_percent: 75,
@@ -246,6 +247,26 @@ const newEthernetSensor = ref(createNewEthernetSensor())
 const newWirelessSensor = ref(createNewWirelessSensor())
 const newSystemSensor = ref(createNewSystemSensor())
 
+// --- LOGICA UNIFICADA DE ALERTAS ---
+function checkIfMonitorHasAlert(monitor) {
+  if (!monitor || monitor.is_active === false) return false;
+  if (!monitor.sensors || monitor.sensors.length === 0) return false;
+
+  return monitor.sensors.some(s => {
+    if (s.is_active === false) return false;
+    
+    const status = liveSensorStatus.value[String(s.id)]?.status;
+    const cfg = typeof s.config === 'string' ? safeJsonParse(s.config, {}) : (s.config || {});
+
+    // Si el estado es degraded pero tenemos la flag activada, lo ignoramos
+    if (status === 'degraded' && cfg.ignore_degraded === true) {
+      return false;
+    }
+
+    return ['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(status);
+  });
+}
+
 // --- API FETCHERS ---
 async function fetchGroups() {
   try {
@@ -268,18 +289,14 @@ async function fetchAllMonitors() {
       if (m.is_active === null || m.is_active === undefined) m.is_active = true
       if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
       
-      let hasAlert = false
       ;(m.sensors || []).forEach((s) => {
         const sid = String(s.id)
         if (!liveSensorStatus.value[sid]) initialStatus[sid] = { status: 'pending' }
         else initialStatus[sid] = liveSensorStatus.value[sid]
-
-        if (['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(initialStatus[sid].status)) {
-            hasAlert = true
-        }
       })
-      if (m.is_active === false) hasAlert = false
-      initialAlerts[m.monitor_id] = hasAlert
+      
+      // Usamos la logica unificada
+      initialAlerts[m.monitor_id] = checkIfMonitorHasAlert(m)
     })
     
     liveSensorStatus.value = initialStatus
@@ -379,6 +396,28 @@ function getGroupStatusClass(groupName) {
   return 'dot-green'
 }
 
+// --- CONTROLES DE TARJETAS MASIVAS ---
+function expandAll() {
+  if (!activeGroup.value || !groupedMonitors.value[activeGroup.value]) return
+  groupedMonitors.value[activeGroup.value].forEach(m => collapsedCards.value.delete(m.monitor_id))
+}
+
+function collapseAll() {
+  if (!activeGroup.value || !groupedMonitors.value[activeGroup.value]) return
+  groupedMonitors.value[activeGroup.value].forEach(m => collapsedCards.value.add(m.monitor_id))
+}
+
+function expandAlertsOnly() {
+  if (!activeGroup.value || !groupedMonitors.value[activeGroup.value]) return
+  groupedMonitors.value[activeGroup.value].forEach(m => {
+    if (liveMonitorAlerts.value[m.monitor_id]) {
+      collapsedCards.value.delete(m.monitor_id) // Abrir si tiene alerta
+    } else {
+      collapsedCards.value.add(m.monitor_id)    // Cerrar si está OK
+    }
+  })
+}
+
 // --- D&D ---
 async function onDragChange() {
   if (!activeGroup.value) return
@@ -447,6 +486,10 @@ function formatDate(dateString) {
   if (!dateString) return ''
   return new Date(dateString).toLocaleString()
 }
+function isDegradedIgnored(sensor) {
+  const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : (sensor.config || {});
+  return !!cfg.ignore_degraded;
+}
 
 // --- WEBSOCKETS OPTIMIZADOS (BUFFERING) ---
 function normalizeWsPayload(raw) {
@@ -489,10 +532,9 @@ function trySubscribeSensors() {
     if (ids.length > 0) {
       ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: ids }))
     }
-  }, 500); // Espera 500ms antes de disparar al servidor para agrupar múltiples llamadas
+  }, 500);
 }
 
-// Observamos la longitud en lugar de hacer deep watch, esto rompe el bucle infinito
 watch(() => allMonitors.value.length, trySubscribeSensors)
 
 async function ensureChannelsLoaded() {
@@ -519,7 +561,6 @@ function flushWsUpdates() {
   // 2. Pre-Cálculo de Alertas Globales (Para no hacerlo en HTML)
   const newAlerts = { ...liveMonitorAlerts.value }
   
-  // Mapeamos los IDs de sensores actualizados para saber qué monitores recalcular
   const affectedMonitorIds = new Set()
   const sensorToMonitorMap = {}
   allMonitors.value.forEach(m => {
@@ -536,18 +577,7 @@ function flushWsUpdates() {
   // Recalculamos SOLO los monitores que sufrieron cambios
   affectedMonitorIds.forEach(mid => {
       const m = allMonitors.value.find(x => x.monitor_id === mid)
-      if (!m || m.is_active === false) {
-          newAlerts[mid] = false
-          return
-      }
-      let hasAlert = false
-      if (m.sensors && m.sensors.length) {
-          hasAlert = m.sensors.some(s => {
-              const st = liveSensorStatus.value[String(s.id)]?.status
-              return ['timeout', 'error', 'high_latency', 'link_down', 'degraded', 'critical'].includes(st)
-          })
-      }
-      newAlerts[mid] = hasAlert
+      newAlerts[mid] = checkIfMonitorHasAlert(m)
   })
 
   liveMonitorAlerts.value = newAlerts
@@ -617,7 +647,7 @@ onMounted(async () => {
   await connectWebSocketWhenAuthenticated()
   wireWsSyncAndSubs()
 
-  // Iniciamos el Reloj del Buffer (Vacía la cola cada 500ms)
+  // Iniciamos el Reloj del Buffer
   wsBufferTimer = setInterval(flushWsUpdates, 500)
 })
 
@@ -678,17 +708,13 @@ async function deleteSensor(sensor, monitor, e) {
   if (!confirm(`¿Eliminar sensor "${sensor.name}"?`)) return
 
   try {
-    // 1. Borramos en Base de Datos
     await api.delete(`/sensors/${sensor.id}`)
 
-    // 2. Usamos directamente el objeto 'monitor' que nos pasaron desde el HTML (¡infalible!)
     if (monitor && monitor.sensors) {
       monitor.sensors = monitor.sensors.filter((s) => s.id !== sensor.id)
     }
 
-    // 3. Forzamos a Vue a redibujar el grupo activo
     if (activeGroup.value && groupedMonitors.value[activeGroup.value]) {
-        // Encontramos el monitor dentro del grupo local y actualizamos su lista
         const groupMonitor = groupedMonitors.value[activeGroup.value].find(m => m.monitor_id === monitor.monitor_id);
         if (groupMonitor && groupMonitor.sensors) {
             groupMonitor.sensors = groupMonitor.sensors.filter((s) => s.id !== sensor.id);
@@ -699,6 +725,40 @@ async function deleteSensor(sensor, monitor, e) {
   } catch (err) {
     console.error(err)
     showNotification('Error al eliminar sensor.', 'error')
+  }
+}
+
+// Acción Específica: Ignorar Estado Degraded (Persistente)
+async function toggleIgnoreDegraded(sensor, monitor, e) {
+  e?.stopPropagation()
+  
+  const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : { ...(sensor.config || {}) }
+  const currentIgnore = !!cfg.ignore_degraded
+  const newIgnore = !currentIgnore
+  
+  cfg.ignore_degraded = newIgnore
+
+  try {
+    // Persistimos en base de datos para no perderlo al recargar
+    const payload = {
+      name: sensor.name,
+      is_active: sensor.is_active,
+      alerts_paused: sensor.alerts_paused,
+      config: cfg
+    }
+    
+    await api.put(`/sensors/${sensor.id}`, payload)
+    
+    // Actualizamos el estado local
+    sensor.config = cfg
+    
+    // Recalculamos alerta visual del grupo
+    liveMonitorAlerts.value[monitor.monitor_id] = checkIfMonitorHasAlert(monitor)
+    
+    showNotification(newIgnore ? 'Avisos "Degraded" silenciados para este sensor.' : 'Avisos "Degraded" reactivados.', 'success')
+  } catch (err) {
+    console.error(err)
+    showNotification('Error al silenciar aviso degraded.', 'error')
   }
 }
 
@@ -849,7 +909,6 @@ async function showSensorDetails(s, m, e) {
   sensorDetailsToShow.value = s
   currentMonitorContext.value = m
   
-  // Si el sensor pertenece a un equipo, cargamos sus interfaces para que el select se pueble
   if (['ethernet', 'wireless'].includes(s.sensor_type) && m.device_id) {
     fetchDeviceInterfaces(m.device_id)
   }
@@ -949,6 +1008,7 @@ async function showSensorDetails(s, m, e) {
     uiData.config = {
       interface_name: cfg.interface_name || '',
       interval_sec: cfg.interval_sec || 60,
+      ignore_degraded: cfg.ignore_degraded || false,
       tolerance_checks: cfg.tolerance_checks ?? 3,
       thresholds: {
         min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
@@ -1206,7 +1266,14 @@ function closeSensorDetails() {
     <main class="main-content">
       <header class="content-header" v-if="activeGroup">
         <h2>{{ activeGroup }}</h2>
-        <router-link to="/monitor-builder" class="btn-primary">Añadir Dispositivo</router-link>
+        <div class="header-actions">
+          <div class="view-controls">
+            <button class="action-icon-btn" @click="expandAll" title="Abrir todas las tarjetas">🔽</button>
+            <button class="action-icon-btn" @click="collapseAll" title="Cerrar todas las tarjetas">🔼</button>
+            <button class="action-icon-btn text-orange" @click="expandAlertsOnly" title="Abrir Inteligente (Solo con alertas)">⚠️</button>
+          </div>
+          <router-link to="/monitor-builder" class="btn-primary">Añadir Dispositivo</router-link>
+        </div>
       </header>
       <div v-else class="empty-selection">
         <p>Selecciona un grupo para ver sus monitores</p>
@@ -1353,6 +1420,16 @@ function closeSensorDetails() {
 
                         <div class="sensor-row-actions">
                           <button
+                            v-if="sensor.sensor_type === 'wireless'"
+                            class="details-btn"
+                            :class="{ 'text-orange': isDegradedIgnored(sensor) }"
+                            @click="toggleIgnoreDegraded(sensor, monitor, $event)"
+                            :title="isDegradedIgnored(sensor) ? 'Reactivar Alerta Degraded' : 'Ignorar Alerta Degraded'"
+                          >
+                            {{ isDegradedIgnored(sensor) ? '🙈' : '🙉' }}
+                          </button>
+
+                          <button
                             class="details-btn"
                             @click="showSensorDetails(sensor, monitor, $event)"
                             title="Editar"
@@ -1361,7 +1438,7 @@ function closeSensorDetails() {
                           </button>
                           <button
                             class="details-btn delete-btn-sensor"
-                            @click="deleteSensor(sensor, $event)"
+                            @click="deleteSensor(sensor, monitor, $event)"
                             title="Eliminar Sensor"
                           >
                             ✕
@@ -1799,6 +1876,22 @@ function closeSensorDetails() {
   font-size: 1.4rem;
   color: white;
 }
+
+/* NUEVAS CLASES PARA EL HEADER ACTIONS (BOTONERA) */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+.view-controls {
+  display: flex;
+  gap: 0.2rem;
+  background: var(--bg-color);
+  padding: 0.2rem;
+  border-radius: 6px;
+  border: 1px solid var(--primary-color);
+}
+
 .btn-primary {
   background: var(--blue);
   color: white;
@@ -1829,6 +1922,8 @@ function closeSensorDetails() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 1.5rem;
+  /* AQUI ESTÁ LA MAGIA PARA QUE NO SE ESTIREN LAS ALEDAÑAS */
+  align-items: start; 
 }
 
 .monitor-card {
@@ -1907,10 +2002,12 @@ function closeSensorDetails() {
   font-size: 1.1rem;
   color: #ccc;
   cursor: pointer;
-  padding: 2px;
+  padding: 4px;
+  border-radius: 4px;
 }
 .action-icon-btn:hover {
   color: #fff;
+  background: rgba(255, 255, 255, 0.1);
 }
 .active-orange {
   color: #fbbf24;
@@ -1955,7 +2052,7 @@ function closeSensorDetails() {
   transition: background 0.2s;
 }
 .sensor-row:hover {
-  background: rgba(255, 255, 255, 0.05); /* Suave highlight al pasar el ratón */
+  background: rgba(255, 255, 255, 0.05);
 }
 .sensor-row.row-paused {
   border-left-color: #fbbf24;
@@ -2069,7 +2166,7 @@ function closeSensorDetails() {
   line-height: 1;
 }
 .delete-btn-sensor:hover {
-  color: var(--secondary-color); /* Rojo */
+  color: var(--secondary-color);
 }
 
 /* OTROS ESTILOS */
