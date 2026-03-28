@@ -871,6 +871,15 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
     return showNotification('Seleccioná un Maestro.', 'error')
   }
 
+  // --- INICIO CÓDIGO ACTUALIZADO ---
+  let finalVpnId = null;
+  if (addForm.value.connection_method === 'vpn') {
+    finalVpnId = addForm.value.vpn_profile_id;
+  } else if (addForm.value.connection_method === 'maestro' && addForm.value.maestro_id) {
+    const selectedMaestro = maestros.value.find(m => m.id === addForm.value.maestro_id);
+    if (selectedMaestro) finalVpnId = selectedMaestro.vpn_profile_id;
+  }
+
   const payload = {
     client_name: addForm.value.client_name,
     ip_address: addForm.value.ip_address,
@@ -879,11 +888,12 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
     mac_address: addForm.value.mac_address || '',
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
-    vpn_profile_id: addForm.value.connection_method === 'vpn' ? addForm.value.vpn_profile_id : null,
+    vpn_profile_id: finalVpnId, // <-- AHORA HEREDA CORRECTAMENTE LA VPN
     credential_id: addForm.value.credential_id, // <-- CORREGIDO: Siempre se envía para asociarlo al destino
     vendor: addForm.value.vendor,
     force_generic_ping: isForced,
   }
+  // --- FIN CÓDIGO ACTUALIZADO ---
 
   isSubmitting.value = true
   if (isForced) showAuthErrorModal.value = false
@@ -921,17 +931,25 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
 async function handleTestReachability() {
   if (!addForm.value.ip_address?.trim()) return showNotification('Ingresá la IP.', 'error')
   
+  // --- INICIO CÓDIGO ACTUALIZADO ---
   const payload = {
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
     ssh_port: Number(addForm.value.ssh_port) || null, // <-- INTEGRACIÓN DUAL CHECK
     vendor: addForm.value.vendor,
   }
+  
   if (addForm.value.connection_method === 'vpn') {
     payload.vpn_profile_id = addForm.value.vpn_profile_id
   } else if (addForm.value.connection_method === 'maestro') {
     payload.maestro_id = addForm.value.maestro_id
+    // Extraer VPN del Maestro para el Test
+    const selectedMaestro = maestros.value.find(m => m.id === addForm.value.maestro_id);
+    if (selectedMaestro && selectedMaestro.vpn_profile_id) {
+      payload.vpn_profile_id = selectedMaestro.vpn_profile_id;
+    }
   }
+  // --- FIN CÓDIGO ACTUALIZADO ---
 
   isTesting.value = true
   testResult.value = null
@@ -2116,7 +2134,7 @@ onUnmounted(() => {
   padding: 1.5rem;
   border-radius: 10px;
   border: 1px solid var(--primary-color);
-}
+  }
 .control-section h2 {
   color: white;
   margin-top: 0;

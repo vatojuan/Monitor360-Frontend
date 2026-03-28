@@ -847,8 +847,19 @@ watch(searchQuery, (newQuery) => {
         </div>
         <div v-else>
           <h2><span class="step-number">2</span> Gestionar Sensores</h2>
+          
+          <div class="add-sensor-section">
+            <h4>Añadir Nuevo Sensor</h4>
+            <div class="sensor-type-selector">
+              <button @click="openFormForCreate('ping')">Añadir Ping</button>
+              <button @click="openFormForCreate('ethernet')">Añadir Ethernet</button>
+              <button @click="openFormForCreate('wireless')">Añadir Wireless 📡</button>
+              <button @click="openFormForCreate('system')">Añadir Sistema 💻</button>
+            </div>
+          </div>
+
           <div class="sensor-list">
-            <h4>Sensores Activos</h4>
+            <h4>Sensores Activos ({{ activeSensors.length }})</h4>
             <ul v-if="activeSensors.length > 0">
               <li v-for="sensor in activeSensors" :key="sensor.id">
                 <div class="sensor-info">
@@ -865,15 +876,6 @@ watch(searchQuery, (newQuery) => {
               </li>
             </ul>
             <p v-else class="empty-list">No hay sensores configurados.</p>
-          </div>
-          <div class="add-sensor-section">
-            <h4>Añadir Nuevo Sensor</h4>
-            <div class="sensor-type-selector">
-              <button @click="openFormForCreate('ping')">Añadir Ping</button>
-              <button @click="openFormForCreate('ethernet')">Añadir Ethernet</button>
-              <button @click="openFormForCreate('wireless')">Añadir Wireless 📡</button>
-              <button @click="openFormForCreate('system')">Añadir Sistema 💻</button>
-            </div>
           </div>
         </div>
       </section>
@@ -1087,7 +1089,7 @@ h4 {
 
 /* 3. Lista de Sensores (MonitorBuilder) blindada */
 .sensor-list {
-  margin-top: 2rem;
+  margin-top: 1.5rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--primary-color);
 }
@@ -1178,9 +1180,7 @@ h4 {
   font-style: italic;
 }
 .add-sensor-section {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--primary-color);
+  margin-top: 1rem; /* Modificado para integrarlo mejor */
 }
 .sensor-type-selector {
   display: flex;
