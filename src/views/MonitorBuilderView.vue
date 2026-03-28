@@ -863,13 +863,13 @@ watch(searchQuery, (newQuery) => {
             <ul v-if="activeSensors.length > 0">
               <li v-for="sensor in activeSensors" :key="sensor.id">
                 <div class="sensor-info">
+                  <strong :title="sensor.name">{{ sensor.name }}</strong>
+                </div>
+                <div class="sensor-actions">
+                  <span v-if="sensor.config?.alerts?.length" class="alert-enabled-badge" title="Alerta configurada">🔔</span>
                   <span class="sensor-type-badge" :class="sensor.sensor_type">{{
                     sensor.sensor_type
                   }}</span>
-                  <strong :title="sensor.name">{{ sensor.name }}</strong>
-                  <span v-if="sensor.config?.alerts?.length" class="alert-enabled-badge" title="Alerta configurada">🔔</span>
-                </div>
-                <div class="sensor-actions">
                   <button @click="openFormForEdit(sensor)" class="action-btn edit-btn" title="Editar Sensor">✏️</button>
                   <button @click="deleteSensor(sensor.id)" class="action-btn delete-btn" title="Eliminar Sensor">×</button>
                 </div>
@@ -1150,7 +1150,8 @@ h4 {
 
 .sensor-actions {
   display: flex;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.8rem; /* Aumentado ligeramente para separar el badge de los botones */
   flex-shrink: 0; /* Botones sagrados */
 }
 .action-btn {
