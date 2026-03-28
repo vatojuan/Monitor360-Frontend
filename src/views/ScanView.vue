@@ -124,6 +124,13 @@ const suggestedTargetDevices = computed(() => {
   })
 })
 
+// --- COMPUTADA NUEVA: FILTRO DE GRUPOS (EVITA DUPLICADOS) ---
+const filteredGroups = computed(() => {
+  const groupSet = new Set(groups.value);
+  groupSet.delete('General'); // Eliminamos General para manejarlo en el primer option
+  return Array.from(groupSet).sort();
+});
+
 // =============================================================================
 // LÓGICA DE INTERFACES Y BUSCADOR
 // =============================================================================
@@ -929,12 +936,11 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
               <div v-if="scanConfig.scan_mode === 'auto'" class="auto-adopt-panel fade-in">
                 <hr class="separator" />
                 <h4 class="mini-title">🏗️ Receta</h4>
-                
                 <div class="form-group" style="margin-bottom: 0.5rem">
                   <label>Grupo de Dispositivos Nuevos</label>
                   <select v-model="scanGroupOption" class="search-input">
                     <option value="General">General</option>
-                    <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
+                    <option v-for="g in filteredGroups" :key="g" :value="g">{{ g }}</option>
                     <option disabled>──────────────────</option>
                     <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
                   </select>
@@ -1111,7 +1117,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                     <label>🗂️ Grupo de Destino</label>
                     <select v-model="adoptGroupOption" class="search-input">
                         <option value="General">General</option>
-                        <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
+                        <option v-for="g in filteredGroups" :key="g" :value="g">{{ g }}</option>
                         <option disabled>──────────────────</option>
                         <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
                     </select>
