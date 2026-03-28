@@ -24,6 +24,13 @@ const channels = ref([])
 const groups = ref([])
 const autoTasks = ref([]) // Lista de Tareas Automáticas disponibles
 
+// --- ESTADO NUEVO PARA CREACIÓN DE GRUPOS AL VUELO ---
+const scanGroupOption = ref('General')
+const scanCustomGroup = ref('')
+
+const adoptGroupOption = ref('General')
+const adoptCustomGroup = ref('')
+
 // --- ESTADO PARA SONDAS (PROBES) ---
 const availableProbes = ref([])
 const probeSearchText = ref('')
@@ -73,7 +80,7 @@ const sensorsTemplateList = ref([])
 // --- ESTADO: MODAL DE ADOPCIÓN MANUAL ---
 const showAdoptModal = ref(false)
 const adoptCredentialId = ref(null)
-const adoptTargetGroup = ref('General')
+const adoptTargetGroup = ref('General') // Lo mantenemos de backup interno
 const adoptSensorsList = ref([]) // Receta de sensores para adopción manual
 
 const newSensorType = ref('ping') // Usado tanto por Scanner como por Modal
@@ -490,6 +497,11 @@ async function runScan() {
   
   isScanning.value = true 
   try {
+    // RESOLVER EL GRUPO ELEGIDO ANTES DE ENVIAR
+    let finalTargetGroup = scanGroupOption.value === '__NEW__' ? scanCustomGroup.value.trim() : scanGroupOption.value;
+    if (!finalTargetGroup) finalTargetGroup = 'General';
+    scanConfig.value.target_group = finalTargetGroup;
+
     const payload = { ...scanConfig.value }
     if (scanConfig.value.is_active && scanConfig.value.scan_mode === 'auto') {
       payload.sensors_config = sensorsTemplateList.value.map(s => buildSensorConfigPayload(s))
@@ -527,6 +539,7 @@ async function runScan() {
         }
     }
     await fetchScanProfiles()
+    await fetchGroups() // Refrescar lista de grupos por si se creó uno nuevo
   } catch (e) { 
     showNotification(e.response?.data?.detail || 'Error', 'error'); 
     isScanning.value = false;
@@ -538,6 +551,10 @@ function resetConfigForm() {
     scanConfig.value = { id: null, source_device_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 80, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false }
     probeSearchText.value = '';
     sensorsTemplateList.value = []
+    
+    // Resetear las variables nuevas del select de grupo
+    scanGroupOption.value = 'General';
+    scanCustomGroup.value = '';
 }
 
 // --- ACTIONS INBOX ---
@@ -558,7 +575,11 @@ function selectAll() {
 function openAdoptModal() {
   if (selectedPending.value.length === 0) return;
   adoptSensorsList.value = []; // Resetear receta al abrir
-  adoptTargetGroup.value = 'General';
+  
+  // Resetear el select de grupo del modal
+  adoptGroupOption.value = 'General';
+  adoptCustomGroup.value = '';
+  
   showAdoptModal.value = true;
 }
 
@@ -574,13 +595,17 @@ async function confirmAdoption() {
   try {
     const devicesToAdopt = pendingDevices.value.filter((d) => selectedPending.value.includes(d.mac_address));
     
+    // RESOLVER EL GRUPO ELEGIDO ANTES DE ENVIAR
+    let finalTargetGroup = adoptGroupOption.value === '__NEW__' ? adoptCustomGroup.value.trim() : adoptGroupOption.value;
+    if (!finalTargetGroup) finalTargetGroup = 'General';
+
     // Procesar la receta de sensores del modal
     const finalSensorsPayload = adoptSensorsList.value.map(s => buildSensorConfigPayload(s));
 
     const payload = { 
         source_device_id: devicesToAdopt[0].source_device_id || devicesToAdopt[0].maestro_id, 
         credential_profile_id: adoptCredentialId.value, 
-        target_group: adoptTargetGroup.value,
+        target_group: finalTargetGroup,
         sensors_config: finalSensorsPayload.length > 0 ? finalSensorsPayload : null,
         devices: devicesToAdopt, 
         naming_strategy: 'hostname' 
@@ -606,6 +631,8 @@ async function confirmAdoption() {
       selectedPending.value = [];
       await fetchPendingDevices();
     }
+    
+    await fetchGroups() // Refrescar lista de grupos global por si se creó uno nuevo
 
   } catch (e) { 
     showNotification('Error al enviar orden de adopción', 'error') 
@@ -663,11 +690,21 @@ async function hardDeleteDevice(mac) { if(!confirm('¿Eliminar DEFINITIVAMENTE?'
 
 // --- UTIL ---
 async function deleteScanProfile(id) { if (!confirm('¿Eliminar tarea?')) return; try { await api.delete(`/discovery/profiles/${id}`); await fetchScanProfiles(); showNotification('Eliminada', 'success') } catch (e) {} }
+
 function editScanProfile(profile) { 
     scanConfig.value = { ...scanConfig.value, id: profile.id, source_device_id: profile.source_device_id || profile.maestro_id, network_cidr: profile.network_cidr, interface: profile.interface, scan_ports: profile.scan_ports, scan_mode: profile.scan_mode, credential_profile_id: profile.credential_profile_id, is_active: profile.is_active, scan_interval_minutes: profile.scan_interval_minutes, target_group: profile.target_group || 'General', adopt_only_managed: profile.adopt_only_managed || false }
+    
+    // Inyectar el grupo para que el select lo reconozca
+    if (profile.target_group && profile.target_group !== 'General' && !groups.value.includes(profile.target_group)) {
+        groups.value.push(profile.target_group); 
+    }
+    scanGroupOption.value = profile.target_group || 'General';
+    scanCustomGroup.value = '';
+
     if (profile.sensors_template) restoreSensorConfig(profile.sensors_template); else { sensorsTemplateList.value = [] }
     window.scrollTo({ top: 0, behavior: 'smooth' }); showNotification(`✏️ Editando: ${profile.network_cidr}`, 'info') 
 }
+
 function showNotification(msg, type) { notification.value = { show: true, message: msg, type }; setTimeout(() => (notification.value.show = false), 5000) }
 
 function getProbeName(id) { 
@@ -696,12 +733,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
           📨 Bandeja de Entrada
           <span class="badge" v-if="pendingDevices.length">{{ pendingDevices.length }}</span>
         </button>
+        <button :class="['tab-btn', { active: activeTab === 'scanners' }]" @click="activeTab = 'scanners'">
+          ⚙️ Motores de Escaneo
+        </button>
         <button :class="['tab-btn', { active: activeTab === 'ignored' }]" @click="activeTab = 'ignored'">
           🚫 Ignorados
           <span class="badge badge-gray" v-if="ignoredDevices.length">{{ ignoredDevices.length }}</span>
-        </button>
-        <button :class="['tab-btn', { active: activeTab === 'scanners' }]" @click="activeTab = 'scanners'">
-          ⚙️ Motores de Escaneo
         </button>
       </div>
     </div>
@@ -800,73 +837,6 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
       </div>
     </div>
 
-    <div v-if="activeTab === 'ignored'" class="content-panel fade-in">
-        <div class="filter-bar filter-bar-ignored">
-            <div class="search-group">
-                <span class="icon">🔍</span>
-                <input type="text" v-model="ignoredFilter.search" placeholder="Buscar en Ignorados..." class="filter-input" />
-            </div>
-            <div class="filter-controls">
-                <select v-model="ignoredFilter.vendor" class="filter-select">
-                    <option value="">Todo Fabricante</option>
-                    <option v-for="v in ignoredVendors" :key="v" :value="v">{{ v }}</option>
-                </select>
-                <div class="toggle-group">
-                    <button :class="{ active: ignoredFilter.type === 'all' }" @click="ignoredFilter.type = 'all'">Todos</button>
-                    <button :class="{ active: ignoredFilter.type === 'infra' }" @click="ignoredFilter.type = 'infra'">Infra</button>
-                    <button :class="{ active: ignoredFilter.type === 'generic' }" @click="ignoredFilter.type = 'generic'">Genéricos</button>
-                </div>
-            </div>
-        </div>
-        <div class="toolbar" style="background: rgba(255,50,50,0.1); border-color: var(--error-red);">
-            <div class="toolbar-left">
-                <span class="selection-count" style="color: white; font-weight: bold;" v-if="selectedIgnored.length > 0">
-                    {{ selectedIgnored.length }} seleccionados
-                </span>
-                <span class="selection-count" style="color: #ffaaaa;" v-else>
-                    🚫 Mostrando {{ filteredIgnoredDevices.length }} ignorados
-                </span>
-            </div>
-            <div class="toolbar-right">
-                <div v-if="selectedIgnored.length > 0" style="display: flex; gap: 10px; margin-right: 15px;">
-                    <button @click="restoreSelected" class="btn-action-restore">♻️ Restaurar ({{ selectedIgnored.length }})</button>
-                    <button @click="hardDeleteSelected" class="btn-action-del">💀 Olvidar ({{ selectedIgnored.length }})</button>
-                </div>
-                <button @click="fetchIgnoredDevices" class="btn-icon" title="Recargar Lista">🔄</button>
-            </div>
-        </div>
-        <div class="table-container">
-            <table class="devices-table">
-                <thead>
-                    <tr>
-                        <th width="40"><input type="checkbox" @change="selectAllIgnored" :checked="selectedIgnored.length > 0 && filteredIgnoredDevices.length > 0 && filteredIgnoredDevices.every(d => selectedIgnored.includes(d.mac_address))" /></th>
-                        <th>IP Address</th><th>MAC Address</th><th>Identity</th><th>Fabricante</th><th>Plataforma</th><th>Hostname</th><th style="text-align: right;">Acciones</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr v-if="filteredIgnoredDevices.length === 0">
-                        <td colspan="8" class="empty-row">{{ ignoredDevices.length === 0 ? '✅ No hay dispositivos ignorados.' : '🔍 No se encontraron dispositivos con los filtros actuales.' }}</td>
-                    </tr>
-                    <tr v-for="dev in filteredIgnoredDevices" :key="dev.mac_address" class="ignored-row" :class="{ selected: selectedIgnored.includes(dev.mac_address) }">
-                        <td><input type="checkbox" :checked="selectedIgnored.includes(dev.mac_address)" @click="toggleIgnoredSelection(dev.mac_address)" /></td>
-                        <td class="font-mono text-dim">
-                          {{ dev.ip_address }}
-                          <div style="font-size: 0.8rem; margin-top: 3px;" v-if="(dev.api_port && dev.api_port !== 8728) || (dev.ssh_port && dev.ssh_port !== 22)">
-                            <span v-if="dev.api_port && dev.api_port !== 8728 && dev.api_port !== 22" style="color: var(--blue); margin-right: 5px;">API: {{ dev.api_port }}</span>
-                            <span v-if="dev.ssh_port && dev.ssh_port !== 22" style="color: var(--green);">SSH: {{ dev.ssh_port }}</span>
-                          </div>
-                        </td>
-                        <td class="font-mono text-dim">{{ dev.mac_address }}</td><td class="text-dim">{{ dev.identity || '-' }}</td><td class="text-dim">{{ dev.vendor || 'Desconocido' }}</td><td class="text-dim">{{ dev.platform || '-' }}</td><td class="text-dim">{{ dev.hostname || '-' }}</td>
-                        <td style="text-align: right;">
-                            <button @click="restoreDevice(dev.mac_address)" class="btn-sm btn-restore" title="Restaurar" style="margin-right: 10px;">♻️</button>
-                            <button @click="hardDeleteDevice(dev.mac_address)" class="btn-sm btn-del" title="Olvidar Definitivamente">💀</button>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
     <div v-if="activeTab === 'scanners'" class="content-grid fade-in">
       <aside class="config-panel">
         <div class="panel-header">
@@ -959,12 +929,24 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
               <div v-if="scanConfig.scan_mode === 'auto'" class="auto-adopt-panel fade-in">
                 <hr class="separator" />
                 <h4 class="mini-title">🏗️ Receta</h4>
-                <div class="form-group">
+                
+                <div class="form-group" style="margin-bottom: 0.5rem">
                   <label>Grupo de Dispositivos Nuevos</label>
-                  <select v-model="scanConfig.target_group">
+                  <select v-model="scanGroupOption" class="search-input">
                     <option value="General">General</option>
                     <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
+                    <option disabled>──────────────────</option>
+                    <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
                   </select>
+                </div>
+                
+                <div v-if="scanGroupOption === '__NEW__'" class="form-group fade-in">
+                    <input 
+                        type="text" 
+                        v-model="scanCustomGroup" 
+                        placeholder="Escribe el nombre del grupo..." 
+                        class="search-input"
+                    />
                 </div>
                 
                 <div class="sensors-recipe-container">
@@ -1038,6 +1020,73 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
       </section>
     </div>
 
+    <div v-if="activeTab === 'ignored'" class="content-panel fade-in">
+        <div class="filter-bar filter-bar-ignored">
+            <div class="search-group">
+                <span class="icon">🔍</span>
+                <input type="text" v-model="ignoredFilter.search" placeholder="Buscar en Ignorados..." class="filter-input" />
+            </div>
+            <div class="filter-controls">
+                <select v-model="ignoredFilter.vendor" class="filter-select">
+                    <option value="">Todo Fabricante</option>
+                    <option v-for="v in ignoredVendors" :key="v" :value="v">{{ v }}</option>
+                </select>
+                <div class="toggle-group">
+                    <button :class="{ active: ignoredFilter.type === 'all' }" @click="ignoredFilter.type = 'all'">Todos</button>
+                    <button :class="{ active: ignoredFilter.type === 'infra' }" @click="ignoredFilter.type = 'infra'">Infra</button>
+                    <button :class="{ active: ignoredFilter.type === 'generic' }" @click="ignoredFilter.type = 'generic'">Genéricos</button>
+                </div>
+            </div>
+        </div>
+        <div class="toolbar" style="background: rgba(255,50,50,0.1); border-color: var(--error-red);">
+            <div class="toolbar-left">
+                <span class="selection-count" style="color: white; font-weight: bold;" v-if="selectedIgnored.length > 0">
+                    {{ selectedIgnored.length }} seleccionados
+                </span>
+                <span class="selection-count" style="color: #ffaaaa;" v-else>
+                    🚫 Mostrando {{ filteredIgnoredDevices.length }} ignorados
+                </span>
+            </div>
+            <div class="toolbar-right">
+                <div v-if="selectedIgnored.length > 0" style="display: flex; gap: 10px; margin-right: 15px;">
+                    <button @click="restoreSelected" class="btn-action-restore">♻️ Restaurar ({{ selectedIgnored.length }})</button>
+                    <button @click="hardDeleteSelected" class="btn-action-del">💀 Olvidar ({{ selectedIgnored.length }})</button>
+                </div>
+                <button @click="fetchIgnoredDevices" class="btn-icon" title="Recargar Lista">🔄</button>
+            </div>
+        </div>
+        <div class="table-container">
+            <table class="devices-table">
+                <thead>
+                    <tr>
+                        <th width="40"><input type="checkbox" @change="selectAllIgnored" :checked="selectedIgnored.length > 0 && filteredIgnoredDevices.length > 0 && filteredIgnoredDevices.every(d => selectedIgnored.includes(d.mac_address))" /></th>
+                        <th>IP Address</th><th>MAC Address</th><th>Identity</th><th>Fabricante</th><th>Plataforma</th><th>Hostname</th><th style="text-align: right;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-if="filteredIgnoredDevices.length === 0">
+                        <td colspan="8" class="empty-row">{{ ignoredDevices.length === 0 ? '✅ No hay dispositivos ignorados.' : '🔍 No se encontraron dispositivos con los filtros actuales.' }}</td>
+                    </tr>
+                    <tr v-for="dev in filteredIgnoredDevices" :key="dev.mac_address" class="ignored-row" :class="{ selected: selectedIgnored.includes(dev.mac_address) }">
+                        <td><input type="checkbox" :checked="selectedIgnored.includes(dev.mac_address)" @click="toggleIgnoredSelection(dev.mac_address)" /></td>
+                        <td class="font-mono text-dim">
+                          {{ dev.ip_address }}
+                          <div style="font-size: 0.8rem; margin-top: 3px;" v-if="(dev.api_port && dev.api_port !== 8728) || (dev.ssh_port && dev.ssh_port !== 22)">
+                            <span v-if="dev.api_port && dev.api_port !== 8728 && dev.api_port !== 22" style="color: var(--blue); margin-right: 5px;">API: {{ dev.api_port }}</span>
+                            <span v-if="dev.ssh_port && dev.ssh_port !== 22" style="color: var(--green);">SSH: {{ dev.ssh_port }}</span>
+                          </div>
+                        </td>
+                        <td class="font-mono text-dim">{{ dev.mac_address }}</td><td class="text-dim">{{ dev.identity || '-' }}</td><td class="text-dim">{{ dev.vendor || 'Desconocido' }}</td><td class="text-dim">{{ dev.platform || '-' }}</td><td class="text-dim">{{ dev.hostname || '-' }}</td>
+                        <td style="text-align: right;">
+                            <button @click="restoreDevice(dev.mac_address)" class="btn-sm btn-restore" title="Restaurar" style="margin-right: 10px;">♻️</button>
+                            <button @click="hardDeleteDevice(dev.mac_address)" class="btn-sm btn-del" title="Olvidar Definitivamente">💀</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <div v-if="showAdoptModal" class="modal-overlay fade-in">
         <div class="modal-content">
             <div class="modal-header">
@@ -1058,12 +1107,23 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                     </select>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" style="margin-bottom: 0.5rem">
                     <label>🗂️ Grupo de Destino</label>
-                    <select v-model="adoptTargetGroup" class="search-input">
+                    <select v-model="adoptGroupOption" class="search-input">
                         <option value="General">General</option>
                         <option v-for="g in groups" :key="g" :value="g">{{ g }}</option>
+                        <option disabled>──────────────────</option>
+                        <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
                     </select>
+                </div>
+                
+                <div v-if="adoptGroupOption === '__NEW__'" class="form-group fade-in">
+                    <input 
+                        type="text" 
+                        v-model="adoptCustomGroup" 
+                        placeholder="Escribe el nombre del grupo..." 
+                        class="search-input"
+                    />
                 </div>
 
                 <hr class="separator" style="margin: 20px 0;" />
@@ -1230,7 +1290,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .form-group { margin-bottom: 15px; }
 .form-group label { display: block; margin-bottom: 5px; font-weight: 500; font-size: 0.9rem; color: var(--gray); }
 .form-group input, .form-group select { width: 100%; padding: 10px; background-color: var(--bg-color); border: 1px solid var(--primary-color); color: white; border-radius: 6px; }
-.form-group select option { background-color: var(--bg-color); color: white; }
+.form-group select option { background-color: var(--surface-color); color: white; }
 .search-input { width: 100%; padding: 10px; background-color: var(--bg-color); border: 1px solid var(--primary-color); color: white; border-radius: 6px; font-size: 0.9rem; }
 .custom-textarea { padding: 6px 10px; min-height: 45px; margin-bottom: 5px; resize: vertical; } 
 .form-group small { display: block; margin-top: 4px; color: #777; font-size: 0.8rem; }
