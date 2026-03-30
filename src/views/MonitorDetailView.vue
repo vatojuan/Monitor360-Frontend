@@ -56,10 +56,6 @@ const timeRange = ref('24h')
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
 const currentWindow = ref(null) // { startMs, endMs, mode }
 
-/* ====== ESTADO DE ZOOM ====== */
-const zoomStart = ref(0)
-const zoomEnd = ref(100)
-
 /* ====== STORE (raw/auto) OPTIMIZADO ====== */
 // Usamos un objeto puro para máximo rendimiento. Evitamos que Vue rastree miles de puntos de datos inútilmente.
 const store = {
@@ -123,18 +119,6 @@ function parseMbps(val) {
   if (!val || val === 'N/A') return 0
   const m = String(val).match(/(\d+(?:\.\d+)?)/)
   return m ? parseFloat(m[1]) : 0
-}
-
-/* ====== EVENTOS DE GRAFICA ====== */
-function handleDataZoom(params) {
-  // Almacenar el nivel de zoom actual configurado por el usuario
-  const start = params.batch ? params.batch[0].start : params.start
-  const end = params.batch ? params.batch[0].end : params.end
-  
-  if (start !== undefined && end !== undefined) {
-    zoomStart.value = start
-    zoomEnd.value = end
-  }
 }
 
 /* ====== DATA VISIBLE ====== */
@@ -262,11 +246,9 @@ const chartOption = computed(() => {
     // Ajuste de Bottom fijo en píxeles para evitar que se pise con el Slider de zoom
     grid: { left: '2%', right: '3%', bottom: 75, top: '10%', containLabel: true },
     dataZoom: [
-      { type: 'inside', start: zoomStart.value, end: zoomEnd.value }, // Zoom con rueda (respeta estado)
+      { type: 'inside' }, // Zoom con rueda, 100% nativo y desacoplado
       {
         type: 'slider',
-        start: zoomStart.value, // Mantener posicion
-        end: zoomEnd.value,     // Mantener posicion
         bottom: 10,
         height: 24,
         handleSize: '100%',
@@ -300,7 +282,7 @@ const chartOption = computed(() => {
 
   // --- Lógica PING ---
   if (type === 'ping') {
-    // Transición a [timestamp, valor]
+    // Transición a [timestamp, valor] para eje de tiempo
     const latencies = data.map((d) => [d._ms, d.status === 'timeout' ? null : Number(d.latency_ms)])
 
     // Generar áreas rojas para Timeouts basados en el timestamp real
@@ -528,9 +510,6 @@ async function setView(startMs, endMs) {
 }
 
 async function setRange(range) {
-  // Cuando cambiamos de pestaña (ej de 24h a 7d), reseteamos el zoom a la vista completa
-  zoomStart.value = 0
-  zoomEnd.value = 100
   timeRange.value = range
   const endMs = Date.now()
   const startMs = endMs - (hoursMap[range] ?? 24) * 3600 * 1000
@@ -612,7 +591,7 @@ function initRealTime() {
   if (ws.readyState === WebSocket.OPEN) {
     subscribeToSensor()
   } else {
-    ws.addEventListener('open', subscribeToSensor)
+    ws.addEventListener('open', subscribeToSensor, { once: true })
   }
 
   ws.removeEventListener('message', handleRawMessage)
@@ -734,7 +713,7 @@ watch(timeRange, async (r) => {
       </div>
 
       <div class="chart-container">
-        <v-chart class="chart" :option="chartOption" autoresize @datazoom="handleDataZoom" />
+        <v-chart class="chart" :option="chartOption" autoresize />
       </div>
     </div>
 
