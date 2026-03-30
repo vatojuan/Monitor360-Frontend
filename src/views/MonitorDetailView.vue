@@ -56,10 +56,6 @@ const timeRange = ref('24h')
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
 const currentWindow = ref(null) // { startMs, endMs, mode }
 
-/* ====== ESTADO DE ZOOM ====== */
-const zoomStart = ref(0)
-const zoomEnd = ref(100)
-
 /* ====== STORE (raw/auto) OPTIMIZADO ====== */
 // Usamos un objeto puro para máximo rendimiento. Evitamos que Vue rastree miles de puntos de datos inútilmente.
 const store = {
@@ -123,18 +119,6 @@ function parseMbps(val) {
   if (!val || val === 'N/A') return 0
   const m = String(val).match(/(\d+(?:\.\d+)?)/)
   return m ? parseFloat(m[1]) : 0
-}
-
-/* ====== EVENTOS DE GRAFICA ====== */
-function handleDataZoom(params) {
-  // Almacenar el nivel de zoom actual configurado por el usuario
-  const start = params.batch ? params.batch[0].start : params.start
-  const end = params.batch ? params.batch[0].end : params.end
-  
-  if (start !== undefined && end !== undefined) {
-    zoomStart.value = start
-    zoomEnd.value = end
-  }
 }
 
 /* ====== DATA VISIBLE ====== */
@@ -248,9 +232,6 @@ const chartOption = computed(() => {
   const type = sensorInfo.value.sensor_type
   const data = visibleData.value
 
-  // Extraer timestamps y valores
-  const timestamps = data.map((d) => d._ms)
-
   // Configuración base (Tema oscuro manual para coincidir con CSS)
   const baseOption = {
     backgroundColor: 'transparent',
@@ -265,11 +246,9 @@ const chartOption = computed(() => {
     // Ajuste de Bottom fijo en píxeles para evitar que se pise con el Slider de zoom
     grid: { left: '2%', right: '3%', bottom: 75, top: '10%', containLabel: true },
     dataZoom: [
-      { type: 'inside', start: zoomStart.value, end: zoomEnd.value }, // Zoom con rueda (respeta estado)
+      { type: 'inside' }, // ECharts maneja el estado internamente
       {
         type: 'slider',
-        start: zoomStart.value, // Mantener posicion
-        end: zoomEnd.value,     // Mantener posicion
         bottom: 10,
         height: 24,
         handleSize: '100%',
@@ -278,15 +257,7 @@ const chartOption = computed(() => {
       },
     ],
     xAxis: {
-      type: 'category',
-      data: timestamps.map((ts) =>
-        new Date(ts).toLocaleString('es-AR', {
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-      ),
+      type: 'time', // <-- EJE TEMPORAL NATIVO
       boundaryGap: false,
       axisLine: { lineStyle: { color: '#555' } },
       axisLabel: { color: '#888' },
@@ -300,22 +271,23 @@ const chartOption = computed(() => {
 
   // --- Lógica PING ---
   if (type === 'ping') {
-    const latencies = data.map((d) => (d.status === 'timeout' ? null : Number(d.latency_ms)))
+    // Formato [timestamp, valor]
+    const latencies = data.map((d) => [d._ms, d.status === 'timeout' ? null : Number(d.latency_ms)])
 
-    // Generar áreas rojas para Timeouts
+    // Generar áreas rojas para Timeouts basados en Timestamp
     const markAreas = []
-    let startIdx = null
+    let startMs = null
     data.forEach((d, i) => {
       if (d.status === 'timeout') {
-        if (startIdx === null) startIdx = i
+        if (startMs === null) startMs = d._ms
       } else {
-        if (startIdx !== null) {
-          markAreas.push([{ xAxis: startIdx }, { xAxis: i - 1 }])
-          startIdx = null
+        if (startMs !== null) {
+          markAreas.push([{ xAxis: startMs }, { xAxis: data[i - 1]._ms }])
+          startMs = null
         }
       }
     })
-    if (startIdx !== null) markAreas.push([{ xAxis: startIdx }, { xAxis: data.length - 1 }])
+    if (startMs !== null) markAreas.push([{ xAxis: startMs }, { xAxis: data[data.length - 1]._ms }])
 
     const threshold = Number(sensorInfo.value.config?.latency_threshold_ms || 150)
 
@@ -332,15 +304,8 @@ const chartOption = computed(() => {
           lineStyle: { width: 2, color: '#5372f0' },
           areaStyle: {
             color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: 'rgba(83, 114, 240, 0.5)' },
-                { offset: 1, color: 'rgba(83, 114, 240, 0.0)' },
-              ],
+              type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [{ offset: 0, color: 'rgba(83, 114, 240, 0.5)' }, { offset: 1, color: 'rgba(83, 114, 240, 0.0)' }],
             },
           },
           markLine: {
@@ -360,8 +325,8 @@ const chartOption = computed(() => {
 
   // --- Lógica ETHERNET ---
   if (type === 'ethernet') {
-    const rx = data.map((d) => (Number(d.rx_bitrate || 0) / 1_000_000).toFixed(2)) // Mbps
-    const tx = data.map((d) => (Number(d.tx_bitrate || 0) / 1_000_000).toFixed(2)) // Mbps
+    const rx = data.map((d) => [d._ms, (Number(d.rx_bitrate || 0) / 1_000_000).toFixed(2)])
+    const tx = data.map((d) => [d._ms, (Number(d.tx_bitrate || 0) / 1_000_000).toFixed(2)])
 
     return {
       ...baseOption,
@@ -377,15 +342,8 @@ const chartOption = computed(() => {
           itemStyle: { color: '#36a2eb' },
           areaStyle: {
             color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: 'rgba(54, 162, 235, 0.5)' },
-                { offset: 1, color: 'rgba(54, 162, 235, 0)' },
-              ],
+              type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [{ offset: 0, color: 'rgba(54, 162, 235, 0.5)' }, { offset: 1, color: 'rgba(54, 162, 235, 0)' }],
             },
           },
         },
@@ -398,15 +356,8 @@ const chartOption = computed(() => {
           itemStyle: { color: '#4bc0c0' },
           areaStyle: {
             color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: 'rgba(75, 192, 192, 0.5)' },
-                { offset: 1, color: 'rgba(75, 192, 192, 0)' },
-              ],
+              type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [{ offset: 0, color: 'rgba(75, 192, 192, 0.5)' }, { offset: 1, color: 'rgba(75, 192, 192, 0)' }],
             },
           },
         },
@@ -416,115 +367,56 @@ const chartOption = computed(() => {
 
   // --- Lógica WIRELESS ---
   if (type === 'wireless') {
-    const signals = data.map((d) => Number(d.signal_strength || 0))
-    const ccqs = data.map((d) => Number(d.tx_ccq || 0))
-    const txRates = data.map((d) => parseMbps(d.tx_rate))
-    const rxRates = data.map((d) => parseMbps(d.rx_rate))
-    const clients = data.map((d) => Number(d.client_count || 0))
+    const signals = data.map((d) => [d._ms, Number(d.signal_strength || 0)])
+    const ccqs = data.map((d) => [d._ms, Number(d.tx_ccq || 0)])
+    const txRates = data.map((d) => [d._ms, parseMbps(d.tx_rate)])
+    const rxRates = data.map((d) => [d._ms, parseMbps(d.rx_rate)])
+    const clients = data.map((d) => [d._ms, Number(d.client_count || 0)])
     
     const isAP = data.some((d) => d.wireless_role === 'AP')
 
     const series = [
       {
-        name: 'Señal (dBm)',
-        type: 'line',
-        data: signals,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 0,
-        itemStyle: { color: '#36a2eb' },
-        lineStyle: { width: 2 }
+        name: 'Señal (dBm)', type: 'line', data: signals, smooth: true,
+        showSymbol: false, yAxisIndex: 0, itemStyle: { color: '#36a2eb' }, lineStyle: { width: 2 }
       },
       {
-        name: 'CCQ TX (%)',
-        type: 'line',
-        data: ccqs,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 1,
-        itemStyle: { color: '#4caf50' },
-        lineStyle: { width: 2 }
+        name: 'CCQ TX (%)', type: 'line', data: ccqs, smooth: true,
+        showSymbol: false, yAxisIndex: 1, itemStyle: { color: '#4caf50' }, lineStyle: { width: 2 }
       },
       {
-        name: 'TX Rate (Mbps)',
-        type: 'line',
-        data: txRates,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 2,
-        itemStyle: { color: '#facc15' },
-        lineStyle: { width: 1, type: 'solid' }
+        name: 'TX Rate (Mbps)', type: 'line', data: txRates, smooth: true,
+        showSymbol: false, yAxisIndex: 2, itemStyle: { color: '#facc15' }, lineStyle: { width: 1, type: 'solid' }
       },
       {
-        name: 'RX Rate (Mbps)',
-        type: 'line',
-        data: rxRates,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 2,
-        itemStyle: { color: '#ff9800' },
-        lineStyle: { width: 1, type: 'solid' }
+        name: 'RX Rate (Mbps)', type: 'line', data: rxRates, smooth: true,
+        showSymbol: false, yAxisIndex: 2, itemStyle: { color: '#ff9800' }, lineStyle: { width: 1, type: 'solid' }
       }
     ]
 
     const legendData = ['Señal (dBm)', 'CCQ TX (%)', 'TX Rate (Mbps)', 'RX Rate (Mbps)']
     
-    // Múltiples ejes Y para que las escalas no se rompan visualmente
     const yAxes = [
-      {
-        type: 'value',
-        name: 'dBm',
-        position: 'left',
-        splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
-        axisLabel: { color: '#888' },
-      },
-      {
-        type: 'value',
-        name: 'CCQ %',
-        position: 'right',
-        splitLine: { show: false },
-        axisLabel: { color: '#888' },
-        min: 0,
-        max: 100
-      },
-      {
-        type: 'value',
-        name: 'Mbps',
-        position: 'right',
-        offset: 50, // Desplazado para no pisar el %
-        splitLine: { show: false },
-        axisLabel: { color: '#888' }
-      }
+      { type: 'value', name: 'dBm', position: 'left', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888' } },
+      { type: 'value', name: 'CCQ %', position: 'right', splitLine: { show: false }, axisLabel: { color: '#888' }, min: 0, max: 100 },
+      { type: 'value', name: 'Mbps', position: 'right', offset: 50, splitLine: { show: false }, axisLabel: { color: '#888' } }
     ]
 
-    // Si detectamos que es Nodo/AP, agregamos la 4ta línea
     if (isAP) {
       series.push({
-        name: 'Clientes Activos',
-        type: 'line',
-        data: clients,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 3,
-        itemStyle: { color: '#9c27b0' },
-        lineStyle: { width: 2, type: 'dashed' }
+        name: 'Clientes Activos', type: 'line', data: clients, smooth: true,
+        showSymbol: false, yAxisIndex: 3, itemStyle: { color: '#9c27b0' }, lineStyle: { width: 2, type: 'dashed' }
       })
       legendData.push('Clientes Activos')
       yAxes.push({
-        type: 'value',
-        name: 'Clientes',
-        position: 'right',
-        offset: 100, // Desplazado para no pisar Mbps
-        splitLine: { show: false },
-        axisLabel: { color: '#888' },
-        minInterval: 1
+        type: 'value', name: 'Clientes', position: 'right', offset: 100,
+        splitLine: { show: false }, axisLabel: { color: '#888' }, minInterval: 1
       })
     }
 
     return {
       ...baseOption,
       legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
-      // Ajuste de grid para dejar espacio a los ejes Y derechos y fijar el bottom en 75px
       grid: { left: '2%', right: isAP ? '18%' : '10%', bottom: 75, top: '15%', containLabel: true },
       yAxis: yAxes,
       series: series
@@ -533,117 +425,51 @@ const chartOption = computed(() => {
 
   // --- Lógica SYSTEM ---
   if (type === 'system') {
-    const cpuData = data.map((d) => d.cpu_percent !== null && d.cpu_percent !== undefined ? Number(d.cpu_percent).toFixed(1) : null)
-    const memData = data.map((d) => d.memory_percent !== null && d.memory_percent !== undefined ? Number(d.memory_percent).toFixed(1) : null)
-    const tempData = data.map((d) => d.temperature !== null && d.temperature !== undefined ? Number(d.temperature).toFixed(1) : null)
-    const voltData = data.map((d) => d.voltage !== null && d.voltage !== undefined ? Number(d.voltage).toFixed(2) : null)
+    const cpuData = data.map((d) => [d._ms, d.cpu_percent !== null && d.cpu_percent !== undefined ? Number(d.cpu_percent).toFixed(1) : null])
+    const memData = data.map((d) => [d._ms, d.memory_percent !== null && d.memory_percent !== undefined ? Number(d.memory_percent).toFixed(1) : null])
+    const tempData = data.map((d) => [d._ms, d.temperature !== null && d.temperature !== undefined ? Number(d.temperature).toFixed(1) : null])
+    const voltData = data.map((d) => [d._ms, d.voltage !== null && d.voltage !== undefined ? Number(d.voltage).toFixed(2) : null])
 
-    const hasTemp = tempData.some((v) => v !== null)
-    const hasVolt = voltData.some((v) => v !== null)
+    const hasTemp = tempData.some((v) => v[1] !== null)
+    const hasVolt = voltData.some((v) => v[1] !== null)
 
     const series = [
       {
-        name: 'CPU (%)',
-        type: 'line',
-        data: cpuData,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 0,
-        itemStyle: { color: '#36a2eb' },
-        areaStyle: {
-          color: {
-            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [{ offset: 0, color: 'rgba(54, 162, 235, 0.3)' }, { offset: 1, color: 'rgba(54, 162, 235, 0)' }]
-          }
-        },
+        name: 'CPU (%)', type: 'line', data: cpuData, smooth: true, showSymbol: false, yAxisIndex: 0, itemStyle: { color: '#36a2eb' },
+        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(54, 162, 235, 0.3)' }, { offset: 1, color: 'rgba(54, 162, 235, 0)' }] } },
       },
       {
-        name: 'RAM (%)',
-        type: 'line',
-        data: memData,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 0,
-        itemStyle: { color: '#4bc0c0' },
-        areaStyle: {
-          color: {
-            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [{ offset: 0, color: 'rgba(75, 192, 192, 0.3)' }, { offset: 1, color: 'rgba(75, 192, 192, 0)' }]
-          }
-        },
+        name: 'RAM (%)', type: 'line', data: memData, smooth: true, showSymbol: false, yAxisIndex: 0, itemStyle: { color: '#4bc0c0' },
+        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(75, 192, 192, 0.3)' }, { offset: 1, color: 'rgba(75, 192, 192, 0)' }] } },
       }
     ]
 
     const legendData = ['CPU (%)', 'RAM (%)']
     
     const yAxes = [
-      {
-        type: 'value',
-        name: '% (CPU/RAM)',
-        position: 'left',
-        min: 0,
-        max: 100,
-        splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
-        axisLabel: { color: '#888' }
-      }
+      { type: 'value', name: '% (CPU/RAM)', position: 'left', min: 0, max: 100, splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888' } }
     ]
 
     let rightOffset = 0
 
     if (hasTemp) {
-      series.push({
-        name: 'Temp (°C)',
-        type: 'line',
-        data: tempData,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: yAxes.length,
-        itemStyle: { color: '#ff9800' }
-      })
+      series.push({ name: 'Temp (°C)', type: 'line', data: tempData, smooth: true, showSymbol: false, yAxisIndex: yAxes.length, itemStyle: { color: '#ff9800' } })
       legendData.push('Temp (°C)')
-      yAxes.push({
-        type: 'value',
-        name: '°C',
-        position: 'right',
-        offset: rightOffset,
-        splitLine: { show: false },
-        axisLabel: { color: '#888' }
-      })
+      yAxes.push({ type: 'value', name: '°C', position: 'right', offset: rightOffset, splitLine: { show: false }, axisLabel: { color: '#888' } })
       rightOffset += 50
     }
 
     if (hasVolt) {
-      series.push({
-        name: 'Voltaje (V)',
-        type: 'line',
-        data: voltData,
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: yAxes.length,
-        itemStyle: { color: '#9c27b0' }
-      })
+      series.push({ name: 'Voltaje (V)', type: 'line', data: voltData, smooth: true, showSymbol: false, yAxisIndex: yAxes.length, itemStyle: { color: '#9c27b0' } })
       legendData.push('Voltaje (V)')
-      yAxes.push({
-        type: 'value',
-        name: 'V',
-        position: 'right',
-        offset: rightOffset,
-        splitLine: { show: false },
-        axisLabel: { color: '#888' }
-      })
+      yAxes.push({ type: 'value', name: 'V', position: 'right', offset: rightOffset, splitLine: { show: false }, axisLabel: { color: '#888' } })
       rightOffset += 50
     }
 
     return {
       ...baseOption,
       legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
-      grid: { 
-        left: '2%', 
-        right: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', 
-        bottom: 75, 
-        top: '15%', 
-        containLabel: true 
-      },
+      grid: { left: '2%', right: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', bottom: 75, top: '15%', containLabel: true },
       yAxis: yAxes,
       series: series
     }
@@ -652,7 +478,7 @@ const chartOption = computed(() => {
   return baseOption
 })
 
-/* ====== FETCHING DATA ====== */
+/* ====== FETCHING DATA (CON PAGINACIÓN TRANSPARENTE) ====== */
 async function ensureCoverage(mode, startMs, endMs) {
   if (historyAbort) historyAbort.abort()
   historyAbort = new AbortController()
@@ -665,23 +491,47 @@ async function ensureCoverage(mode, startMs, endMs) {
   isFetching.value = true
   try {
     for (const seg of segs) {
-      const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
-        params: {
-          start: new Date(seg.s).toISOString(),
-          end: new Date(seg.e).toISOString(),
-          max_points: mode === 'raw' ? 1800 : 2000,
-          mode,
-        },
-        timeout: 30000,
-        signal: historyAbort.signal,
-      })
-      if (myToken !== fetchToken) return
-      const items = Array.isArray(data?.items) ? data.items : []
-      mergeItems(mode, items)
-      extendRange(mode, seg.s, seg.e)
-      
-      // Forzar repintado reactivo tras cargar este bloque
-      dataVersion.value++
+      let currentStart = seg.s;
+      const maxPoints = mode === 'raw' ? 1800 : 2000;
+
+      while (currentStart < seg.e) {
+        const { data } = await api.get(`/sensors/${sensorId}/history_window`, {
+          params: {
+            start: new Date(currentStart).toISOString(),
+            end: new Date(seg.e).toISOString(),
+            max_points: maxPoints,
+            mode,
+          },
+          timeout: 30000,
+          signal: historyAbort.signal,
+        })
+        if (myToken !== fetchToken) return
+
+        const items = Array.isArray(data?.items) ? data.items : []
+        
+        if (items.length === 0) {
+            // No hay más datos en este tramo temporal
+            extendRange(mode, currentStart, seg.e)
+            break;
+        }
+
+        mergeItems(mode, items)
+        
+        const lastItemMs = normalizePoint(items[items.length - 1])._ms;
+
+        // Forzar repintado reactivo tras cargar este bloque
+        dataVersion.value++
+
+        if (items.length >= maxPoints) {
+            // Topamos con el límite de la API. Avanzamos el inicio de la búsqueda al último punto + 1ms.
+            extendRange(mode, currentStart, lastItemMs)
+            currentStart = lastItemMs + 1;
+        } else {
+            // Trajimos todo lo que faltaba de este segmento
+            extendRange(mode, currentStart, seg.e)
+            break;
+        }
+      }
     }
   } catch (err) {
     if (err?.code !== 'ERR_CANCELED') console.error('ensureCoverage error:', err)
@@ -697,9 +547,6 @@ async function setView(startMs, endMs) {
 }
 
 async function setRange(range) {
-  // Cuando cambiamos de pestaña (ej de 24h a 7d), reseteamos el zoom a la vista completa
-  zoomStart.value = 0
-  zoomEnd.value = 100
   timeRange.value = range
   const endMs = Date.now()
   const startMs = endMs - (hoursMap[range] ?? 24) * 3600 * 1000
@@ -893,7 +740,7 @@ watch(timeRange, async (r) => {
       </div>
 
       <div class="chart-container">
-        <v-chart class="chart" :option="chartOption" autoresize @datazoom="handleDataZoom" />
+        <v-chart class="chart" :option="chartOption" autoresize />
       </div>
     </div>
 
