@@ -248,6 +248,9 @@ const chartOption = computed(() => {
   const type = sensorInfo.value.sensor_type
   const data = visibleData.value
 
+  // Extraer timestamps y valores
+  const timestamps = data.map((d) => d._ms)
+
   // Configuración base (Tema oscuro manual para coincidir con CSS)
   const baseOption = {
     backgroundColor: 'transparent',
@@ -262,9 +265,11 @@ const chartOption = computed(() => {
     // Ajuste de Bottom fijo en píxeles para evitar que se pise con el Slider de zoom
     grid: { left: '2%', right: '3%', bottom: 75, top: '10%', containLabel: true },
     dataZoom: [
-      { type: 'inside' }, // Zoom nativo y desacoplado de Vue
+      { type: 'inside', start: zoomStart.value, end: zoomEnd.value }, // Zoom con rueda (respeta estado)
       {
         type: 'slider',
+        start: zoomStart.value, // Mantener posicion
+        end: zoomEnd.value,     // Mantener posicion
         bottom: 10,
         height: 24,
         handleSize: '100%',
@@ -273,21 +278,18 @@ const chartOption = computed(() => {
       },
     ],
     xAxis: {
-      type: 'time', // <-- EJE DE TIEMPO MATEMÁTICO REAL
+      type: 'category',
+      data: timestamps.map((ts) =>
+        new Date(ts).toLocaleString('es-AR', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+      ),
       boundaryGap: false,
       axisLine: { lineStyle: { color: '#555' } },
-      axisLabel: { 
-        color: '#888',
-        // <-- MANTENEMOS TU FORMATO EXACTO (es-AR)
-        formatter: function (value) {
-          return new Date(value).toLocaleString('es-AR', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          });
-        }
-      },
+      axisLabel: { color: '#888' },
     },
     yAxis: {
       type: 'value',
@@ -298,23 +300,22 @@ const chartOption = computed(() => {
 
   // --- Lógica PING ---
   if (type === 'ping') {
-    // Transición a [timestamp, valor] para eje de tiempo
-    const latencies = data.map((d) => [d._ms, d.status === 'timeout' ? null : Number(d.latency_ms)])
+    const latencies = data.map((d) => (d.status === 'timeout' ? null : Number(d.latency_ms)))
 
-    // Generar áreas rojas para Timeouts basados en el timestamp real
+    // Generar áreas rojas para Timeouts
     const markAreas = []
-    let startMs = null
+    let startIdx = null
     data.forEach((d, i) => {
       if (d.status === 'timeout') {
-        if (startMs === null) startMs = d._ms
+        if (startIdx === null) startIdx = i
       } else {
-        if (startMs !== null) {
-          markAreas.push([{ xAxis: startMs }, { xAxis: data[i - 1]._ms }])
-          startMs = null
+        if (startIdx !== null) {
+          markAreas.push([{ xAxis: startIdx }, { xAxis: i - 1 }])
+          startIdx = null
         }
       }
     })
-    if (startMs !== null) markAreas.push([{ xAxis: startMs }, { xAxis: data[data.length - 1]._ms }])
+    if (startIdx !== null) markAreas.push([{ xAxis: startIdx }, { xAxis: data.length - 1 }])
 
     const threshold = Number(sensorInfo.value.config?.latency_threshold_ms || 150)
 
@@ -331,8 +332,15 @@ const chartOption = computed(() => {
           lineStyle: { width: 2, color: '#5372f0' },
           areaStyle: {
             color: {
-              type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [{ offset: 0, color: 'rgba(83, 114, 240, 0.5)' }, { offset: 1, color: 'rgba(83, 114, 240, 0.0)' }],
+              type: 'linear',
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: 'rgba(83, 114, 240, 0.5)' },
+                { offset: 1, color: 'rgba(83, 114, 240, 0.0)' },
+              ],
             },
           },
           markLine: {
@@ -352,8 +360,8 @@ const chartOption = computed(() => {
 
   // --- Lógica ETHERNET ---
   if (type === 'ethernet') {
-    const rx = data.map((d) => [d._ms, (Number(d.rx_bitrate || 0) / 1_000_000).toFixed(2)])
-    const tx = data.map((d) => [d._ms, (Number(d.tx_bitrate || 0) / 1_000_000).toFixed(2)])
+    const rx = data.map((d) => (Number(d.rx_bitrate || 0) / 1_000_000).toFixed(2)) // Mbps
+    const tx = data.map((d) => (Number(d.tx_bitrate || 0) / 1_000_000).toFixed(2)) // Mbps
 
     return {
       ...baseOption,
@@ -369,8 +377,15 @@ const chartOption = computed(() => {
           itemStyle: { color: '#36a2eb' },
           areaStyle: {
             color: {
-              type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [{ offset: 0, color: 'rgba(54, 162, 235, 0.5)' }, { offset: 1, color: 'rgba(54, 162, 235, 0)' }],
+              type: 'linear',
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: 'rgba(54, 162, 235, 0.5)' },
+                { offset: 1, color: 'rgba(54, 162, 235, 0)' },
+              ],
             },
           },
         },
@@ -383,8 +398,15 @@ const chartOption = computed(() => {
           itemStyle: { color: '#4bc0c0' },
           areaStyle: {
             color: {
-              type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [{ offset: 0, color: 'rgba(75, 192, 192, 0.5)' }, { offset: 1, color: 'rgba(75, 192, 192, 0)' }],
+              type: 'linear',
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: 'rgba(75, 192, 192, 0.5)' },
+                { offset: 1, color: 'rgba(75, 192, 192, 0)' },
+              ],
             },
           },
         },
@@ -394,38 +416,115 @@ const chartOption = computed(() => {
 
   // --- Lógica WIRELESS ---
   if (type === 'wireless') {
-    const signals = data.map((d) => [d._ms, Number(d.signal_strength || 0)])
-    const ccqs = data.map((d) => [d._ms, Number(d.tx_ccq || 0)])
-    const txRates = data.map((d) => [d._ms, parseMbps(d.tx_rate)])
-    const rxRates = data.map((d) => [d._ms, parseMbps(d.rx_rate)])
-    const clients = data.map((d) => [d._ms, Number(d.client_count || 0)])
+    const signals = data.map((d) => Number(d.signal_strength || 0))
+    const ccqs = data.map((d) => Number(d.tx_ccq || 0))
+    const txRates = data.map((d) => parseMbps(d.tx_rate))
+    const rxRates = data.map((d) => parseMbps(d.rx_rate))
+    const clients = data.map((d) => Number(d.client_count || 0))
     
     const isAP = data.some((d) => d.wireless_role === 'AP')
 
     const series = [
-      { name: 'Señal (dBm)', type: 'line', data: signals, smooth: true, showSymbol: false, yAxisIndex: 0, itemStyle: { color: '#36a2eb' }, lineStyle: { width: 2 } },
-      { name: 'CCQ TX (%)', type: 'line', data: ccqs, smooth: true, showSymbol: false, yAxisIndex: 1, itemStyle: { color: '#4caf50' }, lineStyle: { width: 2 } },
-      { name: 'TX Rate (Mbps)', type: 'line', data: txRates, smooth: true, showSymbol: false, yAxisIndex: 2, itemStyle: { color: '#facc15' }, lineStyle: { width: 1, type: 'solid' } },
-      { name: 'RX Rate (Mbps)', type: 'line', data: rxRates, smooth: true, showSymbol: false, yAxisIndex: 2, itemStyle: { color: '#ff9800' }, lineStyle: { width: 1, type: 'solid' } }
+      {
+        name: 'Señal (dBm)',
+        type: 'line',
+        data: signals,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 0,
+        itemStyle: { color: '#36a2eb' },
+        lineStyle: { width: 2 }
+      },
+      {
+        name: 'CCQ TX (%)',
+        type: 'line',
+        data: ccqs,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 1,
+        itemStyle: { color: '#4caf50' },
+        lineStyle: { width: 2 }
+      },
+      {
+        name: 'TX Rate (Mbps)',
+        type: 'line',
+        data: txRates,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 2,
+        itemStyle: { color: '#facc15' },
+        lineStyle: { width: 1, type: 'solid' }
+      },
+      {
+        name: 'RX Rate (Mbps)',
+        type: 'line',
+        data: rxRates,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 2,
+        itemStyle: { color: '#ff9800' },
+        lineStyle: { width: 1, type: 'solid' }
+      }
     ]
 
     const legendData = ['Señal (dBm)', 'CCQ TX (%)', 'TX Rate (Mbps)', 'RX Rate (Mbps)']
     
+    // Múltiples ejes Y para que las escalas no se rompan visualmente
     const yAxes = [
-      { type: 'value', name: 'dBm', position: 'left', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888' } },
-      { type: 'value', name: 'CCQ %', position: 'right', splitLine: { show: false }, axisLabel: { color: '#888' }, min: 0, max: 100 },
-      { type: 'value', name: 'Mbps', position: 'right', offset: 50, splitLine: { show: false }, axisLabel: { color: '#888' } }
+      {
+        type: 'value',
+        name: 'dBm',
+        position: 'left',
+        splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
+        axisLabel: { color: '#888' },
+      },
+      {
+        type: 'value',
+        name: 'CCQ %',
+        position: 'right',
+        splitLine: { show: false },
+        axisLabel: { color: '#888' },
+        min: 0,
+        max: 100
+      },
+      {
+        type: 'value',
+        name: 'Mbps',
+        position: 'right',
+        offset: 50, // Desplazado para no pisar el %
+        splitLine: { show: false },
+        axisLabel: { color: '#888' }
+      }
     ]
 
+    // Si detectamos que es Nodo/AP, agregamos la 4ta línea
     if (isAP) {
-      series.push({ name: 'Clientes Activos', type: 'line', data: clients, smooth: true, showSymbol: false, yAxisIndex: 3, itemStyle: { color: '#9c27b0' }, lineStyle: { width: 2, type: 'dashed' } })
+      series.push({
+        name: 'Clientes Activos',
+        type: 'line',
+        data: clients,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 3,
+        itemStyle: { color: '#9c27b0' },
+        lineStyle: { width: 2, type: 'dashed' }
+      })
       legendData.push('Clientes Activos')
-      yAxes.push({ type: 'value', name: 'Clientes', position: 'right', offset: 100, splitLine: { show: false }, axisLabel: { color: '#888' }, minInterval: 1 })
+      yAxes.push({
+        type: 'value',
+        name: 'Clientes',
+        position: 'right',
+        offset: 100, // Desplazado para no pisar Mbps
+        splitLine: { show: false },
+        axisLabel: { color: '#888' },
+        minInterval: 1
+      })
     }
 
     return {
       ...baseOption,
       legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
+      // Ajuste de grid para dejar espacio a los ejes Y derechos y fijar el bottom en 75px
       grid: { left: '2%', right: isAP ? '18%' : '10%', bottom: 75, top: '15%', containLabel: true },
       yAxis: yAxes,
       series: series
@@ -434,45 +533,117 @@ const chartOption = computed(() => {
 
   // --- Lógica SYSTEM ---
   if (type === 'system') {
-    const cpuData = data.map((d) => [d._ms, d.cpu_percent !== null && d.cpu_percent !== undefined ? Number(d.cpu_percent).toFixed(1) : null])
-    const memData = data.map((d) => [d._ms, d.memory_percent !== null && d.memory_percent !== undefined ? Number(d.memory_percent).toFixed(1) : null])
-    const tempData = data.map((d) => [d._ms, d.temperature !== null && d.temperature !== undefined ? Number(d.temperature).toFixed(1) : null])
-    const voltData = data.map((d) => [d._ms, d.voltage !== null && d.voltage !== undefined ? Number(d.voltage).toFixed(2) : null])
+    const cpuData = data.map((d) => d.cpu_percent !== null && d.cpu_percent !== undefined ? Number(d.cpu_percent).toFixed(1) : null)
+    const memData = data.map((d) => d.memory_percent !== null && d.memory_percent !== undefined ? Number(d.memory_percent).toFixed(1) : null)
+    const tempData = data.map((d) => d.temperature !== null && d.temperature !== undefined ? Number(d.temperature).toFixed(1) : null)
+    const voltData = data.map((d) => d.voltage !== null && d.voltage !== undefined ? Number(d.voltage).toFixed(2) : null)
 
-    const hasTemp = tempData.some((v) => v[1] !== null)
-    const hasVolt = voltData.some((v) => v[1] !== null)
+    const hasTemp = tempData.some((v) => v !== null)
+    const hasVolt = voltData.some((v) => v !== null)
 
     const series = [
-      { name: 'CPU (%)', type: 'line', data: cpuData, smooth: true, showSymbol: false, yAxisIndex: 0, itemStyle: { color: '#36a2eb' }, areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(54, 162, 235, 0.3)' }, { offset: 1, color: 'rgba(54, 162, 235, 0)' }] } } },
-      { name: 'RAM (%)', type: 'line', data: memData, smooth: true, showSymbol: false, yAxisIndex: 0, itemStyle: { color: '#4bc0c0' }, areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(75, 192, 192, 0.3)' }, { offset: 1, color: 'rgba(75, 192, 192, 0)' }] } } }
+      {
+        name: 'CPU (%)',
+        type: 'line',
+        data: cpuData,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 0,
+        itemStyle: { color: '#36a2eb' },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: 'rgba(54, 162, 235, 0.3)' }, { offset: 1, color: 'rgba(54, 162, 235, 0)' }]
+          }
+        },
+      },
+      {
+        name: 'RAM (%)',
+        type: 'line',
+        data: memData,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 0,
+        itemStyle: { color: '#4bc0c0' },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: 'rgba(75, 192, 192, 0.3)' }, { offset: 1, color: 'rgba(75, 192, 192, 0)' }]
+          }
+        },
+      }
     ]
 
     const legendData = ['CPU (%)', 'RAM (%)']
     
     const yAxes = [
-      { type: 'value', name: '% (CPU/RAM)', position: 'left', min: 0, max: 100, splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888' } }
+      {
+        type: 'value',
+        name: '% (CPU/RAM)',
+        position: 'left',
+        min: 0,
+        max: 100,
+        splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
+        axisLabel: { color: '#888' }
+      }
     ]
 
     let rightOffset = 0
 
     if (hasTemp) {
-      series.push({ name: 'Temp (°C)', type: 'line', data: tempData, smooth: true, showSymbol: false, yAxisIndex: yAxes.length, itemStyle: { color: '#ff9800' } })
+      series.push({
+        name: 'Temp (°C)',
+        type: 'line',
+        data: tempData,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: yAxes.length,
+        itemStyle: { color: '#ff9800' }
+      })
       legendData.push('Temp (°C)')
-      yAxes.push({ type: 'value', name: '°C', position: 'right', offset: rightOffset, splitLine: { show: false }, axisLabel: { color: '#888' } })
+      yAxes.push({
+        type: 'value',
+        name: '°C',
+        position: 'right',
+        offset: rightOffset,
+        splitLine: { show: false },
+        axisLabel: { color: '#888' }
+      })
       rightOffset += 50
     }
 
     if (hasVolt) {
-      series.push({ name: 'Voltaje (V)', type: 'line', data: voltData, smooth: true, showSymbol: false, yAxisIndex: yAxes.length, itemStyle: { color: '#9c27b0' } })
+      series.push({
+        name: 'Voltaje (V)',
+        type: 'line',
+        data: voltData,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: yAxes.length,
+        itemStyle: { color: '#9c27b0' }
+      })
       legendData.push('Voltaje (V)')
-      yAxes.push({ type: 'value', name: 'V', position: 'right', offset: rightOffset, splitLine: { show: false }, axisLabel: { color: '#888' } })
+      yAxes.push({
+        type: 'value',
+        name: 'V',
+        position: 'right',
+        offset: rightOffset,
+        splitLine: { show: false },
+        axisLabel: { color: '#888' }
+      })
       rightOffset += 50
     }
 
     return {
       ...baseOption,
       legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
-      grid: { left: '2%', right: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', bottom: 75, top: '15%', containLabel: true },
+      grid: { 
+        left: '2%', 
+        right: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', 
+        bottom: 75, 
+        top: '15%', 
+        containLabel: true 
+      },
       yAxis: yAxes,
       series: series
     }
@@ -505,10 +676,7 @@ async function ensureCoverage(mode, startMs, endMs) {
         signal: historyAbort.signal,
       })
       if (myToken !== fetchToken) return
-      
-      // FIX CRÍTICO 1: Leer el array directo si viene sin la envoltura "items"
-      const items = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : [])
-      
+      const items = Array.isArray(data?.items) ? data.items : []
       mergeItems(mode, items)
       extendRange(mode, seg.s, seg.e)
       
@@ -526,9 +694,15 @@ async function setView(startMs, endMs) {
   const mode = decideMode(startMs, endMs)
   await ensureCoverage(mode, startMs, endMs)
   currentWindow.value = { startMs, endMs, mode }
+  // Garantizar repintado aunque los datos ya estuvieran en caché
+  // (hasCoverage=true saltea el fetch y dataVersion no se incrementa en ensureCoverage)
+  dataVersion.value++
 }
 
 async function setRange(range) {
+  // Cuando cambiamos de pestaña (ej de 24h a 7d), reseteamos el zoom a la vista completa
+  zoomStart.value = 0
+  zoomEnd.value = 100
   timeRange.value = range
   const endMs = Date.now()
   const startMs = endMs - (hoursMap[range] ?? 24) * 3600 * 1000
@@ -539,6 +713,7 @@ async function setRange(range) {
 let wsUnbind = null
 
 function normalizeWsPayload(raw) {
+  // Manejar string (parsear primero)
   if (typeof raw === 'string') {
     try {
       return normalizeWsPayload(JSON.parse(raw))
@@ -546,11 +721,26 @@ function normalizeWsPayload(raw) {
       return []
     }
   }
-  if (raw && typeof raw === 'object') {
-    if (['sensor_update', 'sensor-status'].includes(raw.type)) {
-      return [raw.data || raw.payload || raw]
-    }
+
+  // FIX 1: Array puro — ws_manager envía batches como array plano de objetos
+  // Ej: [{type: "sensor_update", sensor_id: 5, ...}, ...]
+  if (Array.isArray(raw)) {
+    return raw.flatMap((item) => normalizeWsPayload(item))
   }
+
+  // FIX 1: Objeto batch con envelope — {type: "sensor_batch", items: [...]}
+  if (raw && raw.type === 'sensor_batch' && Array.isArray(raw.items)) {
+    return raw.items.flatMap((item) => normalizeWsPayload(item))
+  }
+
+  // FIX 4: Objeto individual sensor_update
+  // El payload de tasks.py tiene sensor_id directamente en el root:
+  // {type: "sensor_update", sensor_id: X, status: "...", timestamp: "...", ...metrics}
+  if (raw && typeof raw === 'object' && ['sensor_update', 'sensor-status'].includes(raw.type)) {
+    // Soportar tanto root-flat como wrapped en .data o .payload por retrocompat.
+    return [raw.data || raw.payload || raw]
+  }
+
   return []
 }
 
@@ -568,17 +758,17 @@ function handleRawMessage(event) {
       mergeItems('raw', points)
       mergeItems('auto', points) // Actualizamos ambas memorias de forma superrápida
 
-      // --- MAGIA DEL TIEMPO REAL (SLIDING WINDOW) ---
+      // FIX 3: SLIDING WINDOW ROBUSTA
+      // En lugar de mover startMs con el mismo delta (que rompe el rango con drift
+      // de reloj entre servidor y cliente), recalculamos startMs preservando la
+      // duración original de la ventana (ej: 1h siempre muestra 1h).
       if (currentWindow.value) {
-        // Encontrar el timestamp más nuevo que acaba de llegar
         const latestMs = Math.max(...points.map((p) => p._ms))
-        
-        // Si el dato es más nuevo que el límite final de nuestra ventana visual
+
         if (latestMs > currentWindow.value.endMs) {
-          // Calculamos cuánto tiempo pasó (el delta) y empujamos la ventana hacia adelante
-          const delta = latestMs - currentWindow.value.endMs
-          currentWindow.value.endMs += delta
-          currentWindow.value.startMs += delta
+          const windowDuration = currentWindow.value.endMs - currentWindow.value.startMs
+          currentWindow.value.endMs = latestMs
+          currentWindow.value.startMs = latestMs - windowDuration
         }
       }
 
@@ -590,39 +780,23 @@ function handleRawMessage(event) {
   }
 }
 
-// FIX CRÍTICO 2: BLINDAJE ANTI-CRASH PARA EL WEBSOCKET
 function initRealTime() {
-  try {
-    const ws = getCurrentWebSocket()
-    if (!ws) {
-      setTimeout(initRealTime, 1000)
-      return
-    }
-
-    // Bucle seguro de suscripción con reintento (sin crashear con addEventListener raros)
-    const trySubscribe = () => {
-      try {
-        if (ws.readyState === 1 || ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
-        } else {
-          setTimeout(trySubscribe, 500)
-        }
-      } catch (e) {
-        console.warn('WS Subscribe warning:', e)
-      }
-    }
-    
-    trySubscribe()
-
-    try { ws.removeEventListener('message', handleRawMessage) } catch(e){}
-    try { ws.addEventListener('message', handleRawMessage) } catch(e){}
-
-    wsUnbind = () => {
-      try { ws.removeEventListener('message', handleRawMessage) } catch(e){}
-    }
-  } catch (err) {
-    console.error('initRealTime fatal error (ignorado):', err)
+  const ws = getCurrentWebSocket()
+  if (!ws) {
+    setTimeout(initRealTime, 1000)
+    return
   }
+
+  try {
+    ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
+  } catch {
+    /* ignore */
+  }
+
+  ws.removeEventListener('message', handleRawMessage)
+  ws.addEventListener('message', handleRawMessage)
+
+  wsUnbind = () => ws.removeEventListener('message', handleRawMessage)
 }
 
 /* ====== FUNCIONES BITÁCORA ====== */
@@ -679,7 +853,7 @@ onMounted(async () => {
     await setRange(timeRange.value)
     initRealTime()
   } catch (err) {
-    console.error('onMounted falló:', err)
+    console.error(err)
     router.push('/')
   } finally {
     isBootLoading.value = false
@@ -738,7 +912,7 @@ watch(timeRange, async (r) => {
       </div>
 
       <div class="chart-container">
-        <v-chart class="chart" :option="chartOption" autoresize />
+        <v-chart class="chart" :option="chartOption" autoresize @datazoom="handleDataZoom" />
       </div>
     </div>
 
