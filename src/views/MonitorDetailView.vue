@@ -507,7 +507,10 @@ async function ensureCoverage(mode, startMs, endMs) {
         signal: historyAbort.signal,
       })
       if (myToken !== fetchToken) return
-      const items = Array.isArray(data?.items) ? data.items : []
+      
+      // FIX CRÍTICO: Leer el array directo si viene sin la envoltura "items"
+      const items = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : [])
+      
       mergeItems(mode, items)
       extendRange(mode, seg.s, seg.e)
       
@@ -592,30 +595,32 @@ function handleRawMessage(event) {
 
 // SUPERVISOR DE CONEXIÓN (EL FIX DEL SÍNDROME ZOMBIE)
 function initRealTime() {
-  wsCheckInterval = setInterval(() => {
-    const ws = getCurrentWebSocket()
-    if (!ws) return
+  const ws = getCurrentWebSocket()
+  if (!ws) {
+    setTimeout(initRealTime, 1000)
+    return
+  }
 
-    // Si el socket es nuevo o acaba de reconectar
-    if (ws !== currentWs) {
-      if (currentWs) {
-        currentWs.removeEventListener('message', handleRawMessage)
-      }
-      currentWs = ws
-      currentWs.addEventListener('message', handleRawMessage)
-      currentWs._hasSubscribedToSensor = false // Reseteamos la marca
+  // FIX CRÍTICO: No suscribir a ciegas, asegurar que el canal esté abierto
+  const subscribeToSensor = () => {
+    try {
+      ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
+    } catch (e) {
+      console.error('WS Error al suscribir:', e)
     }
+  }
 
-    // Si el socket está listo y todavía no mandamos la suscripción
-    if (currentWs.readyState === WebSocket.OPEN && !currentWs._hasSubscribedToSensor) {
-      try {
-        currentWs.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
-        currentWs._hasSubscribedToSensor = true // Marca para no spamear el server
-      } catch (e) {
-        console.error('WS Error al suscribir:', e)
-      }
-    }
-  }, 2000)
+  // 1 significa WebSocket.OPEN
+  if (ws.readyState === 1) { 
+    subscribeToSensor()
+  } else {
+    ws.addEventListener('open', subscribeToSensor, { once: true })
+  }
+
+  ws.removeEventListener('message', handleRawMessage)
+  ws.addEventListener('message', handleRawMessage)
+
+  wsUnbind = () => ws.removeEventListener('message', handleRawMessage)
 }
 
 /* ====== FUNCIONES BITÁCORA ====== */
