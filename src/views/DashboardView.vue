@@ -17,6 +17,7 @@ const isSidebarCollapsed = ref(false)
 
 // Estado de grupos sincronizado con DB
 const dbGroups = ref([])
+const groupMuteMap = ref({}) // NUEVO: Mapa para saber qué grupos están silenciados
 
 // Estado Reactivo de Sensores
 const liveSensorStatus = ref({})
@@ -41,7 +42,7 @@ const isRebooting = ref(false)
 // Estado para Kebab Menu Flotante (Sensores)
 const openKebabId = ref(null)
 
-// --- NUEVO: Estado para Kebab Menu Flotante (Grupos en Sidebar) ---
+// --- ESTADO PARA KEBAB MENU FLOTANTE (Grupos) ---
 const openGroupKebab = ref(null)
 
 const toggleGroupKebab = (gName, e) => {
@@ -53,12 +54,34 @@ const closeGroupKebab = () => {
   openGroupKebab.value = null
 }
 
+// --- NUEVO: FUNCIÓN MAESTRA PARA EVALUAR SILENCIOS TEMPORALES ---
+function isItemPaused(item) {
+  if (!item) return false
+  // Si está silenciado por el booleano duro
+  if (item.alerts_paused === true) return true
+  // Si tiene un temporizador en el futuro
+  if (item.alerts_paused_until) {
+    const untilDate = new Date(item.alerts_paused_until)
+    if (untilDate > new Date()) return true
+  }
+  return false
+}
+
+// --- LOGICA DE SILENCIO DE GRUPOS ---
 async function muteGroup(groupName, hours, e) {
   e?.stopPropagation()
   closeGroupKebab()
   try {
     await api.put(`/groups/${encodeURIComponent(groupName)}/mute`, { hours: hours })
     showNotification(hours === -1 ? 'Alertas reactivadas para el grupo.' : 'Grupo silenciado correctamente.', 'success')
+    
+    // Refrescar lista de grupos para actualizar indicadores
+    await fetchGroups()
+    
+    // Re-evaluar los pulsos visuales y sonidos de todos los monitores al instante
+    allMonitors.value.forEach(m => {
+        liveMonitorAlerts.value[m.monitor_id] = checkIfMonitorHasAlert(m)
+    })
   } catch (err) {
     showNotification('Error al silenciar el grupo.', 'error')
   }
@@ -107,9 +130,8 @@ function saveAckedAlerts() {
 
 let audioCtx = null
 let hasInteracted = false
-let audioLoopTimer = null // NUEVO: Timer para el bucle de sonido constante
+let audioLoopTimer = null
 
-// Inicializador de Audio
 function initAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)()
@@ -119,7 +141,6 @@ function initAudio() {
   }
 }
 
-// Analizador Global: Busca la peor alerta activa NO silenciada y la reproduce
 function checkAndPlayExistingAlerts() {
   if (audioMode.value === 'mute' || !hasInteracted) return;
   let hasCritical = false;
@@ -135,7 +156,6 @@ function checkAndPlayExistingAlerts() {
     }
   }
 
-  // LÓGICA DE PRIORIDAD: Rojo siempre gana sobre Amarillo
   if (hasCritical) {
     playCriticalSound();
   } else if (hasWarning && audioMode.value === 'all') {
@@ -143,23 +163,20 @@ function checkAndPlayExistingAlerts() {
   }
 }
 
-// Iniciar el bucle de sonido que se repetirá cada 5 segundos
 function startAudioLoop() {
   if (audioLoopTimer) clearInterval(audioLoopTimer)
   audioLoopTimer = setInterval(checkAndPlayExistingAlerts, 5000)
 }
 
-// Desbloqueo Maestro de Autoplay (Se dispara al primer clic en la pantalla)
 function handleFirstInteraction() {
   if (hasInteracted) return;
   hasInteracted = true;
   initAudio();
   checkAndPlayExistingAlerts();
-  startAudioLoop(); // Inicia la repetición continua
+  startAudioLoop();
   document.removeEventListener('click', handleFirstInteraction);
 }
 
-// Alternar modos de audio y guardar en memoria
 function toggleAudioMode() {
   initAudio()
   if (audioMode.value === 'mute') audioMode.value = 'critical'
@@ -169,10 +186,9 @@ function toggleAudioMode() {
   localStorage.setItem('noc_audio_mode', audioMode.value)
   showNotification(`Modo de audio: ${audioMode.value.toUpperCase()}`, 'success')
   
-  checkAndPlayExistingAlerts() // Verifica inmediatamente al cambiar de modo
+  checkAndPlayExistingAlerts()
 }
 
-// Sintetizador: Tono Warning (Bip Suave)
 function playWarningSound() {
   if (audioMode.value !== 'all') return
   initAudio()
@@ -190,7 +206,6 @@ function playWarningSound() {
   osc.stop(audioCtx.currentTime + 0.5)
 }
 
-// Sintetizador: Tono Crítico (Triple Bip Rápido)
 function playCriticalSound() {
   if (audioMode.value === 'mute') return
   initAudio()
@@ -210,7 +225,6 @@ function playCriticalSound() {
   }
 }
 
-// Reconocer alerta (Acknowledge)
 function toggleAcknowledge(monitorId, e) {
   e?.stopPropagation()
   if (acknowledgedAlerts.value.has(monitorId)) {
@@ -220,7 +234,6 @@ function toggleAcknowledge(monitorId, e) {
   }
   saveAckedAlerts()
 }
-// --- FIN SISTEMA NOC ---
 
 // Estado para Rotación de Credenciales
 const showRotateCredentialsModal = ref(false)
@@ -233,21 +246,16 @@ const deviceComments = ref([])
 const newCommentContent = ref('')
 const isAddingComment = ref(false)
 
-// --- Nuevo Estado para Componente Universal ---
 const allDevicesList = ref([])
 const autoTasks = ref([])
 const deviceInterfaces = ref([])
 const isLoadingInterfaces = ref(false)
 
-// --- COMPUTADOS ---
 const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_id)
 const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
-
-// Ordenamos los grupos disponibles para los selectores
 const availableGroups = computed(() => [...dbGroups.value].sort())
 
-// --- COMPUTADO: Dispositivos Sugeridos para Edición (Filtrado Inteligente) ---
 const suggestedTargetDevicesForEdit = computed(() => {
   if (!currentMonitorContext.value) return []
 
@@ -276,55 +284,29 @@ const suggestedTargetDevicesForEdit = computed(() => {
   })
 })
 
-// --- FORMULARIOS BASE ---
 const createNewPingSensor = () => ({
-  name: '',
-  is_active: true,
-  alerts_paused: false,
-  config: {
-    ping_type: 'device_to_external',
-    target_ip: '',
-    interval_sec: 60,
-    latency_threshold_ms: 150,
-    display_mode: 'realtime',
-    average_count: 5,
-  },
+  name: '', is_active: true, alerts_paused: false,
+  config: { ping_type: 'device_to_external', target_ip: '', interval_sec: 60, latency_threshold_ms: 150, display_mode: 'realtime', average_count: 5, },
   ui_alert_timeout: { enabled: false, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
   ui_alert_latency: { enabled: false, threshold_ms: 200, channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
 })
 
 const createNewEthernetSensor = () => ({
-  name: '',
-  is_active: true,
-  alerts_paused: false,
+  name: '', is_active: true, alerts_paused: false,
   config: { interface_name: '', interval_sec: 30 },
   ui_alert_speed_change: { enabled: false, channel_id: null, cooldown_minutes: 10, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
   ui_alert_traffic: { enabled: false, threshold_mbps: 100, direction: 'any', channel_id: null, cooldown_minutes: 5, tolerance_count: 1, notify_recovery: false, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
 })
 
 const createNewWirelessSensor = () => ({
-  name: '',
-  is_active: true,
-  alerts_paused: false,
-  config: {
-    interface_name: '',
-    interval_sec: 60,
-    ignore_degraded: false,
-    thresholds: { min_signal_dbm: -80, min_ccq_percent: 75, min_client_count: 0, min_tx_rate_mbps: 0, min_rx_rate_mbps: 0 },
-    tolerance_checks: 3,
-  },
+  name: '', is_active: true, alerts_paused: false,
+  config: { interface_name: '', interval_sec: 60, ignore_degraded: false, thresholds: { min_signal_dbm: -80, min_ccq_percent: 75, min_client_count: 0, min_tx_rate_mbps: 0, min_rx_rate_mbps: 0 }, tolerance_checks: 3, },
   ui_alert_status: { enabled: false, channel_id: null, cooldown_minutes: 10, notify_recovery: true, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
 })
 
 const createNewSystemSensor = () => ({
-  name: '',
-  is_active: true,
-  alerts_paused: false,
-  config: {
-    interval_sec: 60,
-    thresholds: { max_cpu_percent: 85, max_memory_percent: 90, max_temperature: 75, min_voltage: null, max_voltage: null, restart_uptime_seconds: 300 },
-    tolerance_checks: 3,
-  },
+  name: '', is_active: true, alerts_paused: false,
+  config: { interval_sec: 60, thresholds: { max_cpu_percent: 85, max_memory_percent: 90, max_temperature: 75, min_voltage: null, max_voltage: null, restart_uptime_seconds: 300 }, tolerance_checks: 3, },
   ui_alert_status: { enabled: false, channel_id: null, cooldown_minutes: 10, notify_recovery: true, use_custom_message: false, custom_message: '', use_custom_recovery_message: false, custom_recovery_message: '', use_auto_task: false, trigger_task_id: null },
 })
 
@@ -333,7 +315,6 @@ const newEthernetSensor = ref(createNewEthernetSensor())
 const newWirelessSensor = ref(createNewWirelessSensor())
 const newSystemSensor = ref(createNewSystemSensor())
 
-// --- FUNCIONES KEBAB MENU (SENSORES) ---
 const toggleKebab = (id, e) => {
   e?.stopPropagation()
   openKebabId.value = openKebabId.value === id ? null : id
@@ -342,16 +323,20 @@ const closeKebab = () => {
   openKebabId.value = null
 }
 
-// --- LOGICA UNIFICADA DE ALERTAS (NIVELES NOC) ---
+// --- LOGICA UNIFICADA DE ALERTAS ---
 function checkIfMonitorHasAlert(monitor) {
   if (!monitor || monitor.is_active === false) return 'ok';
-  if (monitor.alerts_paused) return 'ok';
+  
+  // VERIFICACIÓN VISUAL MAESTRA DE SILENCIO (Para silenciar la tarjeta y no molestar)
+  if (isItemPaused(monitor)) return 'ok';
+  if (groupMuteMap.value[monitor.group_name || 'General']) return 'ok';
+  
   if (!monitor.sensors || monitor.sensors.length === 0) return 'ok';
 
   let highestSeverity = 'ok';
 
   for (const s of monitor.sensors) {
-    if (s.is_active === false || s.alerts_paused === true) continue;
+    if (s.is_active === false || isItemPaused(s)) continue;
     
     const status = liveSensorStatus.value[String(s.id)]?.status;
     const cfg = typeof s.config === 'string' ? safeJsonParse(s.config, {}) : (s.config || {});
@@ -376,6 +361,13 @@ async function fetchGroups() {
   try {
     const { data } = await api.get('/groups')
     dbGroups.value = data.map((g) => g.name)
+    
+    // Mapeamos los estados silenciados por cada grupo
+    const mutes = {}
+    data.forEach(g => {
+      mutes[g.name] = isItemPaused(g)
+    })
+    groupMuteMap.value = mutes
   } catch (err) {
     console.error('Error fetching groups:', err)
   }
@@ -391,7 +383,6 @@ async function fetchAllMonitors() {
 
     allMonitors.value.forEach((m) => {
       if (m.is_active === null || m.is_active === undefined) m.is_active = true
-      if (m.alerts_paused === null || m.alerts_paused === undefined) m.alerts_paused = false
       
       ;(m.sensors || []).forEach((s) => {
         const sid = String(s.id)
@@ -443,7 +434,6 @@ async function fetchDeviceInterfaces(deviceId) {
   }
 }
 
-// --- LOGICA DE GRUPOS ---
 async function addNewGroup() {
   const name = newGroupName.value.trim()
   if (!name) return
@@ -500,7 +490,6 @@ function getGroupStatusClass(groupName) {
   return hasWarning ? 'dot-warning' : 'dot-green';
 }
 
-// --- CONTROLES DE TARJETAS MASIVAS ---
 function expandAll() {
   if (!activeGroup.value || !groupedMonitors.value[activeGroup.value]) return
   groupedMonitors.value[activeGroup.value].forEach(m => collapsedCards.value.delete(m.monitor_id))
@@ -523,7 +512,6 @@ function expandAlertsOnly() {
   })
 }
 
-// --- D&D ---
 async function onDragChange() {
   if (!activeGroup.value) return
   const monitorsInGroup = groupedMonitors.value[activeGroup.value]
@@ -541,7 +529,6 @@ async function onDragChange() {
   }
 }
 
-// --- UTILIDADES ---
 function formatBitrate(bits) {
   const n = Number(bits)
   if (!Number.isFinite(n) || n <= 0) return '0 Kbps'
@@ -639,7 +626,6 @@ function setupGridResizeObserver() {
   });
 }
 
-// --- WEBSOCKETS OPTIMIZADOS (BUFFERING & AUDIO TRIGGER) ---
 function normalizeWsPayload(raw) {
   if (Array.isArray(raw)) return raw.flatMap(normalizeWsPayload)
   if (typeof raw === 'string') {
@@ -790,7 +776,6 @@ function wireWsSyncAndSubs() {
   }
 }
 
-// --- LIFECYCLE ---
 onMounted(async () => {
   try {
     await waitForSession({ requireAuth: true })
@@ -809,9 +794,7 @@ onMounted(async () => {
   window.addEventListener("resize", resizeAllGridItems);
   
   document.addEventListener('click', closeKebab)
-  document.addEventListener('click', closeGroupKebab) // Agregado para el nuevo Kebab
-  
-  // NUEVO: Escuchador global de primera interacción para destrabar el Autoplay del navegador
+  document.addEventListener('click', closeGroupKebab) 
   document.addEventListener('click', handleFirstInteraction)
 })
 
@@ -820,7 +803,6 @@ onUnmounted(() => {
   if (typeof directMsgUnbind === 'function') directMsgUnbind()
   if (wsBufferTimer) clearInterval(wsBufferTimer)
   
-  // Limpieza del bucle NOC
   if (typeof audioLoopTimer !== 'undefined' && audioLoopTimer) clearInterval(audioLoopTimer)
   
   window.removeEventListener("resize", resizeAllGridItems);
@@ -830,7 +812,24 @@ onUnmounted(() => {
   document.removeEventListener('click', handleFirstInteraction)
 })
 
-// --- ACCIONES DE TARJETA ---
+async function toggleMonitorPause(monitor) {
+  const currentlyPaused = isItemPaused(monitor)
+  const newVal = !currentlyPaused
+  
+  try {
+    await api.put(`/monitors/${monitor.monitor_id}`, { alerts_paused: newVal })
+    
+    // Si quitamos la pausa, forzamos que se destrabe también a nivel frontend por si estaba en "until"
+    monitor.alerts_paused = newVal
+    if (!newVal) monitor.alerts_paused_until = null
+    
+    showNotification(newVal ? 'Alertas pausadas' : 'Alertas activas')
+    liveMonitorAlerts.value[monitor.monitor_id] = checkIfMonitorHasAlert(monitor)
+  } catch {
+    showNotification('Error', 'error')
+  }
+}
+
 async function toggleMonitorActive(monitor) {
   const newVal = !monitor.is_active
   monitor.is_active = newVal
@@ -840,17 +839,6 @@ async function toggleMonitorActive(monitor) {
     showNotification(newVal ? 'Monitor encendido' : 'Monitor apagado')
   } catch {
     monitor.is_active = !newVal
-    showNotification('Error', 'error')
-  }
-}
-async function toggleMonitorPause(monitor) {
-  const newVal = !monitor.alerts_paused
-  monitor.alerts_paused = newVal
-  try {
-    await api.put(`/monitors/${monitor.monitor_id}`, { alerts_paused: newVal })
-    showNotification(newVal ? 'Alertas pausadas' : 'Alertas activas')
-  } catch {
-    monitor.alerts_paused = !newVal
     showNotification('Error', 'error')
   }
 }
@@ -902,13 +890,12 @@ async function deleteSensor(sensor, monitor, e) {
   }
 }
 
-// --- ACCIONES ESPECÍFICAS DE SENSOR (KEBAB) ---
 async function toggleSensorPause(sensor, monitor, e) {
   e?.stopPropagation()
   closeKebab()
   
-  const newVal = !sensor.alerts_paused
-  sensor.alerts_paused = newVal
+  const currentlyPaused = isItemPaused(sensor)
+  const newVal = !currentlyPaused
 
   try {
     const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : { ...(sensor.config || {}) }
@@ -921,11 +908,13 @@ async function toggleSensorPause(sensor, monitor, e) {
     
     await api.put(`/sensors/${sensor.id}`, payload)
     
+    sensor.alerts_paused = newVal
+    if (!newVal) sensor.alerts_paused_until = null
+    
     liveMonitorAlerts.value[monitor.monitor_id] = checkIfMonitorHasAlert(monitor)
     showNotification(newVal ? 'Alertas pausadas para este sensor.' : 'Alertas reactivadas.', 'success')
   } catch (err) {
     console.error(err)
-    sensor.alerts_paused = !newVal // rollback
     showNotification('Error al cambiar estado del sensor.', 'error')
   }
 }
@@ -1092,9 +1081,6 @@ async function requestReboot() {
     isRebooting.value = false
   }
 }
-
-// --- EDICION SENSOR ---
-const mapAlert = (alerts, type) => alerts.find((a) => a.type === type) || {}
 
 async function showSensorDetails(s, m, e) {
   e?.stopPropagation()
@@ -1453,7 +1439,12 @@ function closeSensorDetails() {
           style="position: relative;"
         >
           <span :class="['status-dot', getGroupStatusClass(gName)]"></span>
-          <span v-if="!isSidebarCollapsed" class="group-name">{{ gName }}</span>
+          
+          <span v-if="!isSidebarCollapsed" class="group-name" :class="{'text-orange': groupMuteMap[gName]}">
+            {{ gName }} 
+            <small v-if="groupMuteMap[gName]" title="Grupo Silenciado">🔕</small>
+          </span>
+          
           <span v-if="!isSidebarCollapsed" class="badge">{{ groupedMonitors[gName].length }}</span>
           
           <div v-if="!isSidebarCollapsed && gName !== 'General'" class="kebab-container" style="margin-left: auto; padding-left: 5px;" @click.stop>
@@ -1534,7 +1525,7 @@ function closeSensorDetails() {
                       <h3>{{ monitor.client_name }}</h3>
                       <div class="badges-row">
                         <span v-if="!monitor.is_active" class="off-badge">OFF</span>
-                        <span v-if="monitor.alerts_paused" class="pause-badge">⏸️</span>
+                        <span v-if="isItemPaused(monitor) || groupMuteMap[monitor.group_name || 'General']" class="pause-badge" title="Alertas Pausadas">⏸️</span>
                       </div>
                     </div>
                   </div>
@@ -1572,11 +1563,11 @@ function closeSensorDetails() {
                     </button>
                     <button
                       class="action-icon-btn"
-                      :class="{ 'active-orange': monitor.alerts_paused }"
+                      :class="{ 'active-orange': isItemPaused(monitor) }"
                       @click="toggleMonitorPause(monitor)"
                       title="Pausar Alertas"
                     >
-                      {{ monitor.alerts_paused ? '🔕' : '🔔' }}
+                      {{ isItemPaused(monitor) ? '🔕' : '🔔' }}
                     </button>
                     <button
                       class="action-icon-btn"
@@ -1605,13 +1596,13 @@ function closeSensorDetails() {
                       class="sensor-row"
                       :class="{
                         'row-inactive': !sensor.is_active,
-                        'row-paused': sensor.alerts_paused,
+                        'row-paused': isItemPaused(sensor),
                       }"
                     >
                       <div class="sensor-tier-top" @click="goToSensorDetail(sensor.id)">
                         <span class="sensor-name" :title="sensor.name">
                           {{ sensor.name }}
-                          <small v-if="sensor.alerts_paused" title="Alertas Pausadas">⏸️</small>
+                          <small v-if="isItemPaused(sensor)" title="Alertas Pausadas">⏸️</small>
                         </span>
 
                         <div class="sensor-top-right">
@@ -1654,7 +1645,7 @@ function closeSensorDetails() {
                             <button class="kebab-btn" @click="toggleKebab(sensor.id, $event)">⋮</button>
                             <div v-if="openKebabId === sensor.id" class="kebab-dropdown">
                               <button class="kebab-item" @click="toggleSensorPause(sensor, monitor, $event)">
-                                {{ sensor.alerts_paused ? '▶ Reanudar Alertas' : '⏸ Pausar Alertas' }}
+                                {{ isItemPaused(sensor) ? '▶ Reanudar Alertas' : '⏸ Pausar Alertas' }}
                               </button>
                               <button 
                                 v-if="sensor.sensor_type === 'wireless'" 
