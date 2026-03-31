@@ -731,6 +731,16 @@ function flushWsUpdates() {
 function handleRawMessage(evt) {
   try {
     const parsed = JSON.parse(evt.data)
+
+    // --- NUEVO: Interceptar comandos del Bot de Telegram (Opción 1) ---
+    if (parsed.type === 'ui_reload_required') {
+      console.log("[WS] Recarga de UI solicitada por backend.")
+      fetchGroups()
+      fetchAllMonitors()
+      return // Interceptamos y abortamos el procesamiento normal
+    }
+    // ------------------------------------------------------------------
+
     const updates = normalizeWsPayload(parsed)
     updates.forEach((u) => {
       if (u.sensor_id) {
