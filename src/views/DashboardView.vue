@@ -38,8 +38,55 @@ const newGroupName = ref('')
 const notification = ref({ show: false, message: '', type: 'success' })
 const isRebooting = ref(false)
 
-// Estado para Kebab Menu Flotante
+// Estado para Kebab Menu Flotante (Sensores)
 const openKebabId = ref(null)
+
+// --- NUEVO: Estado para Kebab Menu Flotante (Grupos en Sidebar) ---
+const openGroupKebab = ref(null)
+
+const toggleGroupKebab = (gName, e) => {
+  e?.stopPropagation()
+  openGroupKebab.value = openGroupKebab.value === gName ? null : gName
+}
+
+const closeGroupKebab = () => {
+  openGroupKebab.value = null
+}
+
+async function muteGroup(groupName, hours, e) {
+  e?.stopPropagation()
+  closeGroupKebab()
+  try {
+    await api.put(`/groups/${encodeURIComponent(groupName)}/mute`, { hours: hours })
+    showNotification(hours === -1 ? 'Alertas reactivadas para el grupo.' : 'Grupo silenciado correctamente.', 'success')
+  } catch (err) {
+    showNotification('Error al silenciar el grupo.', 'error')
+  }
+}
+
+async function deleteGroupWithMonitors(groupName, e) {
+  e?.stopPropagation()
+  closeGroupKebab()
+  
+  const count = groupedMonitors.value[groupName]?.length || 0
+  const msg = `¿ESTÁS ABSOLUTAMENTE SEGURO?\n\nVas a eliminar el grupo "${groupName}".\nEsto eliminará permanentemente ${count} dispositivos y todos sus sensores asociados de tu cuenta.`
+  
+  if (!confirm(msg)) return
+
+  try {
+    await api.delete(`/groups/${encodeURIComponent(groupName)}`)
+    showNotification(`Grupo ${groupName} eliminado.`, 'success')
+    
+    // Refrescamos todo el entorno
+    if (activeGroup.value === groupName) {
+      activeGroup.value = 'General'
+    }
+    await fetchGroups()
+    await fetchAllMonitors()
+  } catch (err) {
+    showNotification(err.response?.data?.detail || 'Error al eliminar el grupo.', 'error')
+  }
+}
 
 // --- SISTEMA NOC: AUDIO, MEMORIA Y ACKNOWLEDGE ---
 
@@ -286,7 +333,7 @@ const newEthernetSensor = ref(createNewEthernetSensor())
 const newWirelessSensor = ref(createNewWirelessSensor())
 const newSystemSensor = ref(createNewSystemSensor())
 
-// --- FUNCIONES KEBAB MENU ---
+// --- FUNCIONES KEBAB MENU (SENSORES) ---
 const toggleKebab = (id, e) => {
   e?.stopPropagation()
   openKebabId.value = openKebabId.value === id ? null : id
@@ -691,8 +738,6 @@ function flushWsUpdates() {
       }
   })
 
-  // (La ejecución del sonido ahora la maneja el bucle independiente startAudioLoop)
-
   liveMonitorAlerts.value = newAlerts
   pendingWsUpdates = {}
 }
@@ -764,6 +809,7 @@ onMounted(async () => {
   window.addEventListener("resize", resizeAllGridItems);
   
   document.addEventListener('click', closeKebab)
+  document.addEventListener('click', closeGroupKebab) // Agregado para el nuevo Kebab
   
   // NUEVO: Escuchador global de primera interacción para destrabar el Autoplay del navegador
   document.addEventListener('click', handleFirstInteraction)
@@ -780,6 +826,7 @@ onUnmounted(() => {
   window.removeEventListener("resize", resizeAllGridItems);
   if (gridResizeObserver) gridResizeObserver.disconnect();
   document.removeEventListener('click', closeKebab)
+  document.removeEventListener('click', closeGroupKebab)
   document.removeEventListener('click', handleFirstInteraction)
 })
 
@@ -1403,10 +1450,23 @@ function closeSensorDetails() {
           :class="{ active: activeGroup === gName }"
           @click="activeGroup = gName"
           :title="gName"
+          style="position: relative;"
         >
           <span :class="['status-dot', getGroupStatusClass(gName)]"></span>
           <span v-if="!isSidebarCollapsed" class="group-name">{{ gName }}</span>
           <span v-if="!isSidebarCollapsed" class="badge">{{ groupedMonitors[gName].length }}</span>
+          
+          <div v-if="!isSidebarCollapsed && gName !== 'General'" class="kebab-container" style="margin-left: auto; padding-left: 5px;" @click.stop>
+            <button class="kebab-btn" @click="toggleGroupKebab(gName, $event)">⋮</button>
+            <div v-if="openGroupKebab === gName" class="kebab-dropdown" style="top: 100%; right: 0; left: auto; position: absolute;">
+              <button class="kebab-item" @click="muteGroup(gName, 1, $event)">⏳ Silenciar 1 Hora</button>
+              <button class="kebab-item" @click="muteGroup(gName, 12, $event)">⏳ Silenciar 12 Horas</button>
+              <button class="kebab-item" @click="muteGroup(gName, 0, $event)">💤 Silenciar Indefinido</button>
+              <button class="kebab-item" @click="muteGroup(gName, -1, $event)">🔊 Reanudar Alertas</button>
+              <hr style="border: 0; border-top: 1px solid var(--primary-color); margin: 4px 0;">
+              <button class="kebab-item text-danger" @click="deleteGroupWithMonitors(gName, $event)">🗑️ Eliminar Grupo</button>
+            </div>
+          </div>
         </li>
       </ul>
     </aside>
