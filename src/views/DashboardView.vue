@@ -15,6 +15,13 @@ const groupedMonitors = ref({})
 const activeGroup = ref(null)
 const isSidebarCollapsed = ref(false)
 
+// --- FASE 3: ESTADO GLOBAL DE SILENCIO DE CUENTA ---
+const accountMuteUntil = ref(null)
+const isAccountMuted = computed(() => {
+  if (!accountMuteUntil.value) return false
+  return new Date(accountMuteUntil.value) > new Date()
+})
+
 // Estado de grupos sincronizado con DB
 const dbGroups = ref([])
 const groupMuteMap = ref({}) // NUEVO: Mapa para saber qué grupos están silenciados
@@ -54,12 +61,15 @@ const closeGroupKebab = () => {
   openGroupKebab.value = null
 }
 
-// --- NUEVO: FUNCIÓN MAESTRA PARA EVALUAR SILENCIOS TEMPORALES ---
+// --- FASE 4: FUNCIÓN MAESTRA PARA EVALUAR SILENCIOS EN CASCADA ---
 function isItemPaused(item) {
+  // 1. Silencio Supremo: Si la cuenta está silenciada, TODO está silenciado.
+  if (isAccountMuted.value) return true 
+
   if (!item) return false
-  // Si está silenciado por el booleano duro
+  // 2. Si está silenciado por el booleano duro
   if (item.alerts_paused === true) return true
-  // Si tiene un temporizador en el futuro
+  // 3. Si tiene un temporizador de grupo, monitor o sensor en el futuro
   if (item.alerts_paused_until) {
     const untilDate = new Date(item.alerts_paused_until)
     if (untilDate > new Date()) return true
@@ -377,6 +387,13 @@ async function fetchAllMonitors() {
   try {
     const { data } = await api.get('/monitors')
     allMonitors.value = Array.isArray(data) ? data : []
+
+    // FASE 3: Extraer estado global de la cuenta (el backend lo inyecta en cada fila)
+    if (allMonitors.value.length > 0) {
+      accountMuteUntil.value = allMonitors.value[0].account_alerts_paused_until || null
+    } else {
+      accountMuteUntil.value = null
+    }
 
     const initialStatus = {}
     const initialAlerts = {}
@@ -1461,7 +1478,7 @@ function closeSensorDetails() {
           
           <span v-if="!isSidebarCollapsed" class="group-name" :class="{'text-orange': groupMuteMap[gName]}">
             {{ gName }} 
-            <small v-if="groupMuteMap[gName]" title="Grupo Silenciado">🔕</small>
+            <small v-if="groupMuteMap[gName] || isAccountMuted" title="Silenciado">🔕</small>
           </span>
           
           <span v-if="!isSidebarCollapsed" class="badge">{{ groupedMonitors[gName].length }}</span>
@@ -1482,6 +1499,16 @@ function closeSensorDetails() {
     </aside>
 
     <main class="main-content">
+      <div v-if="isAccountMuted" class="global-mute-banner">
+        <span>🔇 <strong>MODO SILENCIO GLOBAL ACTIVO:</strong> Las notificaciones de toda la cuenta están pausadas.</span>
+        <span class="mute-time" v-if="accountMuteUntil && new Date(accountMuteUntil).getFullYear() < 2030">
+          Hasta: {{ new Date(accountMuteUntil).toLocaleString() }}
+        </span>
+        <span class="mute-time" v-else>
+          (Indefinido)
+        </span>
+      </div>
+
       <header class="content-header" v-if="activeGroup">
         <h2>{{ activeGroup }}</h2>
         <div class="header-actions">
@@ -1507,7 +1534,7 @@ function closeSensorDetails() {
           <router-link to="/monitor-builder" class="btn-primary">Añadir Dispositivo</router-link>
         </div>
       </header>
-      <div v-else class="empty-selection">
+      <div v-else-if="!isAccountMuted" class="empty-selection">
         <p>Selecciona un grupo para ver sus monitores</p>
       </div>
 
@@ -2165,6 +2192,31 @@ function closeSensorDetails() {
   align-items: center;
   color: #666;
   font-size: 1.2rem;
+}
+
+/* --- FASE 5: BANNER DE SILENCIO GLOBAL --- */
+.global-mute-banner {
+  background-color: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  padding: 0.6rem 2rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(251, 191, 36, 0.3);
+  font-size: 0.95rem;
+  z-index: 10;
+  flex-shrink: 0;
+}
+.global-mute-banner strong {
+  color: #fcd34d;
+}
+.mute-time {
+  background: rgba(0,0,0,0.3);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  border: 1px solid rgba(251, 191, 36, 0.2);
 }
 
 /* =========================================
