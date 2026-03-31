@@ -685,6 +685,25 @@ const suggestedTargetDevicesForBulk = computed(() => {
 })
 
 // ===== FUNCIONES ACTUALIZACIÓN MASIVA NOMBRES (NUEVO) =====
+
+// --- FASE 2: Validador de IP Frontend ---
+function isValidIP(ipString) {
+  if (!ipString) return false;
+  let s = String(ipString).trim();
+  // Limpieza local: Remover puerto si viene en formato v4 (ej: 192.168.1.1:8728)
+  if (s.includes(':') && s.split(':').length === 2 && !isNaN(s.split(':')[1])) {
+    s = s.split(':')[0];
+  }
+  // Limpieza local: Remover máscara CIDR
+  if (s.includes('/')) {
+    s = s.split('/')[0];
+  }
+  // Regex estándar para IPv4
+  const ipv4Regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  return ipv4Regex.test(s);
+}
+// ----------------------------------------
+
 function openBulkRenameModal() {
   showBulkRenameModal.value = true
   bulkRenameData.value = []
@@ -750,7 +769,7 @@ function updateBulkRenamePreview() {
       ip_address: String(row[bulkRenameForm.value.ip_column]).trim(),
       new_client_name: String(row[bulkRenameForm.value.name_column]).trim()
     }))
-    .filter(item => item.ip_address && item.new_client_name)
+    .filter(item => item.ip_address && item.new_client_name && isValidIP(item.ip_address)) // Aplica validador en la vista previa también
     .slice(0, 5) 
 }
 
@@ -763,15 +782,26 @@ async function submitBulkRename() {
     return showNotification('Debes seleccionar las columnas de IP y Nombre.', 'error')
   }
 
+  // --- FASE 2: Conteo y Filtrado en el Frontend ---
+  let ignoredCount = 0;
+
   const finalDevicesList = bulkRenameData.value
     .map(row => ({
       ip_address: String(row[bulkRenameForm.value.ip_column] || '').trim(),
       new_client_name: String(row[bulkRenameForm.value.name_column] || '').trim()
     }))
-    .filter(item => item.ip_address && item.new_client_name)
+    .filter(item => {
+      if (!item.ip_address || !item.new_client_name) return false;
+      // Validar formato de IP. Si es basura, ignorarla silenciosamente para no romper el lote.
+      if (!isValidIP(item.ip_address)) {
+        ignoredCount++;
+        return false;
+      }
+      return true;
+    })
 
   if (finalDevicesList.length === 0) {
-    return showNotification('No se encontraron registros válidos para enviar.', 'error')
+    return showNotification('No se encontraron registros válidos (IPs válidas) para enviar.', 'error')
   }
 
   isSubmittingBulkRename.value = true
@@ -782,11 +812,29 @@ async function submitBulkRename() {
     }
 
     const { data } = await api.post('/devices/bulk-rename', payload)
-    showNotification(data.message || 'Proceso encolado correctamente.', 'success')
+    
+    let successMsg = data.message || 'Proceso encolado correctamente.';
+    if (ignoredCount > 0) {
+      successMsg += ` (Se ignoraron ${ignoredCount} filas con IPs inválidas o en blanco).`;
+    }
+    
+    showNotification(successMsg, ignoredCount > 0 ? 'warning' : 'success')
     closeBulkRenameModal()
   } catch (error) {
     console.error('Error al enviar actualización masiva:', error)
-    showNotification(error.response?.data?.detail || 'Error al iniciar actualización masiva.', 'error')
+    
+    // --- FASE 3: Captura Inteligente del Error 422 de Pydantic ---
+    if (error.response?.status === 422 && Array.isArray(error.response?.data?.detail)) {
+      const pydanticError = error.response.data.detail[0];
+      const errorField = pydanticError.loc ? pydanticError.loc[pydanticError.loc.length - 1] : 'desconocido';
+      const locIdx = pydanticError.loc && pydanticError.loc.length > 2 ? pydanticError.loc[2] : '';
+      const rowInfo = locIdx !== '' ? ` en la fila ${typeof locIdx === 'number' ? locIdx + 1 : locIdx}` : '';
+      
+      showNotification(`Error de formato${rowInfo}. Campo "${errorField}": ${pydanticError.msg}`, 'error');
+    } else {
+      showNotification(error.response?.data?.detail || 'Error al iniciar actualización masiva.', 'error')
+    }
+    // -------------------------------------------------------------
   } finally {
     isSubmittingBulkRename.value = false
   }
