@@ -56,6 +56,10 @@ const timeRange = ref('24h')
 const hoursMap = { '1h': 1, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
 const currentWindow = ref(null) // { startMs, endMs, mode }
 
+/* ====== ESTADO DE ZOOM ====== */
+const zoomStart = ref(0)
+const zoomEnd = ref(100)
+
 /* ====== STORE (raw/auto) OPTIMIZADO ====== */
 // Usamos un objeto puro para máximo rendimiento. Evitamos que Vue rastree miles de puntos de datos inútilmente.
 const store = {
@@ -119,6 +123,18 @@ function parseMbps(val) {
   if (!val || val === 'N/A') return 0
   const m = String(val).match(/(\d+(?:\.\d+)?)/)
   return m ? parseFloat(m[1]) : 0
+}
+
+/* ====== EVENTOS DE GRAFICA ====== */
+function handleDataZoom(params) {
+  // Almacenar el nivel de zoom actual configurado por el usuario
+  const start = params.batch ? params.batch[0].start : params.start
+  const end = params.batch ? params.batch[0].end : params.end
+  
+  if (start !== undefined && end !== undefined) {
+    zoomStart.value = start
+    zoomEnd.value = end
+  }
 }
 
 /* ====== DATA VISIBLE ====== */
@@ -246,9 +262,11 @@ const chartOption = computed(() => {
     // Ajuste de Bottom fijo en píxeles para evitar que se pise con el Slider de zoom
     grid: { left: '2%', right: '3%', bottom: 75, top: '10%', containLabel: true },
     dataZoom: [
-      { type: 'inside' }, // Zoom con rueda, 100% nativo y desacoplado
+      { type: 'inside', start: zoomStart.value, end: zoomEnd.value }, // Zoom con rueda (respeta estado)
       {
         type: 'slider',
+        start: zoomStart.value, // Mantener posicion
+        end: zoomEnd.value,     // Mantener posicion
         bottom: 10,
         height: 24,
         handleSize: '100%',
@@ -517,7 +535,8 @@ async function setRange(range) {
 }
 
 /* ====== WEBSOCKET REAL-TIME FIX ====== */
-let wsUnbind = null
+let wsCheckInterval = null
+let currentWs = null
 
 function normalizeWsPayload(raw) {
   if (typeof raw === 'string') {
@@ -571,33 +590,32 @@ function handleRawMessage(event) {
   }
 }
 
+// SUPERVISOR DE CONEXIÓN (EL FIX DEL SÍNDROME ZOMBIE)
 function initRealTime() {
-  const ws = getCurrentWebSocket()
-  if (!ws) {
-    setTimeout(initRealTime, 1000)
-    return
-  }
+  wsCheckInterval = setInterval(() => {
+    const ws = getCurrentWebSocket()
+    if (!ws) return
 
-  // --- ARREGLO DEL SILENCIO DEL WEBSOCKET ---
-  const subscribeToSensor = () => {
-    try {
-      ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
-    } catch (e) {
-      console.error('WS Error al suscribir:', e)
+    // Si el socket es nuevo o acaba de reconectar
+    if (ws !== currentWs) {
+      if (currentWs) {
+        currentWs.removeEventListener('message', handleRawMessage)
+      }
+      currentWs = ws
+      currentWs.addEventListener('message', handleRawMessage)
+      currentWs._hasSubscribedToSensor = false // Reseteamos la marca
     }
-  }
 
-  // Si el WS todavía está "Conectando...", esperamos a que abra. Si ya está abierto, lo mandamos.
-  if (ws.readyState === WebSocket.OPEN) {
-    subscribeToSensor()
-  } else {
-    ws.addEventListener('open', subscribeToSensor, { once: true })
-  }
-
-  ws.removeEventListener('message', handleRawMessage)
-  ws.addEventListener('message', handleRawMessage)
-
-  wsUnbind = () => ws.removeEventListener('message', handleRawMessage)
+    // Si el socket está listo y todavía no mandamos la suscripción
+    if (currentWs.readyState === WebSocket.OPEN && !currentWs._hasSubscribedToSensor) {
+      try {
+        currentWs.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
+        currentWs._hasSubscribedToSensor = true // Marca para no spamear el server
+      } catch (e) {
+        console.error('WS Error al suscribir:', e)
+      }
+    }
+  }, 2000)
 }
 
 /* ====== FUNCIONES BITÁCORA ====== */
@@ -663,7 +681,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (historyAbort) historyAbort.abort()
-  if (wsUnbind) wsUnbind()
+  if (wsCheckInterval) clearInterval(wsCheckInterval)
+  if (currentWs) currentWs.removeEventListener('message', handleRawMessage)
 })
 
 watch(timeRange, async (r) => {
@@ -713,7 +732,7 @@ watch(timeRange, async (r) => {
       </div>
 
       <div class="chart-container">
-        <v-chart class="chart" :option="chartOption" autoresize />
+        <v-chart class="chart" :option="chartOption" autoresize @datazoom="handleDataZoom" />
       </div>
     </div>
 
