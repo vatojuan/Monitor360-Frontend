@@ -262,11 +262,9 @@ const chartOption = computed(() => {
     // Ajuste de Bottom fijo en píxeles para evitar que se pise con el Slider de zoom
     grid: { left: '2%', right: '3%', bottom: 75, top: '10%', containLabel: true },
     dataZoom: [
-      { type: 'inside', start: zoomStart.value, end: zoomEnd.value }, // Zoom con rueda (respeta estado)
+      { type: 'inside' }, // Zoom nativo y desacoplado de Vue
       {
         type: 'slider',
-        start: zoomStart.value, // Mantener posicion
-        end: zoomEnd.value,     // Mantener posicion
         bottom: 10,
         height: 24,
         handleSize: '100%',
@@ -508,7 +506,7 @@ async function ensureCoverage(mode, startMs, endMs) {
       })
       if (myToken !== fetchToken) return
       
-      // FIX CRÍTICO: Leer el array directo si viene sin la envoltura "items"
+      // FIX CRÍTICO 1: Leer el array directo si viene sin la envoltura "items"
       const items = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : [])
       
       mergeItems(mode, items)
@@ -538,8 +536,7 @@ async function setRange(range) {
 }
 
 /* ====== WEBSOCKET REAL-TIME FIX ====== */
-let wsCheckInterval = null
-let currentWs = null
+let wsUnbind = null
 
 function normalizeWsPayload(raw) {
   if (typeof raw === 'string') {
@@ -593,34 +590,39 @@ function handleRawMessage(event) {
   }
 }
 
-// SUPERVISOR DE CONEXIÓN (EL FIX DEL SÍNDROME ZOMBIE)
+// FIX CRÍTICO 2: BLINDAJE ANTI-CRASH PARA EL WEBSOCKET
 function initRealTime() {
-  const ws = getCurrentWebSocket()
-  if (!ws) {
-    setTimeout(initRealTime, 1000)
-    return
-  }
-
-  // FIX CRÍTICO: No suscribir a ciegas, asegurar que el canal esté abierto
-  const subscribeToSensor = () => {
-    try {
-      ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
-    } catch (e) {
-      console.error('WS Error al suscribir:', e)
+  try {
+    const ws = getCurrentWebSocket()
+    if (!ws) {
+      setTimeout(initRealTime, 1000)
+      return
     }
+
+    // Bucle seguro de suscripción con reintento (sin crashear con addEventListener raros)
+    const trySubscribe = () => {
+      try {
+        if (ws.readyState === 1 || ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'subscribe_sensors', sensor_ids: [sensorId] }))
+        } else {
+          setTimeout(trySubscribe, 500)
+        }
+      } catch (e) {
+        console.warn('WS Subscribe warning:', e)
+      }
+    }
+    
+    trySubscribe()
+
+    try { ws.removeEventListener('message', handleRawMessage) } catch(e){}
+    try { ws.addEventListener('message', handleRawMessage) } catch(e){}
+
+    wsUnbind = () => {
+      try { ws.removeEventListener('message', handleRawMessage) } catch(e){}
+    }
+  } catch (err) {
+    console.error('initRealTime fatal error (ignorado):', err)
   }
-
-  // 1 significa WebSocket.OPEN
-  if (ws.readyState === 1) { 
-    subscribeToSensor()
-  } else {
-    ws.addEventListener('open', subscribeToSensor, { once: true })
-  }
-
-  ws.removeEventListener('message', handleRawMessage)
-  ws.addEventListener('message', handleRawMessage)
-
-  wsUnbind = () => ws.removeEventListener('message', handleRawMessage)
 }
 
 /* ====== FUNCIONES BITÁCORA ====== */
@@ -677,7 +679,7 @@ onMounted(async () => {
     await setRange(timeRange.value)
     initRealTime()
   } catch (err) {
-    console.error(err)
+    console.error('onMounted falló:', err)
     router.push('/')
   } finally {
     isBootLoading.value = false
@@ -686,8 +688,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (historyAbort) historyAbort.abort()
-  if (wsCheckInterval) clearInterval(wsCheckInterval)
-  if (currentWs) currentWs.removeEventListener('message', handleRawMessage)
+  if (wsUnbind) wsUnbind()
 })
 
 watch(timeRange, async (r) => {
@@ -737,7 +738,7 @@ watch(timeRange, async (r) => {
       </div>
 
       <div class="chart-container">
-        <v-chart class="chart" :option="chartOption" autoresize @datazoom="handleDataZoom" />
+        <v-chart class="chart" :option="chartOption" autoresize />
       </div>
     </div>
 
