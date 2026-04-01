@@ -840,16 +840,24 @@ async function submitBulkRename() {
   }
 }
 
-onMounted(() => {
-  const handleRenameComplete = () => {
-    fetchAllDevices()
-  }
-  window.addEventListener('bulk_rename_completed', handleRenameComplete)
+// --- RECEPTOR INTELIGENTE WEBSOCKET ---
+const handleRenameComplete = (event) => {
+  const payload = event?.detail; 
   
-  onUnmounted(() => {
-    window.removeEventListener('bulk_rename_completed', handleRenameComplete)
-  })
-})
+  if (payload && typeof payload.success_count !== 'undefined') {
+      let msg = `Renombramiento listo: ${payload.success_count} exitosos.`;
+      if (payload.not_found_count > 0) {
+          msg += ` (${payload.not_found_count} IPs no encontradas)`;
+      }
+      showNotification(msg, payload.success_count > 0 ? 'success' : 'warning');
+  } else {
+      showNotification('Proceso de renombramiento finalizado.', 'success');
+  }
+
+  // Refrescamos la lista para ver los cambios de inmediato
+  fetchAllDevices()
+}
+// --------------------------------------
 
 // ===== CARGA DE DATOS =====
 async function fetchAllDevices() {
@@ -1310,6 +1318,7 @@ async function submitBulkMonitors() {
 // ===== Lifecycle =====
 onMounted(() => {
   document.addEventListener('click', closeDropdownOnClickOutside)
+  window.addEventListener('bulk_rename_completed', handleRenameComplete) // <-- AÑADIDO
   fetchAllDevices()
   fetchVpnProfiles()
   fetchCredentials()
@@ -1319,6 +1328,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeDropdownOnClickOutside)
+  window.removeEventListener('bulk_rename_completed', handleRenameComplete) // <-- AÑADIDO
 })
 </script>
 
