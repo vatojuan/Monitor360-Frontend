@@ -406,7 +406,7 @@ function closeDropdownOnClickOutside(e) {
   }
 }
 
-// ===== TAREAS PROGRAMADAS (RMM) =====
+// ===== TAREAS PROGRAMADAS Y MANUALES (RMM) =====
 const scheduledTasks = ref([])
 const isLoadingTasks = ref(false)
 const showTaskModal = ref(false)
@@ -421,6 +421,7 @@ const daysOfWeek = [
 
 const newTaskForm = ref({
   name: '',
+  trigger_mode: 'cron', // NUEVO: 'cron' o 'manual'
   action_type: 'conditional_reboot',
   min_uptime_days: 30,
   script_body: '',
@@ -433,6 +434,7 @@ const showTaskLogsModal = ref(false)
 const activeTaskLogs = ref([])
 const isLoadingTaskLogs = ref(false)
 const activeTaskForLogs = ref(null)
+const isClearingLogs = ref(false)
 
 // Lazy load para tareas
 watch(currentTab, (newTab) => {
@@ -444,7 +446,6 @@ watch(currentTab, (newTab) => {
 async function fetchScheduledTasks() {
   isLoadingTasks.value = true
   try {
-    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
     const { data } = await api.get('/scheduled-tasks') 
     scheduledTasks.value = data
   } catch (error) {
@@ -459,6 +460,7 @@ function openTaskModal() {
   if (selectedDevices.value.length === 0) return
   newTaskForm.value = {
     name: '',
+    trigger_mode: 'cron',
     action_type: 'conditional_reboot',
     min_uptime_days: 30,
     script_body: '',
@@ -484,8 +486,9 @@ async function submitScheduledTask() {
     action_type: newTaskForm.value.action_type,
     action_payload: {},
     schedule_config: {
-      time: newTaskForm.value.time,
-      days: newTaskForm.value.days
+      trigger_mode: newTaskForm.value.trigger_mode,
+      time: newTaskForm.value.trigger_mode === 'cron' ? newTaskForm.value.time : null,
+      days: newTaskForm.value.trigger_mode === 'cron' ? newTaskForm.value.days : []
     },
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     target_device_ids: selectedDevices.value
@@ -500,7 +503,6 @@ async function submitScheduledTask() {
 
   isCreatingTask.value = true
   try {
-    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
     const { data } = await api.post('/scheduled-tasks', payload) 
     showNotification(`Tarea creada exitosamente. (Asignada a ${data.assigned_devices} equipos)`, 'success')
     showTaskModal.value = false
@@ -518,7 +520,6 @@ async function submitScheduledTask() {
 
 async function toggleTaskState(task) {
   try {
-    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
     const res = await api.patch(`/scheduled-tasks/${task.id}/toggle`, { is_active: !task.is_active })
     task.is_active = res.data.is_active
     showNotification(task.is_active ? 'Tarea reanudada' : 'Tarea pausada', 'success')
@@ -530,7 +531,6 @@ async function toggleTaskState(task) {
 async function deleteScheduledTask(task) {
   if (!confirm(`¿Estás seguro de eliminar la tarea "${task.name}" y todo su historial de ejecuciones?`)) return
   try {
-    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
     await api.delete(`/scheduled-tasks/${task.id}`)
     showNotification('Tarea programada eliminada', 'success')
     await fetchScheduledTasks()
@@ -539,12 +539,39 @@ async function deleteScheduledTask(task) {
   }
 }
 
+// === EJECUCIÓN MANUAL Y LOGS ===
+async function runTaskNow(task) {
+  if (!confirm(`¿Deseas iniciar la ejecución de "${task.name}" ahora mismo en todos sus equipos asignados?`)) return
+  try {
+    const { data } = await api.post(`/scheduled-tasks/${task.id}/run`)
+    showNotification(`Ejecución iniciada en ${data.dispatched_count} equipos. Revisá el historial en unos minutos.`, 'success')
+    await fetchScheduledTasks() // Para actualizar la fecha de last_run
+  } catch(e) {
+    showNotification(e.response?.data?.detail || 'Error al iniciar ejecución manual', 'error')
+  }
+}
+
+async function clearTaskLogs() {
+  if (!activeTaskForLogs.value) return
+  if (!confirm(`¿Estás seguro de vaciar el historial completo de la tarea "${activeTaskForLogs.value.name}"?`)) return
+  
+  isClearingLogs.value = true
+  try {
+    await api.delete(`/scheduled-tasks/${activeTaskForLogs.value.id}/logs`)
+    showNotification('Historial limpiado exitosamente', 'success')
+    activeTaskLogs.value = [] // Limpiamos la vista en vivo
+  } catch(e) {
+    showNotification('Error al limpiar historial', 'error')
+  } finally {
+    isClearingLogs.value = false
+  }
+}
+
 async function openTaskLogsModal(task) {
   activeTaskForLogs.value = task
   showTaskLogsModal.value = true
   isLoadingTaskLogs.value = true
   try {
-    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
     const { data } = await api.get(`/scheduled-tasks/${task.id}/logs`)
     activeTaskLogs.value = data
   } catch(e) {
@@ -691,23 +718,18 @@ const suggestedTargetDevicesForBulk = computed(() => {
 
 // ===== FUNCIONES ACTUALIZACIÓN MASIVA NOMBRES (NUEVO) =====
 
-// --- FASE 2: Validador de IP Frontend ---
 function isValidIP(ipString) {
   if (!ipString) return false;
   let s = String(ipString).trim();
-  // Limpieza local: Remover puerto si viene en formato v4 (ej: 192.168.1.1:8728)
   if (s.includes(':') && s.split(':').length === 2 && !isNaN(s.split(':')[1])) {
     s = s.split(':')[0];
   }
-  // Limpieza local: Remover máscara CIDR
   if (s.includes('/')) {
     s = s.split('/')[0];
   }
-  // Regex estándar para IPv4
   const ipv4Regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
   return ipv4Regex.test(s);
 }
-// ----------------------------------------
 
 function openBulkRenameModal() {
   showBulkRenameModal.value = true
@@ -774,7 +796,7 @@ function updateBulkRenamePreview() {
       ip_address: String(row[bulkRenameForm.value.ip_column]).trim(),
       new_client_name: String(row[bulkRenameForm.value.name_column]).trim()
     }))
-    .filter(item => item.ip_address && item.new_client_name && isValidIP(item.ip_address)) // Aplica validador en la vista previa también
+    .filter(item => item.ip_address && item.new_client_name && isValidIP(item.ip_address)) 
     .slice(0, 5) 
 }
 
@@ -787,7 +809,6 @@ async function submitBulkRename() {
     return showNotification('Debes seleccionar las columnas de IP y Nombre.', 'error')
   }
 
-  // --- FASE 2: Conteo y Filtrado en el Frontend ---
   let ignoredCount = 0;
 
   const finalDevicesList = bulkRenameData.value
@@ -797,7 +818,6 @@ async function submitBulkRename() {
     }))
     .filter(item => {
       if (!item.ip_address || !item.new_client_name) return false;
-      // Validar formato de IP. Si es basura, ignorarla silenciosamente para no romper el lote.
       if (!isValidIP(item.ip_address)) {
         ignoredCount++;
         return false;
@@ -828,7 +848,6 @@ async function submitBulkRename() {
   } catch (error) {
     console.error('Error al enviar actualización masiva:', error)
     
-    // --- FASE 3: Captura Inteligente del Error 422 de Pydantic ---
     if (error.response?.status === 422 && Array.isArray(error.response?.data?.detail)) {
       const pydanticError = error.response.data.detail[0];
       const errorField = pydanticError.loc ? pydanticError.loc[pydanticError.loc.length - 1] : 'desconocido';
@@ -839,13 +858,11 @@ async function submitBulkRename() {
     } else {
       showNotification(error.response?.data?.detail || 'Error al iniciar actualización masiva.', 'error')
     }
-    // -------------------------------------------------------------
   } finally {
     isSubmittingBulkRename.value = false
   }
 }
 
-// --- RECEPTOR INTELIGENTE WEBSOCKET ---
 const handleRenameComplete = (event) => {
   const payload = event?.detail; 
   
@@ -859,10 +876,8 @@ const handleRenameComplete = (event) => {
       showNotification('Proceso de renombramiento finalizado.', 'success');
   }
 
-  // Refrescamos la lista para ver los cambios de inmediato
   fetchAllDevices()
 }
-// --------------------------------------
 
 // ===== CARGA DE DATOS =====
 async function fetchAllDevices() {
@@ -911,7 +926,6 @@ async function fetchChannels() {
 
 async function fetchAutoTasks() {
   try {
-    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
     const { data } = await api.get('/scheduled-tasks') 
     autoTasks.value = data || []
   } catch (error) {
@@ -933,7 +947,6 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
     return showNotification('Seleccioná un Maestro.', 'error')
   }
 
-  // --- INICIO CÓDIGO ACTUALIZADO ---
   let finalVpnId = null;
   if (addForm.value.connection_method === 'vpn') {
     finalVpnId = addForm.value.vpn_profile_id;
@@ -946,16 +959,15 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
     client_name: addForm.value.client_name,
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
-    ssh_port: Number(addForm.value.ssh_port) || null, // <-- INTEGRACIÓN DUAL CHECK
+    ssh_port: Number(addForm.value.ssh_port) || null,
     mac_address: addForm.value.mac_address || '',
     node: addForm.value.node || '',
     maestro_id: addForm.value.connection_method === 'maestro' ? addForm.value.maestro_id : null,
-    vpn_profile_id: finalVpnId, // <-- AHORA HEREDA CORRECTAMENTE LA VPN
-    credential_id: addForm.value.credential_id, // <-- CORREGIDO: Siempre se envía para asociarlo al destino
+    vpn_profile_id: finalVpnId,
+    credential_id: addForm.value.credential_id,
     vendor: addForm.value.vendor,
     force_generic_ping: isForced,
   }
-  // --- FIN CÓDIGO ACTUALIZADO ---
 
   isSubmitting.value = true
   if (isForced) showAuthErrorModal.value = false
@@ -993,11 +1005,10 @@ async function handleAddDeviceOneStep(forceGeneric = false) {
 async function handleTestReachability() {
   if (!addForm.value.ip_address?.trim()) return showNotification('Ingresá la IP.', 'error')
   
-  // --- INICIO CÓDIGO ACTUALIZADO ---
   const payload = {
     ip_address: addForm.value.ip_address,
     api_port: Number(addForm.value.api_port) || 8728,
-    ssh_port: Number(addForm.value.ssh_port) || null, // <-- INTEGRACIÓN DUAL CHECK
+    ssh_port: Number(addForm.value.ssh_port) || null,
     vendor: addForm.value.vendor,
   }
   
@@ -1005,13 +1016,11 @@ async function handleTestReachability() {
     payload.vpn_profile_id = addForm.value.vpn_profile_id
   } else if (addForm.value.connection_method === 'maestro') {
     payload.maestro_id = addForm.value.maestro_id
-    // Extraer VPN del Maestro para el Test
     const selectedMaestro = maestros.value.find(m => m.id === addForm.value.maestro_id);
     if (selectedMaestro && selectedMaestro.vpn_profile_id) {
       payload.vpn_profile_id = selectedMaestro.vpn_profile_id;
     }
   }
-  // --- FIN CÓDIGO ACTUALIZADO ---
 
   isTesting.value = true
   testResult.value = null
@@ -1020,7 +1029,6 @@ async function handleTestReachability() {
     testResult.value = data
     if (data.reachable) {
         showNotification('¡Conexión OK!', 'success')
-        // Si el motor de adopción descubrió que los puertos correctos eran otros, los pisamos en el form
         if (data.api_port) addForm.value.api_port = data.api_port
         if (data.ssh_port) addForm.value.ssh_port = data.ssh_port
     }
@@ -1324,7 +1332,7 @@ async function submitBulkMonitors() {
 // ===== Lifecycle =====
 onMounted(() => {
   document.addEventListener('click', closeDropdownOnClickOutside)
-  window.addEventListener('bulk_rename_completed', handleRenameComplete) // <-- AÑADIDO
+  window.addEventListener('bulk_rename_completed', handleRenameComplete) 
   fetchAllDevices()
   fetchVpnProfiles()
   fetchCredentials()
@@ -1334,7 +1342,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeDropdownOnClickOutside)
-  window.removeEventListener('bulk_rename_completed', handleRenameComplete) // <-- AÑADIDO
+  window.removeEventListener('bulk_rename_completed', handleRenameComplete) 
 })
 </script>
 
@@ -1350,7 +1358,7 @@ onUnmounted(() => {
         Gestionar
       </button>
       <button :class="{ active: currentTab === 'tasks' }" @click="currentTab = 'tasks'">
-        Tareas Automáticas
+        Panel de Tareas / RMM
       </button>
     </div>
 
@@ -1487,7 +1495,7 @@ onUnmounted(() => {
 
         <div v-if="selectedDevices.length > 0" class="bulk-actions-wrapper fade-in">
           <button @click="openTaskModal" class="btn-bulk btn-primary">
-            ⏱️ Programar Tarea ({{ selectedDevices.length }})
+            ⏱️ Nueva Acción/Tarea ({{ selectedDevices.length }})
           </button>
           <button @click="openBulkModal" class="btn-bulk btn-info">
             📡 Configurar Monitores ({{ selectedDevices.length }})
@@ -1647,19 +1655,18 @@ onUnmounted(() => {
 
     <section v-if="currentTab === 'tasks'" class="control-section fade-in">
       <div class="manage-header">
-        <h2><i class="icon">⚙️</i> Panel de Automatización</h2>
-        <button class="btn-primary" @click="currentTab = 'manage'">+ Nueva Tarea</button>
+        <h2><i class="icon">⚙️</i> Panel de Tareas y RMM</h2>
       </div>
       
       <p class="text-dim" style="margin-bottom: 1.5rem;">
-        Aquí puedes gestionar las tareas masivas que se ejecutan automáticamente en el fondo (ej. reinicios condicionales o scripts).
+        Aquí puedes gestionar las tareas masivas que se ejecutan automáticamente en el fondo o bajo demanda (Firmware, Scripts, Reinicios).
       </p>
 
       <div v-if="isLoadingTasks" class="loading-text">Cargando tareas programadas...</div>
       
       <div v-else-if="scheduledTasks.length === 0" class="empty-state" style="padding: 3rem 0;">
         <div class="empty-icon">⏳</div>
-        <p>No tienes tareas programadas activas.</p>
+        <p>No tienes tareas o acciones creadas aún.</p>
         <span class="text-dim small">Selecciona equipos desde la pestaña de Gestión para crear una.</span>
       </div>
 
@@ -1670,7 +1677,7 @@ onUnmounted(() => {
               <th>Estado</th>
               <th>Nombre de Tarea</th>
               <th>Acción</th>
-              <th>Frecuencia / Hora</th>
+              <th>Modo / Frecuencia</th>
               <th>Equipos</th>
               <th>Última Ejecución</th>
               <th style="text-align: right;">Opciones</th>
@@ -1679,10 +1686,11 @@ onUnmounted(() => {
           <tbody>
             <tr v-for="task in scheduledTasks" :key="task.id">
               <td>
-                <label class="toggle-switch">
+                <label class="toggle-switch" v-if="task.schedule_config.trigger_mode !== 'manual'">
                   <input type="checkbox" :checked="task.is_active" @change="toggleTaskState(task)" />
                   <span class="slider"></span>
                 </label>
+                <span class="badge" style="background: #444;" v-else>Bajo Demanda</span>
               </td>
               <td>
                 <strong>{{ task.name }}</strong>
@@ -1691,18 +1699,27 @@ onUnmounted(() => {
               <td>
                 <span class="badge maestro" v-if="task.action_type === 'conditional_reboot'">Reinicio Condicional</span>
                 <span class="badge managed" v-else-if="task.action_type === 'custom_script'">Script Personalizado</span>
+                <span class="badge device" v-else-if="task.action_type === 'firmware_update'">Actualización Firmware</span>
                 <span class="badge device" v-else>Reinicio Forzado</span>
               </td>
               <td>
-                <div style="font-weight: bold;">{{ task.schedule_config.time }}</div>
-                <div class="text-dim small">
-                  {{ task.schedule_config.days && task.schedule_config.days.length > 0 ? task.schedule_config.days.join(', ').toUpperCase() : 'Todos los días' }}
+                <div v-if="task.schedule_config.trigger_mode === 'manual'">
+                  <span class="badge" style="background: var(--blue); color: white;">MANUAL</span>
+                </div>
+                <div v-else>
+                  <div style="font-weight: bold;">{{ task.schedule_config.time }}</div>
+                  <div class="text-dim small">
+                    {{ task.schedule_config.days && task.schedule_config.days.length > 0 ? task.schedule_config.days.join(', ').toUpperCase() : 'Todos los días' }}
+                  </div>
                 </div>
               </td>
               <td><span class="badge" style="background: rgba(255,255,255,0.1);">{{ task.target_count }} asignados</span></td>
               <td>{{ formatDate(task.last_run) }}</td>
               <td style="text-align: right;">
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                  <button class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.85rem; border-color: var(--green); color: var(--green);" @click="runTaskNow(task)">
+                    ▶️ Ejecutar Ahora
+                  </button>
                   <button class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" @click="openTaskLogsModal(task)">
                     📋 Historial
                   </button>
@@ -1809,16 +1826,27 @@ onUnmounted(() => {
 
     <div v-if="showTaskModal" class="modal-overlay">
       <div class="modal-content large-modal">
-        <h3>⏱️ Programar Acción Masiva</h3>
+        <h3>⏱️ Configurar Tarea o Acción Masiva</h3>
 
         <div class="compatibility-box" :class="taskCompatibility.isPartial ? 'warning' : 'ok'">
           {{ taskCompatibility.message }}
         </div>
 
         <form @submit.prevent="submitScheduledTask" class="bulk-form">
-          <div class="form-group">
-            <label>Nombre de la Tarea</label>
-            <input v-model="newTaskForm.name" type="text" placeholder="Ej: Reinicio Mensual Madrugada" required />
+          
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Modo de Ejecución</label>
+              <select v-model="newTaskForm.trigger_mode">
+                <option value="cron">Automático (Programado por Horario)</option>
+                <option value="manual">Manual (A demanda / Una sola vez)</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label>Nombre del Grupo o Tarea</label>
+              <input v-model="newTaskForm.name" type="text" placeholder="Ej: Actualizar Nodo Central" required />
+            </div>
           </div>
 
           <div class="form-group">
@@ -1826,6 +1854,7 @@ onUnmounted(() => {
             <select v-model="newTaskForm.action_type">
               <option value="conditional_reboot">Reinicio Condicional (Seguro)</option>
               <option value="reboot">Reinicio Forzado (Inmediato)</option>
+              <option value="firmware_update">Actualización de Firmware (MikroTik)</option>
               <option value="custom_script">Ejecutar Script Personalizado</option>
             </select>
           </div>
@@ -1836,6 +1865,14 @@ onUnmounted(() => {
               <input type="number" v-model.number="newTaskForm.min_uptime_days" min="1" required style="width: 100px;"/>
               <span class="text-dim">días. Si el equipo tiene menos tiempo, se omitirá el reinicio.</span>
             </div>
+          </div>
+
+          <div class="form-group" v-if="newTaskForm.action_type === 'firmware_update'" style="background: rgba(52, 152, 219, 0.1); padding: 1rem; border-radius: 8px; border: 1px solid var(--blue);">
+            <p style="margin-top: 0; margin-bottom: 0.5rem; font-weight: bold; color: var(--blue);">ℹ️ Información sobre Actualizaciones</p>
+            <span class="text-dim small" style="line-height: 1.4;">
+              El sistema actualizará los equipos MikroTik a la versión estable más reciente. Si el equipo está en v6, el sistema ejecutará un doble salto (v6 -> canal upgrade -> v7 -> canal stable -> v7 actual) manejando los reinicios automáticamente.<br>
+              <strong>Nota:</strong> Los equipos Ubiquiti o Mimosa serán omitidos.
+            </span>
           </div>
 
           <div class="form-group" v-if="newTaskForm.action_type === 'custom_script'">
@@ -1850,36 +1887,38 @@ onUnmounted(() => {
             <small class="text-dim">La sintaxis dependerá del fabricante de los equipos seleccionados.</small>
           </div>
 
-          <hr class="separator" />
-          <h4>🕒 Horario de Ejecución</h4>
+          <template v-if="newTaskForm.trigger_mode === 'cron'">
+            <hr class="separator" />
+            <h4>🕒 Horario de Ejecución Automática</h4>
 
-          <div class="grid-2" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Hora Local (HH:MM)</label>
-              <input type="time" v-model="newTaskForm.time" required />
-            </div>
-            
-            <div class="form-group">
-              <label>Días de la Semana</label>
-              <div class="day-picker">
-                <button 
-                  type="button"
-                  v-for="day in daysOfWeek" 
-                  :key="day.value"
-                  :class="['day-pill', { active: newTaskForm.days.includes(day.value) }]"
-                  @click="toggleDaySelection(day.value)"
-                >
-                  {{ day.label }}
-                </button>
+            <div class="grid-2" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label>Hora Local (HH:MM)</label>
+                <input type="time" v-model="newTaskForm.time" required />
               </div>
-              <small class="text-dim" style="margin-top: 5px;">Si no seleccionas ninguno, se ejecutará <strong>todos los días</strong>.</small>
+              
+              <div class="form-group">
+                <label>Días de la Semana</label>
+                <div class="day-picker">
+                  <button 
+                    type="button"
+                    v-for="day in daysOfWeek" 
+                    :key="day.value"
+                    :class="['day-pill', { active: newTaskForm.days.includes(day.value) }]"
+                    @click="toggleDaySelection(day.value)"
+                  >
+                    {{ day.label }}
+                  </button>
+                </div>
+                <small class="text-dim" style="margin-top: 5px;">Si no seleccionas ninguno, se ejecutará <strong>todos los días</strong>.</small>
+              </div>
             </div>
-          </div>
+          </template>
 
           <div class="modal-actions">
             <button type="button" @click="showTaskModal = false" class="btn-secondary">Cancelar</button>
             <button type="submit" class="btn-primary" :disabled="isCreatingTask">
-              {{ isCreatingTask ? 'Programando...' : 'Guardar y Activar Tarea' }}
+              {{ isCreatingTask ? 'Guardando...' : 'Guardar Configuración' }}
             </button>
           </div>
         </form>
@@ -1888,19 +1927,25 @@ onUnmounted(() => {
 
     <div v-if="showTaskLogsModal" class="modal-overlay" @click.self="showTaskLogsModal = false">
       <div class="modal-content large-modal" style="max-width: 900px;">
-        <div class="manage-header">
+        <div class="manage-header" style="align-items: flex-start;">
           <div>
-            <h3 style="margin: 0;">📋 Bitácora del Sistema</h3>
+            <h3 style="margin: 0;">📋 Consola de Auditoría</h3>
             <span class="text-dim">{{ activeTaskForLogs?.name }}</span>
           </div>
-          <button class="btn-secondary" @click="showTaskLogsModal = false">X</button>
+          <div style="display: flex; gap: 10px;">
+            <button class="btn-secondary text-danger" @click="clearTaskLogs" :disabled="isClearingLogs" title="Vaciar Historial Completo" style="border-color: rgba(255,0,0,0.3); font-size: 0.85rem; padding: 0.4rem 0.8rem;">
+              <span v-if="!isClearingLogs">🗑️ Limpiar Logs</span>
+              <span v-else>Limpiando...</span>
+            </button>
+            <button class="btn-secondary" @click="showTaskLogsModal = false">X</button>
+          </div>
         </div>
 
         <div class="comments-list" style="background: rgba(0,0,0,0.3);">
           <div v-if="isLoadingTaskLogs" class="loading-text">Cargando bitácora de ejecuciones...</div>
           <div v-else-if="activeTaskLogs.length === 0" class="empty-state">
             <div class="empty-icon">📂</div>
-            <p>La tarea aún no se ha ejecutado.</p>
+            <p>La bitácora está limpia.</p>
           </div>
 
           <div v-else class="comments-scroll" style="max-height: 50vh;">
@@ -1909,7 +1954,7 @@ onUnmounted(() => {
                 <strong>{{ log.client_name }} ({{ log.ip_address }})</strong>
                 <span class="comment-date" style="display: flex; gap: 10px; align-items: center;">
                   {{ formatDate(log.executed_at) }}
-                  <span :class="['status-badge', log.status]">{{ log.status.toUpperCase() }}</span>
+                  <span :class="['status-badge', log.status]">{{ log.status.replace('_', ' ').toUpperCase() }}</span>
                 </span>
               </div>
               <div v-if="log.output" class="comment-body terminal-output">
@@ -2852,6 +2897,19 @@ input:checked + .slider:before {
 .status-badge.success { background: rgba(46, 204, 113, 0.2); color: var(--green); border: 1px solid var(--green); }
 .status-badge.error { background: rgba(231, 76, 60, 0.2); color: var(--error-red); border: 1px solid var(--error-red); }
 .status-badge.skipped { background: rgba(243, 156, 18, 0.2); color: #f39c12; border: 1px solid #f39c12; }
+
+/* NUEVO: ESTILO PARA LA MÁQUINA DE ESTADOS DE FIRMWARE */
+.status-badge.in_progress {
+  background: rgba(52, 152, 219, 0.2);
+  color: #3498db;
+  border: 1px solid #3498db;
+  animation: pulse-blue 2s infinite;
+}
+@keyframes pulse-blue {
+  0% { box-shadow: 0 0 0 0 rgba(52, 152, 219, 0.7); }
+  70% { box-shadow: 0 0 0 5px rgba(52, 152, 219, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 152, 219, 0); }
+}
 
 /* --- MODAL DE LÍMITES --- */
 .limit-modal {
