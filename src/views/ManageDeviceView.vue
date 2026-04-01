@@ -444,7 +444,7 @@ watch(currentTab, (newTab) => {
 async function fetchScheduledTasks() {
   isLoadingTasks.value = true
   try {
-    const { data } = await api.get('/devices/scheduled-tasks/')
+    const { data } = await api.get('/devices/scheduled-tasks') // CORREGIDO: Sin barra final
     scheduledTasks.value = data
   } catch (error) {
     console.error(error)
@@ -499,7 +499,7 @@ async function submitScheduledTask() {
 
   isCreatingTask.value = true
   try {
-    const { data } = await api.post('/devices/scheduled-tasks/', payload)
+    const { data } = await api.post('/devices/scheduled-tasks', payload) // CORREGIDO: Sin barra final
     showNotification(`Tarea creada exitosamente. (Asignada a ${data.assigned_devices} equipos)`, 'success')
     showTaskModal.value = false
     selectedDevices.value = []
@@ -906,7 +906,7 @@ async function fetchChannels() {
 
 async function fetchAutoTasks() {
   try {
-    const { data } = await api.get('/scheduled-tasks/')
+    const { data } = await api.get('/devices/scheduled-tasks') // CORREGIDO: URL unificada y sin barra final
     autoTasks.value = data || []
   } catch (error) {
     console.error(error)
