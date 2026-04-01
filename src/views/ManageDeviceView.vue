@@ -444,7 +444,8 @@ watch(currentTab, (newTab) => {
 async function fetchScheduledTasks() {
   isLoadingTasks.value = true
   try {
-    const { data } = await api.get('/devices/scheduled-tasks') // CORREGIDO: Sin barra final
+    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
+    const { data } = await api.get('/scheduled-tasks') 
     scheduledTasks.value = data
   } catch (error) {
     console.error(error)
@@ -499,7 +500,8 @@ async function submitScheduledTask() {
 
   isCreatingTask.value = true
   try {
-    const { data } = await api.post('/devices/scheduled-tasks', payload) // CORREGIDO: Sin barra final
+    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
+    const { data } = await api.post('/scheduled-tasks', payload) 
     showNotification(`Tarea creada exitosamente. (Asignada a ${data.assigned_devices} equipos)`, 'success')
     showTaskModal.value = false
     selectedDevices.value = []
@@ -516,7 +518,8 @@ async function submitScheduledTask() {
 
 async function toggleTaskState(task) {
   try {
-    const res = await api.patch(`/devices/scheduled-tasks/${task.id}/toggle`, { is_active: !task.is_active })
+    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
+    const res = await api.patch(`/scheduled-tasks/${task.id}/toggle`, { is_active: !task.is_active })
     task.is_active = res.data.is_active
     showNotification(task.is_active ? 'Tarea reanudada' : 'Tarea pausada', 'success')
   } catch(e) {
@@ -527,7 +530,8 @@ async function toggleTaskState(task) {
 async function deleteScheduledTask(task) {
   if (!confirm(`¿Estás seguro de eliminar la tarea "${task.name}" y todo su historial de ejecuciones?`)) return
   try {
-    await api.delete(`/devices/scheduled-tasks/${task.id}`)
+    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
+    await api.delete(`/scheduled-tasks/${task.id}`)
     showNotification('Tarea programada eliminada', 'success')
     await fetchScheduledTasks()
   } catch(e) {
@@ -540,7 +544,8 @@ async function openTaskLogsModal(task) {
   showTaskLogsModal.value = true
   isLoadingTaskLogs.value = true
   try {
-    const { data } = await api.get(`/devices/scheduled-tasks/${task.id}/logs`)
+    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
+    const { data } = await api.get(`/scheduled-tasks/${task.id}/logs`)
     activeTaskLogs.value = data
   } catch(e) {
     showNotification('Error cargando historial de tarea', 'error')
@@ -906,7 +911,8 @@ async function fetchChannels() {
 
 async function fetchAutoTasks() {
   try {
-    const { data } = await api.get('/devices/scheduled-tasks') // CORREGIDO: URL unificada y sin barra final
+    // CORREGIDO: Opción B -> ruta directa /scheduled-tasks
+    const { data } = await api.get('/scheduled-tasks') 
     autoTasks.value = data || []
   } catch (error) {
     console.error(error)
