@@ -1396,7 +1396,7 @@ onUnmounted(() => {
         Gestionar
       </button>
       <button :class="{ active: currentTab === 'tasks' }" @click="currentTab = 'tasks'">
-        Panel de Tareas / RMM
+        Panel de Tareas
       </button>
     </div>
 
@@ -1693,7 +1693,7 @@ onUnmounted(() => {
 
     <section v-if="currentTab === 'tasks'" class="control-section fade-in">
       <div class="manage-header">
-        <h2><i class="icon">⚙️</i> Panel de Tareas y RMM</h2>
+        <h2><i class="icon">⚙️</i> Panel de Tareas</h2>
       </div>
       
       <p class="text-dim" style="margin-bottom: 1.5rem;">
