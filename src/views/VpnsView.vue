@@ -113,7 +113,8 @@ async function copyMikrotikScript(iniText) {
 }
 
 /* ====== Estado UI ====== */
-const newProfile = ref({ name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' })
+// MODIFICADO: Eliminado check_ip del estado inicial
+const newProfile = ref({ name: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' })
 const vpnProfiles = ref([])
 const channels = ref([]) 
 const isLoading = ref(false)
@@ -224,7 +225,8 @@ async function createAutoProfile() {
 
     const payload = {
       name: newProfile.value.name,
-      check_ip: newProfile.value.check_ip || autoData.interface_address?.split('/')[0],
+      // MODIFICADO: Extraemos la IP del túnel automáticamente y la enviamos al backend
+      check_ip: autoData.interface_address?.split('/')[0],
       config_data: autoData.conf_ini,
       alerts_enabled: newProfile.value.alerts_enabled,
       notification_channel_id: newProfile.value.notification_channel_id,
@@ -234,7 +236,8 @@ async function createAutoProfile() {
     const { data: savedProfile } = await api.post('/vpns', payload)
 
     vpnProfiles.value.unshift({ ...savedProfile, _expanded: true })
-    newProfile.value = { name: '', check_ip: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' }
+    // MODIFICADO: Limpieza de estado sin check_ip
+    newProfile.value = { name: '', alerts_enabled: false, notification_channel_id: null, allowed_ips: '' }
     showNotification('Perfil de Router creado y activado.', 'success')
 
   } catch (err) {
@@ -559,15 +562,6 @@ onMounted(async () => {
         <div class="form-group">
           <label>Nombre del Cliente / Sitio</label>
           <input v-model="newProfile.name" type="text" placeholder="Ej: Sucursal Centro" />
-        </div>
-        
-        <div class="form-group">
-          <label>Check IP (Opcional)</label>
-          <input
-            v-model="newProfile.check_ip"
-            type="text"
-            placeholder="IP interna para monitoreo"
-          />
         </div>
 
         <div class="form-group">
@@ -1346,8 +1340,6 @@ button {
   cursor: help;
   filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.2));
 }
-
-/* ESTILO ELIMINADO: .ip-tag { ... } */
 
 .toggle-icon {
   font-size: 0.8rem;
