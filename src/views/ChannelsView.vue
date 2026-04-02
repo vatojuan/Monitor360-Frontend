@@ -8,7 +8,7 @@ const notification = ref({ show: false, message: '', type: 'success' })
 // --- Estado ---
 const channels = ref([])
 const history = ref([])
-const newChannelType = ref('webhook')
+const newChannelType = ref('telegram') // Cambiado el valor por defecto a telegram
 
 // Lista de zonas horarias comunes
 const commonTimezones = [
@@ -238,47 +238,18 @@ function formatHistoryDetails(details) {
 
           <div class="channel-type-selector">
             <button
-              @click="newChannelType = 'webhook'"
-              :class="{ active: newChannelType === 'webhook' }"
-            >
-              Webhook
-            </button>
-            <button
               @click="newChannelType = 'telegram'"
               :class="{ active: newChannelType === 'telegram' }"
             >
               Telegram Bot
             </button>
+            <button
+              @click="newChannelType = 'webhook'"
+              :class="{ active: newChannelType === 'webhook' }"
+            >
+              Webhook
+            </button>
           </div>
-
-          <form
-            v-if="newChannelType === 'webhook'"
-            @submit.prevent="handleAddChannel"
-            class="form-layout"
-          >
-            <p>Envía alertas a una URL. Ideal para Discord o Slack.</p>
-            <label>Nombre del Canal</label>
-            <input
-              type="text"
-              v-model="newChannel.name"
-              placeholder="Ej: Slack #soporte"
-              required
-            />
-            <label>URL del Webhook</label>
-            <input
-              type="url"
-              v-model="newChannel.webhook.url"
-              placeholder="https://hooks.slack.com/..."
-              required
-            />
-
-            <label>Zona Horaria</label>
-            <select v-model="newChannel.timezone" required>
-              <option v-for="tz in commonTimezones" :key="tz" :value="tz">{{ tz }}</option>
-            </select>
-
-            <button type="submit">Añadir Canal Webhook</button>
-          </form>
 
           <form
             v-if="newChannelType === 'telegram'"
@@ -324,6 +295,35 @@ function formatHistoryDetails(details) {
               </ol>
             </div>
             <button type="submit">Guardar y Habilitar Bot</button>
+          </form>
+
+          <form
+            v-if="newChannelType === 'webhook'"
+            @submit.prevent="handleAddChannel"
+            class="form-layout"
+          >
+            <p>Envía alertas a una URL. Ideal para Discord o Slack.</p>
+            <label>Nombre del Canal</label>
+            <input
+              type="text"
+              v-model="newChannel.name"
+              placeholder="Ej: Slack #soporte"
+              required
+            />
+            <label>URL del Webhook</label>
+            <input
+              type="url"
+              v-model="newChannel.webhook.url"
+              placeholder="https://hooks.slack.com/..."
+              required
+            />
+
+            <label>Zona Horaria</label>
+            <select v-model="newChannel.timezone" required>
+              <option v-for="tz in commonTimezones" :key="tz" :value="tz">{{ tz }}</option>
+            </select>
+
+            <button type="submit">Añadir Canal Webhook</button>
           </form>
         </div>
 
