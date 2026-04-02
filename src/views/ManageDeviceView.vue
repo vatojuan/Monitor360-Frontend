@@ -429,6 +429,15 @@ const newTaskForm = ref({
   days: [] 
 })
 
+// === NUEVO ESTADO: CAMBIO DE PUERTOS MASIVO ===
+const portChangeConfig = ref({
+  ssh: { enabled: false, port: 22, disable: false },
+  api: { enabled: false, port: 8728, disable: false },
+  winbox: { enabled: false, port: 8291, disable: false },
+  www: { enabled: false, port: 80, disable: false },
+  telnet: { enabled: false, port: 23, disable: false }
+})
+
 // Logs Modal
 const showTaskLogsModal = ref(false)
 const activeTaskLogs = ref([])
@@ -467,6 +476,16 @@ function openTaskModal() {
     time: '03:00',
     days: []
   }
+  
+  // Reiniciamos estado de puertos
+  portChangeConfig.value = {
+    ssh: { enabled: false, port: 22, disable: false },
+    api: { enabled: false, port: 8728, disable: false },
+    winbox: { enabled: false, port: 8291, disable: false },
+    www: { enabled: false, port: 80, disable: false },
+    telnet: { enabled: false, port: 23, disable: false }
+  }
+
   showTaskModal.value = true
 }
 
@@ -499,6 +518,25 @@ async function submitScheduledTask() {
   } else if (newTaskForm.value.action_type === 'custom_script') {
     if (!newTaskForm.value.script_body.trim()) return showNotification('El script no puede estar vacío', 'error')
     payload.action_payload.script_body = newTaskForm.value.script_body
+  } else if (newTaskForm.value.action_type === 'change_ports') {
+    // --- Lógica del Payload de Puertos ---
+    const portsPayload = {}
+    let anySelected = false
+    
+    for (const key in portChangeConfig.value) {
+      const conf = portChangeConfig.value[key]
+      if (conf.enabled) {
+        portsPayload[key] = conf.disable ? 0 : (conf.port || null)
+        anySelected = true
+      } else {
+        portsPayload[key] = null
+      }
+    }
+    
+    if (!anySelected) {
+      return showNotification('Debes seleccionar al menos un servicio para cambiar o deshabilitar.', 'error')
+    }
+    payload.action_payload = portsPayload
   }
 
   isCreatingTask.value = true
@@ -1700,6 +1738,7 @@ onUnmounted(() => {
                 <span class="badge maestro" v-if="task.action_type === 'conditional_reboot'">Reinicio Condicional</span>
                 <span class="badge managed" v-else-if="task.action_type === 'custom_script'">Script Personalizado</span>
                 <span class="badge device" v-else-if="task.action_type === 'firmware_update'">Actualización Firmware</span>
+                <span class="badge" style="background: #fbbf24; color: #111;" v-else-if="task.action_type === 'change_ports'">Cambio de Puertos</span>
                 <span class="badge device" v-else>Reinicio Forzado</span>
               </td>
               <td>
@@ -1856,6 +1895,7 @@ onUnmounted(() => {
               <option value="reboot">Reinicio Forzado (Inmediato)</option>
               <option value="firmware_update">Actualización de Firmware (MikroTik)</option>
               <option value="custom_script">Ejecutar Script Personalizado</option>
+              <option value="change_ports">Cambio Masivo de Puertos y Servicios</option>
             </select>
           </div>
 
@@ -1885,6 +1925,53 @@ onUnmounted(() => {
               required
             ></textarea>
             <small class="text-dim">La sintaxis dependerá del fabricante de los equipos seleccionados.</small>
+          </div>
+
+          <div class="form-group" v-if="newTaskForm.action_type === 'change_ports'" style="background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 8px; border: 1px solid var(--primary-color);">
+            <p style="margin-top: 0; margin-bottom: 1rem; font-weight: bold; color: #fbbf24;">⚠️ Cambio de Puertos Multi-Vendor</p>
+            <span class="text-dim small" style="display:block; margin-bottom: 1rem; line-height: 1.4;">
+              Selecciona qué servicios deseas modificar o deshabilitar. <br>
+              <strong>Nota:</strong> Si cambias o deshabilitas los puertos principales de gestión (API o SSH), la plataforma sincronizará automáticamente la base de datos para no perder conexión. Los servicios exclusivos (API, Winbox) solo afectarán a equipos MikroTik. Tras aplicar cambios exitosos, los equipos se reiniciarán automáticamente.
+            </span>
+            
+            <div class="table-responsive">
+              <table class="device-table" style="font-size: 0.9rem;">
+                <thead>
+                  <tr>
+                    <th style="width: 80px; text-align: center;">Tocar</th>
+                    <th>Servicio</th>
+                    <th>Nuevo Puerto</th>
+                    <th>Deshabilitar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(cfg, key) in portChangeConfig" :key="key">
+                    <td style="text-align: center;">
+                      <input type="checkbox" v-model="cfg.enabled" />
+                    </td>
+                    <td style="text-transform: uppercase; font-weight: bold; color: var(--blue);">
+                      {{ key === 'www' ? 'HTTP (WWW)' : key }}
+                    </td>
+                    <td>
+                      <input 
+                        type="number" 
+                        v-model.number="cfg.port" 
+                        :disabled="!cfg.enabled || cfg.disable" 
+                        class="mini-select" 
+                        style="width: 100px; padding: 0.3rem;"
+                      />
+                    </td>
+                    <td>
+                      <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;" :style="{ opacity: !cfg.enabled ? '0.5' : '1' }">
+                        <input type="checkbox" v-model="cfg.disable" :disabled="!cfg.enabled" /> 
+                        <span class="text-danger" v-if="cfg.disable">Apagar</span>
+                        <span v-else>Mantener activo</span>
+                      </label>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <template v-if="newTaskForm.trigger_mode === 'cron'">
