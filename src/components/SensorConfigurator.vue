@@ -64,7 +64,7 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
 
       <div class="form-group">
         <label>Intervalo (s)</label>
-        <input type="number" v-model.number="s.config.interval_sec" required />
+        <input type="number" v-model.number="s.config.interval_sec" required min="10" />
       </div>
       <div class="form-group">
         <label>Umbral Latencia (ms)</label>
@@ -249,7 +249,7 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
 
       <div class="form-group span-3">
         <label>Intervalo (s)</label>
-        <input type="number" v-model.number="s.config.interval_sec" required />
+        <input type="number" v-model.number="s.config.interval_sec" required min="10" />
       </div>
 
       <div class="sub-section span-3" v-if="s.ui_alert_speed_change && s.ui_alert_traffic">
@@ -427,7 +427,7 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
 
       <div class="form-group span-3">
         <label>Intervalo (s)</label>
-        <input type="number" v-model.number="s.config.interval_sec" required />
+        <input type="number" v-model.number="s.config.interval_sec" required min="10" />
       </div>
 
       <div class="sub-section span-3">
@@ -537,7 +537,7 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
 
       <div class="form-group span-3">
         <label>Intervalo (s)</label>
-        <input type="number" v-model.number="s.config.interval_sec" required />
+        <input type="number" v-model.number="s.config.interval_sec" required min="10" />
       </div>
 
       <div class="sub-section span-3">

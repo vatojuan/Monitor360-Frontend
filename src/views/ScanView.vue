@@ -385,6 +385,13 @@ function getSensorIcon(type) {
 
 function buildSensorConfigPayload(sensorData) { 
   const finalConfig = { ...sensorData.config }
+
+  // --- FASE 3: SEGURO DE VIDA EN LA PLANTILLA ---
+  // Si por alguna razón de UI se asignó un intervalo menor a 10s, forzarlo antes de enviarlo.
+  if (finalConfig.interval_sec !== undefined && Number(finalConfig.interval_sec) < 10) {
+      finalConfig.interval_sec = 10;
+  }
+
   const alerts = []
   const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
   const sType = sensorData.sensor_type
@@ -471,6 +478,12 @@ function restoreSensorConfig(sensors) {
       s.alerts_paused = backendSensor.alerts_paused ?? false
       s.attach_to = backendSensor.attach_to || 'device'
       s.config = { ...s.config, ...backendSensor.config }
+
+      // --- FASE 3: SEGURO DE VIDA EN LA LECTURA ---
+      // Si por alguna razón la BD tiene guardado un intervalo inválido, forzamos a 10 para la UI
+      if (s.config.interval_sec !== undefined && Number(s.config.interval_sec) < 10) {
+          s.config.interval_sec = 10;
+      }
 
       if (s.sensor_type === 'ping' && s.attach_to === 'maestro') {
           s.config.ping_type = 'maestro_to_device';
