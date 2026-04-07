@@ -132,6 +132,38 @@ const filteredGroups = computed(() => {
 });
 
 // =============================================================================
+// VALIDACIÓN UX DE RECETAS (HARDENING - BLOQUEO DE BOTONES)
+// =============================================================================
+
+// Valida la receta del panel de escaneo principal
+const isRecipeValid = computed(() => {
+  // 1. Validar el intervalo general de la tarea recurrente si está activa (Mínimo estricto: 15)
+  if (scanConfig.value.is_active && (!scanConfig.value.scan_interval_minutes || scanConfig.value.scan_interval_minutes < 15)) return false;
+  
+  // 2. Validar que TODOS los sensores de la receta tengan mínimo 10s (si está en auto-adoptar)
+  if (scanConfig.value.scan_mode === 'auto') {
+    return sensorsTemplateList.value.every(s => (s.config?.interval_sec ?? 60) >= 10);
+  }
+  return true;
+});
+
+// Computada auxiliar para mostrar un mensaje más específico si el error es de la tarea recurrente
+const recipeErrorMessage = computed(() => {
+  if (scanConfig.value.is_active && (!scanConfig.value.scan_interval_minutes || scanConfig.value.scan_interval_minutes < 15)) {
+      return "⚠️ El intervalo de la tarea debe ser de al menos 15 min";
+  }
+  if (scanConfig.value.scan_mode === 'auto' && !sensorsTemplateList.value.every(s => (s.config?.interval_sec ?? 60) >= 10)) {
+      return "⚠️ Revisa los intervalos de sensores (mín. 10s)";
+  }
+  return "";
+});
+
+// Valida la receta del modal de adopción manual
+const isAdoptRecipeValid = computed(() => {
+  return adoptSensorsList.value.every(s => (s.config?.interval_sec ?? 60) >= 10);
+});
+
+// =============================================================================
 // LÓGICA DE INTERFACES Y BUSCADOR
 // =============================================================================
 
@@ -927,11 +959,18 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
             </div>
             <template v-if="scanConfig.is_active">
               <div class="form-group interval-group">
-                <label>Intervalo (min)</label>
+                <label>Intervalo (min) - Mín. 15 min</label>
                 <div class="input-hint-row">
-                  <input type="number" v-model.number="scanConfig.scan_interval_minutes" min="5" placeholder="60" />
-                  <span class="hint">Recomendado: >15 min</span>
+                  <input 
+                    type="number" 
+                    v-model.number="scanConfig.scan_interval_minutes" 
+                    min="15" 
+                    placeholder="60" 
+                    :class="{ 'input-error': scanConfig.scan_interval_minutes < 15 }"
+                  />
+                  <span class="hint">Mín. 15 min</span>
                 </div>
+                <span v-if="scanConfig.scan_interval_minutes < 15" class="error-text">⚠️ Mínimo 15 minutos permitidos.</span>
               </div>
               <div class="radio-group">
                 <label><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Notificar</label>
@@ -1002,11 +1041,16 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
               </div>
             </template>
           </div>
-          <div class="form-actions">
-            <button v-if="scanConfig.id" @click="resetConfigForm" class="btn-cancel" :disabled="isScanning">❌ Cancelar</button>
-            <button @click="runScan" class="btn-scan" :disabled="isScanning">
-               {{ isScanning ? '⏳ Escaneando red...' : (scanConfig.id ? '💾 Guardar Cambios' : (scanConfig.is_active ? '💾 Guardar Tarea' : '🚀 Escanear Ahora')) }}
-            </button>
+          <div class="form-actions" style="align-items: center;">
+            <span v-if="!isRecipeValid" style="color: var(--error-red); font-size: 0.8rem; font-weight: bold; margin-right: auto;">
+              {{ recipeErrorMessage }}
+            </span>
+            <div style="display: flex; gap: 10px; flex: 1; justify-content: flex-end;">
+                <button v-if="scanConfig.id" @click="resetConfigForm" class="btn-cancel" :disabled="isScanning">❌ Cancelar</button>
+                <button @click="runScan" class="btn-scan" :disabled="isScanning || !isRecipeValid">
+                   {{ isScanning ? '⏳ Escaneando...' : (scanConfig.id ? '💾 Guardar Cambios' : (scanConfig.is_active ? '💾 Guardar Tarea' : '🚀 Escanear Ahora')) }}
+                </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -1183,9 +1227,10 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 </div>
             </div>
 
-            <div class="modal-footer" style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+            <div class="modal-footer" style="margin-top: 20px; display: flex; align-items: center; justify-content: flex-end; gap: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+                <span v-if="!isAdoptRecipeValid" style="color: var(--error-red); font-size: 0.85rem; font-weight: bold; margin-right: auto;">⚠️ Revisa los intervalos (mín. 10s)</span>
                 <button @click="cancelAdoption" class="btn-cancel">Cancelar</button>
-                <button @click="confirmAdoption" class="btn-scan" style="flex: none; padding: 10px 20px;">🚀 Confirmar Adopción</button>
+                <button @click="confirmAdoption" class="btn-scan" style="flex: none; padding: 10px 20px;" :disabled="isAdopting || !isAdoptRecipeValid">🚀 Confirmar Adopción</button>
             </div>
         </div>
     </div>
@@ -1307,6 +1352,20 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .form-group label { display: block; margin-bottom: 5px; font-weight: 500; font-size: 0.9rem; color: var(--gray); }
 .form-group input, .form-group select { width: 100%; padding: 10px; background-color: var(--bg-color); border: 1px solid var(--primary-color); color: white; border-radius: 6px; }
 .form-group select option { background-color: var(--surface-color); color: white; }
+
+/* ESTILOS DE VALIDACIÓN AÑADIDOS (HARDENING UX) */
+.input-error {
+  border-color: var(--error-red, #ef4444) !important;
+  background-color: rgba(239, 68, 68, 0.05) !important;
+}
+.error-text {
+  display: block;
+  color: var(--error-red, #ef4444);
+  font-size: 0.75rem;
+  font-weight: bold;
+  margin-top: 0.4rem;
+}
+
 .search-input { width: 100%; padding: 10px; background-color: var(--bg-color); border: 1px solid var(--primary-color); color: white; border-radius: 6px; font-size: 0.9rem; }
 .custom-textarea { padding: 6px 10px; min-height: 45px; margin-bottom: 5px; resize: vertical; } 
 .form-group small { display: block; margin-top: 4px; color: #777; font-size: 0.8rem; }
@@ -1343,7 +1402,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .btn-scan:disabled { opacity: 0.7; cursor: not-allowed; }
 .btn-cancel { padding: 12px 15px; background: transparent; border: 1px solid var(--gray); color: var(--gray); border-radius: 6px; font-weight: bold; cursor: pointer; margin-right: 10px; transition: all 0.2s; }
 .btn-cancel:hover { border-color: white; color: white; }
-.form-actions { display: flex; justify-content: space-between; }
+.form-actions { display: flex; justify-content: space-between; margin-top: 10px; }
 .profiles-panel { background: var(--surface-color); border-radius: 12px; }
 .profiles-list { padding: 20px; }
 .empty-list { color: var(--gray); text-align: center; padding: 20px; border: 2px dashed var(--primary-color); border-radius: 8px; }
@@ -1359,7 +1418,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: 0; } }
 .interval-group input { width: 100px; }
 .input-hint-row { display: flex; align-items: center; gap: 10px; }
-.hint { font-size: 0.8rem; color: #ffcc00; }
+.hint { font-size: 0.8rem; color: #aaa; }
 .profile-sub-details { margin-top: 5px; font-size: 0.8rem; display: flex; gap: 10px; align-items: center; }
 .cred-badge { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; color: #ddd; }
 .notify-tag { color: var(--blue); font-weight: bold; }

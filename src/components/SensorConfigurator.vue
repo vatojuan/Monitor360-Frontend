@@ -64,8 +64,15 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
       </div>
 
       <div class="form-group">
-        <label>Intervalo (s)</label>
-        <input type="number" v-model.number="s.config.interval_sec" required min="10" />
+        <label>Intervalo (s) - Mín. 10s</label>
+        <input 
+          type="number" 
+          v-model.number="s.config.interval_sec" 
+          required 
+          min="10" 
+          :class="{ 'input-error': s.config.interval_sec < 10 }" 
+        />
+        <span v-if="s.config.interval_sec < 10" class="error-text">⚠️ El mínimo es 10 segundos</span>
       </div>
       <div class="form-group">
         <label>Umbral Latencia (ms)</label>
@@ -252,8 +259,15 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
       </div>
 
       <div class="form-group span-3">
-        <label>Intervalo (s)</label>
-        <input type="number" v-model.number="s.config.interval_sec" required min="10" />
+        <label>Intervalo (s) - Mín. 10s</label>
+        <input 
+          type="number" 
+          v-model.number="s.config.interval_sec" 
+          required 
+          min="10" 
+          :class="{ 'input-error': s.config.interval_sec < 10 }" 
+        />
+        <span v-if="s.config.interval_sec < 10" class="error-text">⚠️ El mínimo es 10 segundos</span>
       </div>
 
       <div class="sub-section span-3" v-if="s.ui_alert_speed_change && s.ui_alert_traffic">
@@ -433,8 +447,15 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
       </div>
 
       <div class="form-group span-3">
-        <label>Intervalo (s)</label>
-        <input type="number" v-model.number="s.config.interval_sec" required min="10" />
+        <label>Intervalo (s) - Mín. 10s</label>
+        <input 
+          type="number" 
+          v-model.number="s.config.interval_sec" 
+          required 
+          min="10" 
+          :class="{ 'input-error': s.config.interval_sec < 10 }" 
+        />
+        <span v-if="s.config.interval_sec < 10" class="error-text">⚠️ El mínimo es 10 segundos</span>
       </div>
 
       <div class="sub-section span-3">
@@ -543,8 +564,15 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
       </div>
 
       <div class="form-group span-3">
-        <label>Intervalo (s)</label>
-        <input type="number" v-model.number="s.config.interval_sec" required min="10" />
+        <label>Intervalo (s) - Mín. 10s</label>
+        <input 
+          type="number" 
+          v-model.number="s.config.interval_sec" 
+          required 
+          min="10" 
+          :class="{ 'input-error': s.config.interval_sec < 10 }" 
+        />
+        <span v-if="s.config.interval_sec < 10" class="error-text">⚠️ El mínimo es 10 segundos</span>
       </div>
 
       <div class="sub-section span-3">
@@ -695,6 +723,19 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
   font-family: inherit;
   outline: none;
 }
+
+/* ESTILOS DE VALIDACIÓN AÑADIDOS (HARDENING UX) */
+.input-error {
+  border-color: var(--error-red, #ef4444) !important;
+  background-color: rgba(239, 68, 68, 0.05) !important;
+}
+.error-text {
+  color: var(--error-red, #ef4444);
+  font-size: 0.75rem;
+  font-weight: bold;
+  margin-top: 0.2rem;
+}
+
 .form-group select:disabled {
   opacity: 0.7;
   cursor: not-allowed;
