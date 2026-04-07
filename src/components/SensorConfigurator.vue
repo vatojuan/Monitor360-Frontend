@@ -11,7 +11,8 @@ const props = defineProps({
   hasParentMaestro: { type: Boolean, default: false },
   isLoadingInterfaces: { type: Boolean, default: false },
   hideName: { type: Boolean, default: false }, // Útil para acciones masivas
-  isCompact: { type: Boolean, default: false } // Útil para la Receta de ScanView
+  isCompact: { type: Boolean, default: false }, // Útil para la Receta de ScanView
+  isTemplateMode: { type: Boolean, default: false } // <-- NUEVO: Desactiva detecciones en recetas
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -228,10 +229,13 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
       <div class="form-group" :class="{'span-3': hideName}">
         <label style="display: flex; justify-content: space-between; align-items: center;">
             Interfaz
-            <span v-if="isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
-            <span v-else-if="!deviceInterfaces.length" style="font-size: 0.8rem; color: var(--error-red);">⚠️ Falló detección</span>
+            <span v-if="!isTemplateMode && isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
+            <span v-else-if="!isTemplateMode && !deviceInterfaces.length" style="font-size: 0.8rem; color: var(--error-red);">⚠️ Falló detección</span>
         </label>
-        <template v-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
+        <template v-if="isTemplateMode">
+            <input type="text" v-model="s.config.interface_name" required placeholder="Ej: ether1" />
+        </template>
+        <template v-else-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
             <select v-model="s.config.interface_name" required :disabled="isLoadingInterfaces">
                 <option value="" disabled>Seleccione una interfaz</option>
                 <option v-if="s.config.interface_name && !deviceInterfaces.some(i => i.name === s.config.interface_name)" :value="s.config.interface_name">
@@ -406,10 +410,13 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
       <div class="form-group" :class="{'span-3': hideName}">
         <label style="display: flex; justify-content: space-between; align-items: center;">
             Interfaz Inalámbrica
-            <span v-if="isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
-            <span v-else-if="!deviceInterfaces.length" style="font-size: 0.8rem; color: var(--error-red);">⚠️ Falló detección</span>
+            <span v-if="!isTemplateMode && isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
+            <span v-else-if="!isTemplateMode && !deviceInterfaces.length" style="font-size: 0.8rem; color: var(--error-red);">⚠️ Falló detección</span>
         </label>
-        <template v-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
+        <template v-if="isTemplateMode">
+            <input type="text" v-model="s.config.interface_name" required placeholder="Ej: wlan1" />
+        </template>
+        <template v-else-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
             <select v-model="s.config.interface_name" required :disabled="isLoadingInterfaces">
                 <option value="" disabled>Seleccione una interfaz</option>
                 <option v-if="s.config.interface_name && !deviceInterfaces.some(i => i.name === s.config.interface_name)" :value="s.config.interface_name">

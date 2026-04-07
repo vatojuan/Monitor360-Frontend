@@ -65,7 +65,7 @@ const scanConfig = ref({
   source_device_id: '', // <-- AHORA ES LA SONDA
   network_cidr: '192.168.88.0/24',
   interface: '',
-  scan_ports: '8728, 80, 22', 
+  scan_ports: '8728, 22', // FASE 3: Puerto 80 removido por defecto
   scan_mode: 'manual', 
   credential_profile_id: null,
   is_active: false,
@@ -386,11 +386,9 @@ function getSensorIcon(type) {
 function buildSensorConfigPayload(sensorData) { 
   const finalConfig = { ...sensorData.config }
 
-  // --- FASE 3: SEGURO DE VIDA EN LA PLANTILLA ---
-  // Si por alguna razón de UI se asignó un intervalo menor a 10s, forzarlo antes de enviarlo.
-  if (finalConfig.interval_sec !== undefined && Number(finalConfig.interval_sec) < 10) {
-      finalConfig.interval_sec = 10;
-  }
+  // --- FASE 3: SEGURO DE VIDA EXTRA DURO EN LA PLANTILLA ---
+  // Piso estricto forzado con Math.max antes del envío, sin importar lo que diga la UI.
+  finalConfig.interval_sec = Math.max(10, Number(finalConfig.interval_sec) || 60);
 
   const alerts = []
   const onlyNums = (v, f) => (typeof v === 'number' && !isNaN(v) ? v : f)
@@ -479,8 +477,6 @@ function restoreSensorConfig(sensors) {
       s.attach_to = backendSensor.attach_to || 'device'
       s.config = { ...s.config, ...backendSensor.config }
 
-      // --- FASE 3: SEGURO DE VIDA EN LA LECTURA ---
-      // Si por alguna razón la BD tiene guardado un intervalo inválido, forzamos a 10 para la UI
       if (s.config.interval_sec !== undefined && Number(s.config.interval_sec) < 10) {
           s.config.interval_sec = 10;
       }
@@ -517,7 +513,6 @@ async function runScan() {
   
   isScanning.value = true 
   try {
-    // RESOLVER EL GRUPO ELEGIDO ANTES DE ENVIAR
     let finalTargetGroup = scanGroupOption.value === '__NEW__' ? scanCustomGroup.value.trim() : scanGroupOption.value;
     if (!finalTargetGroup) finalTargetGroup = 'General';
     scanConfig.value.target_group = finalTargetGroup;
@@ -531,21 +526,18 @@ async function runScan() {
        await api.post('/discovery/config', payload); 
        showNotification(scanConfig.value.id ? '✅ Tarea actualizada' : '✅ Nueva tarea creada', 'success'); 
        resetConfigForm();
-       isScanning.value = false; // Como es solo guardar configuración, no queda escaneando.
+       isScanning.value = false; 
     } else {
         const { data } = await api.post(`/discovery/scan/${scanConfig.value.source_device_id}`, payload); 
         if (data.status === 'started') {
           showNotification('🚀 Escaneo iniciado. Buscando equipos...', 'info');
           
-          // --- AQUÍ ESTÁ LA MAGIA DEL POLLING DINÁMICO ---
-          // Arrancamos el motor "chupa-datos" que consultará cada 3 segundos
-          stopPolling(); // Por si quedó uno pegado
+          stopPolling(); 
           scanPollingInterval = setInterval(() => {
               console.log("Polling: Consultando nuevos equipos...");
               fetchPendingDevices();
           }, 3000);
           
-          // Fallback de seguridad extrema (ej. 3 minutos) por si el worker muere silenciosamente.
           setTimeout(() => {
               if (isScanning.value) {
                   isScanning.value = false;
@@ -559,20 +551,25 @@ async function runScan() {
         }
     }
     await fetchScanProfiles()
-    await fetchGroups() // Refrescar lista de grupos por si se creó uno nuevo
+    await fetchGroups() 
   } catch (e) { 
-    showNotification(e.response?.data?.detail || 'Error', 'error'); 
+    // FASE 4: Extractor Inteligente de Errores Pydantic 422
+    let errorMsg = e.response?.data?.detail || 'Error en el escaneo';
+    if (Array.isArray(errorMsg)) {
+        errorMsg = errorMsg.map(err => err.msg).join(', ') || 'Error de validación en la receta';
+    }
+    showNotification(errorMsg, 'error'); 
     isScanning.value = false;
     stopPolling();
   }
 }
 
 function resetConfigForm() {
-    scanConfig.value = { id: null, source_device_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 80, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false }
+    // FASE 3: Eliminar puerto 80 del reinicio de form
+    scanConfig.value = { id: null, source_device_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false }
     probeSearchText.value = '';
     sensorsTemplateList.value = []
     
-    // Resetear las variables nuevas del select de grupo
     scanGroupOption.value = 'General';
     scanCustomGroup.value = '';
 }
@@ -594,9 +591,8 @@ function selectAll() {
 
 function openAdoptModal() {
   if (selectedPending.value.length === 0) return;
-  adoptSensorsList.value = []; // Resetear receta al abrir
+  adoptSensorsList.value = [];
   
-  // Resetear el select de grupo del modal
   adoptGroupOption.value = 'General';
   adoptCustomGroup.value = '';
   
@@ -607,7 +603,6 @@ function cancelAdoption() {
   showAdoptModal.value = false;
 }
 
-// LÓGICA CONFIRMADA DESDE EL MODAL
 async function confirmAdoption() {
   showAdoptModal.value = false;
   isAdopting.value = true;
@@ -615,11 +610,9 @@ async function confirmAdoption() {
   try {
     const devicesToAdopt = pendingDevices.value.filter((d) => selectedPending.value.includes(d.mac_address));
     
-    // RESOLVER EL GRUPO ELEGIDO ANTES DE ENVIAR
     let finalTargetGroup = adoptGroupOption.value === '__NEW__' ? adoptCustomGroup.value.trim() : adoptGroupOption.value;
     if (!finalTargetGroup) finalTargetGroup = 'General';
 
-    // Procesar la receta de sensores del modal
     const finalSensorsPayload = adoptSensorsList.value.map(s => buildSensorConfigPayload(s));
 
     const payload = { 
@@ -652,10 +645,15 @@ async function confirmAdoption() {
       await fetchPendingDevices();
     }
     
-    await fetchGroups() // Refrescar lista de grupos global por si se creó uno nuevo
+    await fetchGroups()
 
   } catch (e) { 
-    showNotification('Error al enviar orden de adopción', 'error') 
+    // FASE 4: Extractor Inteligente de Errores Pydantic 422 para adopción
+    let errorMsg = e.response?.data?.detail || 'Error al enviar orden de adopción';
+    if (Array.isArray(errorMsg)) {
+        errorMsg = errorMsg.map(err => err.msg).join(', ') || 'Error de validación en los sensores';
+    }
+    showNotification(errorMsg, 'error');
   } finally {
     isAdopting.value = false
   }
@@ -676,7 +674,6 @@ async function deletePending(mac) {
   try { await api.delete(`/discovery/pending/${mac}`); await fetchPendingDevices(); await fetchIgnoredDevices(); showNotification('Movido a Ignorados', 'success') } catch (e) { showNotification('Error', 'error') }
 }
 
-// --- ACTIONS IGNORED ---
 function toggleIgnoredSelection(mac) { selectedIgnored.value.includes(mac) ? selectedIgnored.value = selectedIgnored.value.filter(m => m !== mac) : selectedIgnored.value.push(mac) }
 
 function selectAllIgnored() {
@@ -708,13 +705,11 @@ async function hardDeleteSelected() {
 async function restoreDevice(mac) { if(!confirm('¿Restaurar?')) return; try { await api.post(`/discovery/restore/${mac}`); await fetchIgnoredDevices(); await fetchPendingDevices(); showNotification('Restaurado', 'success') } catch(e) {} }
 async function hardDeleteDevice(mac) { if(!confirm('¿Eliminar DEFINITIVAMENTE?')) return; try { await api.delete(`/discovery/ignored/${mac}`); await fetchIgnoredDevices(); showNotification('Eliminado', 'info') } catch(e) {} }
 
-// --- UTIL ---
 async function deleteScanProfile(id) { if (!confirm('¿Eliminar tarea?')) return; try { await api.delete(`/discovery/profiles/${id}`); await fetchScanProfiles(); showNotification('Eliminada', 'success') } catch (e) {} }
 
 function editScanProfile(profile) { 
     scanConfig.value = { ...scanConfig.value, id: profile.id, source_device_id: profile.source_device_id || profile.maestro_id, network_cidr: profile.network_cidr, interface: profile.interface, scan_ports: profile.scan_ports, scan_mode: profile.scan_mode, credential_profile_id: profile.credential_profile_id, is_active: profile.is_active, scan_interval_minutes: profile.scan_interval_minutes, target_group: profile.target_group || 'General', adopt_only_managed: profile.adopt_only_managed || false }
     
-    // Inyectar el grupo para que el select lo reconozca
     if (profile.target_group && profile.target_group !== 'General' && !groups.value.includes(profile.target_group)) {
         groups.value.push(profile.target_group); 
     }
@@ -914,7 +909,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
           </div>
           <div class="form-group">
             <label>Puertos</label>
-            <input type="text" v-model="scanConfig.scan_ports" placeholder="8728, 80, 22" />
+            <input type="text" v-model="scanConfig.scan_ports" placeholder="8728, 22" />
           </div>
           <div class="form-group">
             <label>Credenciales Default</label>
@@ -998,6 +993,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     :is-loading-interfaces="isLoadingInterfaces"
                                     hide-name
                                     is-compact
+                                    :is-template-mode="true" 
                                 />
                             </div>
                         </div>
@@ -1179,6 +1175,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     :is-loading-interfaces="false"
                                     hide-name
                                     is-compact
+                                    :is-template-mode="true"
                                 />
                             </div>
                         </div>
