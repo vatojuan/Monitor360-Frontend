@@ -2,9 +2,12 @@
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { supabase } from '@/lib/supabase'
-import TopbarPro from '@/components/TopbarPro.vue'
+
+// IMPORTANTE: Cambiamos TopbarPro por nuestro nuevo Layout
+import AppLayout from '@/components/AppLayout.vue'
+
 import { connectWebSocketWhenAuthenticated, addWsListener, getCurrentWebSocket } from '@/lib/ws'
-import api from '@/lib/api' // <-- AÑADIDO: Importamos la API para consultar el perfil
+import api from '@/lib/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -12,9 +15,9 @@ const router = useRouter()
 // ===== Auth/session =====
 const session = ref(null)
 const userEmail = ref('')
-const userAvatar = ref('') // <-- AÑADIDO: Estado para el avatar del usuario
+const userAvatar = ref('')
 
-// Ocultar chrome en rutas que lo pidan
+// Ocultar chrome en rutas que lo pidan (Ej: Login)
 const hideChrome = computed(() => route.meta?.hideChrome === true)
 
 // ===== Estado de tiempo real / WS =====
@@ -23,7 +26,7 @@ const live = reactive({
   lastMsgIso: null,
 })
 
-// Uptime (para TopbarPro)
+// Uptime (para TopbarPro a través de AppLayout)
 const uptime = ref('00:00:00')
 let uptimeTimer = null
 const fmt = (ms) => {
@@ -52,7 +55,6 @@ let wsStateTimer = null
 let offWsListener = null
 let offAuthSub = null
 
-// --- AÑADIDO: Función para traer datos rápidos del perfil (Avatar) ---
 async function fetchUserProfile() {
   try {
     const { data } = await api.get('/account/me')
@@ -71,7 +73,6 @@ async function getSession() {
   session.value = data.session
   userEmail.value = data.session?.user?.email || ''
   
-  // Si hay sesión, cargamos el perfil para obtener el avatar
   if (session.value) {
     await fetchUserProfile()
   }
@@ -85,7 +86,7 @@ async function onLogout() {
   }
   session.value = null
   userEmail.value = ''
-  userAvatar.value = '' // Limpiamos el avatar
+  userAvatar.value = ''
   router.push('/login')
 }
 
@@ -115,13 +116,9 @@ function attachWsListener() {
     const ts = (typeof msg.timestamp === 'string' && msg.timestamp) || new Date().toISOString()
     live.lastMsgIso = ts
     
-    // --- PUENTE UNIVERSAL WEBSOCKET -> VUE (NUEVO) ---
-    // Si el mensaje del backend trae un "type" (ej: "discovery_device_found"), 
-    // lo convertimos mágicamente en un evento global de la ventana (window).
     if (msg.type) {
       window.dispatchEvent(new CustomEvent(msg.type, { detail: msg }))
     }
-    // -------------------------------------------------
   })
 }
 function detachWsListener() {
@@ -150,12 +147,10 @@ async function ensureRealtime() {
 onMounted(async () => {
   await getSession()
 
-  // Suscripción a cambios de sesión
   const { data: sub } = supabase.auth.onAuthStateChange(async (_event, s) => {
     session.value = s
     userEmail.value = s?.user?.email || ''
     
-    // Si la sesión cambia a activa, cargamos el perfil
     if (s) {
       fetchUserProfile()
     } else {
@@ -193,29 +188,47 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div id="app-layout">
-    <TopbarPro
+  <div id="app-root">
+    <AppLayout
       v-if="!hideChrome"
       :realtime="live.connected"
       :uptime="uptime"
       :userEmail="userEmail"
       :userAvatar="userAvatar" 
       @logout="onLogout"
-    />
-    <main class="main-content">
-      <RouterView />
-    </main>
+    >
+      <main class="main-content">
+        <RouterView />
+      </main>
 
-    <footer class="main-footer">
-      <div class="footer-content">
-        <p class="copyright">&copy; 2026 MonitorWISP. Todos los derechos reservados.</p>
-        <div class="footer-links">
-          <router-link to="/terms">Términos y Condiciones</router-link>
-          <router-link to="/privacy">Política de Privacidad</router-link>
-          <a href="mailto:support@monitorwisp.com">Soporte Técnico</a>
+      <footer class="main-footer">
+        <div class="footer-content">
+          <p class="copyright">&copy; 2026 MonitorWISP. Todos los derechos reservados.</p>
+          <div class="footer-links">
+            <router-link to="/terms">Términos y Condiciones</router-link>
+            <router-link to="/privacy">Política de Privacidad</router-link>
+            <a href="mailto:support@monitorwisp.com">Soporte Técnico</a>
+          </div>
         </div>
-      </div>
-    </footer>
+      </footer>
+    </AppLayout>
+
+    <div v-else class="bare-layout">
+      <main class="main-content">
+        <RouterView />
+      </main>
+
+      <footer class="main-footer">
+        <div class="footer-content">
+          <p class="copyright">&copy; 2026 MonitorWISP. Todos los derechos reservados.</p>
+          <div class="footer-links">
+            <router-link to="/terms">Términos y Condiciones</router-link>
+            <router-link to="/privacy">Política de Privacidad</router-link>
+            <a href="mailto:support@monitorwisp.com">Soporte Técnico</a>
+          </div>
+        </div>
+      </footer>
+    </div>
   </div>
 </template>
 
@@ -252,10 +265,17 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-#app-layout {
+#app-root {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+}
+
+.bare-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  width: 100%;
 }
 
 .main-content {
@@ -271,7 +291,7 @@ body {
   padding: 1.5rem 2rem;
   color: var(--gray);
   font-size: 0.85rem;
-  margin-top: auto; /* Empuja el footer hacia abajo */
+  margin-top: auto; 
 }
 
 .footer-content {

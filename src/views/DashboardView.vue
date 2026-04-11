@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/lib/api'
 import { connectWebSocketWhenAuthenticated, getCurrentWebSocket } from '@/lib/ws'
@@ -8,6 +8,9 @@ import draggable from 'vuedraggable'
 import SensorConfigurator from '@/components/SensorConfigurator.vue'
 
 const router = useRouter()
+
+// --- Conexión al AppLayout (Control Móvil) ---
+const appLayout = inject('appLayout', { isSidebarOpen: ref(false), isMobile: ref(false) })
 
 // --- ESTADO PRINCIPAL ---
 const allMonitors = ref([])
@@ -1449,7 +1452,11 @@ function closeSensorDetails() {
 
 <template>
   <div class="layout-container">
-    <aside class="sidebar" :class="{ 'sidebar-collapsed': isSidebarCollapsed }">
+    <aside class="sidebar" :class="{ 
+      'sidebar-collapsed': isSidebarCollapsed,
+      'mobile-hidden': appLayout.isMobile.value && !appLayout.isSidebarOpen.value,
+      'mobile-visible': appLayout.isMobile.value && appLayout.isSidebarOpen.value
+    }">
       <div class="sidebar-header">
         <h3 v-if="!isSidebarCollapsed">GRUPOS</h3>
         <button
@@ -2911,5 +2918,25 @@ function closeSensorDetails() {
 }
 .notification.error {
   background: var(--secondary-color);
+}
+/* CONTROL RESPONSIVO DEL SIDEBAR INYECTADO DESDE APPLAYOUT */
+@media (max-width: 820px) {
+  .sidebar {
+    position: absolute; /* Flota sobre el contenido */
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    transition: transform 0.3s ease;
+  }
+  .sidebar.mobile-hidden {
+    transform: translateX(-100%); /* Oculto a la izquierda */
+  }
+  .sidebar.mobile-visible {
+    transform: translateX(0); /* Visible */
+  }
+  .btn-toggle-sidebar {
+    display: none; /* Ocultamos el botón interno porque usamos el del Topbar */
+  }
 }
 </style>
