@@ -3063,5 +3063,31 @@ input:checked + .slider:before {
     align-items: stretch;
     gap: 0.5rem;
   }
+  /* Tabs: envuelven si no caben */
+  .tabs {
+    flex-wrap: wrap;
+  }
+  /* Botones de rol: envuelven */
+  .toggle-group {
+    flex-wrap: wrap;
+  }
+  /* Barra de acciones masivas: envuelve */
+  .bulk-actions-bar,
+  .manage-header {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  /* Botones más compactos en móvil */
+  .tabs > button,
+  .btn-bulk,
+  .btn-primary,
+  .btn-secondary,
+  .btn-warning,
+  .btn-danger,
+  .btn-info {
+    font-size: 0.82rem;
+    padding: 0.4rem 0.6rem;
+    white-space: nowrap;
+  }
 }
 </style>

@@ -96,7 +96,8 @@ provide('appLayout', {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
   width: 100%;
 }
@@ -122,38 +123,125 @@ provide('appLayout', {
 </style>
 
 <style>
-/* REGLAS CSS MÁGICAS GLOBALES 
-   Al inyectar esto desde el Layout, reparamos automáticamente 
-   el desorden visual de todas las vistas en celular sin tener que tocarlas una por una.
-*/
+/* ============================================================
+   REGLAS GLOBALES DE RESPONSIVIDAD MÓVIL
+   Se inyectan desde AppLayout y aplican a TODAS las vistas.
+   Breakpoint principal: 820px
+   ============================================================ */
 @media (max-width: 820px) {
-  /* Forzamos que las grillas de todas las páginas pasen a 1 sola columna */
-  .dashboard-grid, 
-  .general-config-grid, 
-  .tools-grid {
+
+  /* --- GRIDS: todos colapsan a 1 columna --- */
+  .dashboard-grid,
+  .general-config-grid,
+  .tools-grid,
+  .credentials-layout,
+  .profiles-grid,
+  .content-grid,
+  .create-form-grid,
+  .grid-2,
+  .config-grid,
+  .account-grid {
     grid-template-columns: 1fr !important;
   }
 
-  /* Reducimos los márgenes enormes en pantallas chicas */
+  /* Los ítems del grid no desbordan su celda */
+  .monitor-card-wrapper,
+  .monitor-card {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* --- SCROLL AREAS: sin desborde horizontal --- */
   .scroll-area {
     padding: 1rem !important;
+    overflow-x: hidden !important;
   }
 
+  /* --- CONTENEDORES DE PÁGINA sin ancho fijo --- */
+  .page-wrap,
+  .detail-view,
+  .account-container {
+    padding: 0.75rem !important;
+    box-sizing: border-box;
+  }
+
+  /* --- HEADERS DE SECCIÓN: apilados en columna --- */
   .content-header {
-    padding: 0 1rem !important;
+    padding: 0.75rem 1rem !important;
     height: auto !important;
-    min-height: 60px;
+    min-height: 50px;
     flex-direction: column;
     align-items: flex-start !important;
-    justify-content: center;
-    gap: 10px;
-    padding-top: 10px !important;
-    padding-bottom: 10px !important;
+    gap: 8px;
   }
 
+  /* --- BOTONES: envuelven si no caben en una fila --- */
   .header-actions {
     width: 100%;
-    justify-content: space-between;
+    flex-wrap: wrap !important;
+    gap: 0.4rem !important;
+  }
+
+  /* --- TABS: envuelven si no caben --- */
+  .tabs {
+    flex-wrap: wrap !important;
+    gap: 0.4rem !important;
+  }
+
+  /* --- FILTROS Y ACCIONES EN FILA: envuelven --- */
+  .filter-bar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0.5rem !important;
+  }
+
+  .filter-controls,
+  .toggle-group,
+  .bulk-actions,
+  .bulk-actions-bar,
+  .manage-header {
+    flex-wrap: wrap !important;
+    gap: 0.4rem !important;
+  }
+
+  /* Los botones dentro de grupos tienen tamaño mínimo usable */
+  .toggle-group button,
+  .bulk-actions button,
+  .header-actions button,
+  .header-actions a {
+    white-space: nowrap;
+    font-size: 0.82rem;
+    padding: 0.4rem 0.7rem !important;
+  }
+
+  /* --- TABLAS: scroll horizontal --- */
+  .table-responsive,
+  .history-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* --- MODALES: ancho completo --- */
+  .modal-content,
+  .modal-content.large-modal,
+  .large-modal {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    padding: 1rem !important;
+    margin: 0 auto;
+    box-sizing: border-box;
+  }
+
+  /* --- FORMULARIOS: sin ancho fijo --- */
+  .form-layout {
+    max-width: 100% !important;
+  }
+
+  /* Inputs y selects no desbordan */
+  input, select, textarea {
+    max-width: 100%;
+    box-sizing: border-box;
   }
 }
 </style>

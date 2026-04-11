@@ -1477,7 +1477,7 @@ function closeSensorDetails() {
           v-for="gName in Object.keys(groupedMonitors).sort()"
           :key="gName"
           :class="{ active: activeGroup === gName }"
-          @click="activeGroup = gName"
+          @click="activeGroup = gName; appLayout.closeSidebar()"
           :title="gName"
           style="position: relative;"
         >
@@ -2012,7 +2012,7 @@ function closeSensorDetails() {
    ========================================= */
 .layout-container {
   display: flex;
-  height: 100vh;
+  height: 100%;
   background: var(--bg-color);
   color: #eee;
   overflow: hidden;
@@ -2945,6 +2945,32 @@ function closeSensorDetails() {
   }
   .modal-content.small {
     max-width: 95vw;
+  }
+  /* El contenedor del dashboard ocupa el 100% de su padre en móvil */
+  .layout-container {
+    height: 100%;
+  }
+  /* Los botones del header envuelven en múltiples filas */
+  .header-actions {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    width: 100%;
+  }
+  .view-controls {
+    flex-shrink: 0;
+  }
+  /* El header del contenido adapta su altura al contenido */
+  .content-header {
+    height: auto;
+    min-height: 50px;
+    padding: 0.75rem 1rem;
+  }
+  /* Cards: no desbordan su celda de grid */
+  .monitor-card-wrapper,
+  .monitor-card {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 }
 </style>
