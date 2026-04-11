@@ -217,7 +217,7 @@ function formatHistoryDetails(details) {
 </script>
 
 <template>
-  <div>
+  <div class="channels-view">
     <div v-if="notification.show" :class="['notification', notification.type]">
       {{ notification.message }}
     </div>
@@ -738,6 +738,27 @@ function formatHistoryDetails(details) {
 }
 
 @media (max-width: 820px) {
+  /* Contenedor raíz: padding lateral */
+  .channels-view {
+    padding: 0.75rem;
+    box-sizing: border-box;
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  /* Tabs: texto más compacto */
+  .tabs {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+  }
+  .tabs button {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    flex: 1 1 auto;
+  }
+
+  /* Grid: columna única */
   .grid-layout {
     grid-template-columns: 1fr;
     gap: 1rem;
@@ -745,18 +766,44 @@ function formatHistoryDetails(details) {
   .control-section {
     padding: 1rem;
   }
+
+  /* Channel card header: envuelve si no caben */
+  .channel-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+  .item-info {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .item-actions {
+    flex-shrink: 1;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    width: 100%;
+  }
+
+  /* Selector de tipo canal */
+  .channel-type-selector {
+    flex-wrap: wrap;
+  }
+  .channel-type-selector button {
+    flex: 1 1 auto;
+  }
+
+  /* Panel de accesos */
   .access-panel {
     grid-template-columns: 1fr;
   }
+
+  /* Historial: scroll horizontal */
   .history-table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
   .history-table {
     min-width: 500px;
-  }
-  .tabs {
-    flex-wrap: wrap;
   }
 }
 </style>
