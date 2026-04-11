@@ -738,6 +738,13 @@ function formatHistoryDetails(details) {
 }
 
 @media (max-width: 820px) {
+  .grid-layout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .control-section {
+    padding: 1rem;
+  }
   .access-panel {
     grid-template-columns: 1fr;
   }
@@ -747,6 +754,9 @@ function formatHistoryDetails(details) {
   }
   .history-table {
     min-width: 500px;
+  }
+  .tabs {
+    flex-wrap: wrap;
   }
 }
 </style>

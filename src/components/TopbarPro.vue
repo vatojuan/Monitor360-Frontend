@@ -192,40 +192,6 @@
     </div>
   </header>
 
-  <div v-if="fabOpen" class="m360-overlay" @click="fabOpen = false"></div>
-
-  <div class="m360-fab-wrapper">
-    <div class="m360-fab-main" @click.stop="fabOpen = !fabOpen" aria-label="Acciones rápidas">
-      <svg
-        viewBox="0 0 24 24"
-        width="22"
-        height="22"
-        fill="currentColor"
-        :class="{ open: fabOpen }"
-      >
-        <path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
-      </svg>
-    </div>
-
-    <transition name="fade">
-      <div v-if="fabOpen" class="m360-fab-menu" @click.stop>
-        <router-link to="/monitor-builder" class="m360-fab-item" @click="closeFab"
-          >➕ Añadir</router-link
-        >
-        <router-link to="/scan" class="m360-fab-item" @click="closeFab">📡 Escáner</router-link>
-        <router-link to="/reports" class="m360-fab-item" @click="closeFab"
-          >🤖 Reportes IA</router-link
-        >
-        <router-link to="/devices" class="m360-fab-item" @click="closeFab"
-          >⚙️ Dispositivos</router-link
-        >
-        <button class="m360-fab-item danger-solid" type="button" @click="onFabLogout">
-          ⎋ Cerrar sesión
-        </button>
-      </div>
-    </transition>
-  </div>
-
   <transition name="fade">
     <div v-if="showDetailsModal" class="m360-modal-overlay" @click.self="showDetailsModal = false">
       <div class="m360-modal">
@@ -432,13 +398,11 @@ const formatTime = (ts) => {
 }
 
 /* Cerrar al cambiar de ruta */
-const fabOpen = ref(false)
 watch(
   () => route.fullPath,
   () => {
     menu.value = false
     showNotif.value = false
-    fabOpen.value = false
   },
 )
 
@@ -447,7 +411,6 @@ const onKeydown = (e) => {
   if (e.key === 'Escape') {
     if (menu.value) menu.value = false
     if (showNotif.value) showNotif.value = false
-    if (fabOpen.value) fabOpen.value = false
     if (showDetailsModal.value) showDetailsModal.value = false
   }
 }
@@ -495,13 +458,7 @@ const onLogout = () => {
   menu.value = false
   emit('logout')
 }
-const onFabLogout = () => {
-  fabOpen.value = false
-  emit('logout')
-}
-const closeFab = () => {
-  fabOpen.value = false
-}
+
 </script>
 
 <style scoped>
@@ -860,64 +817,6 @@ const closeFab = () => {
   object-fit: cover;
 }
 
-/* SPEED DIAL */
-.m360-fab-wrapper {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  z-index: 45;
-  display: none;
-}
-.m360-fab-main {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  background: #2b68ff;
-  color: white;
-  display: grid;
-  place-items: center;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
-  cursor: pointer;
-  user-select: none;
-  transition: transform 0.15s ease;
-}
-.m360-fab-main:hover {
-  transform: translateY(-1px);
-}
-.m360-fab-main svg.open {
-  transform: rotate(45deg);
-  transition: transform 0.15s ease;
-}
-
-.m360-fab-menu {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.m360-fab-item {
-  background: #1a2236;
-  color: #cfe0ff;
-  padding: 6px 10px;
-  border-radius: 8px;
-  font-size: 13px;
-  text-decoration: none;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
-}
-.m360-fab-item:hover {
-  background: #2b68ff;
-  color: white;
-}
-.m360-fab-item.danger-solid {
-  background: #e94560;
-  color: #fff;
-  border: none;
-}
-.m360-fab-item.danger-solid:hover {
-  filter: brightness(1.05);
-}
-
 /* --- ESTILOS DEL MODAL DE DETALLES --- */
 .m360-modal-overlay {
   position: fixed;
@@ -1008,9 +907,6 @@ const closeFab = () => {
   .m360-iconbtn {
     width: 26px;
     height: 26px;
-  }
-  .m360-fab-wrapper {
-    display: block;
   }
   .m360-modal {
     max-width: 95vw;
