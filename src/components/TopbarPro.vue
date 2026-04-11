@@ -185,10 +185,10 @@
         </div>
       </div>
 
-      <div class="m360-avatar" :title="userEmail || 'Cuenta'" aria-label="Cuenta">
+      <router-link to="/account" class="m360-avatar" :title="userEmail || 'Mi Cuenta'" aria-label="Mi Cuenta">
         <img v-if="userAvatar" :src="userAvatar" alt="Avatar" class="avatar-img" />
         <span v-else>{{ (userEmail || 'U').slice(0, 1).toUpperCase() }}</span>
-      </div>
+      </router-link>
     </div>
   </header>
 
@@ -810,6 +810,13 @@ const onLogout = () => {
   font-size: 12px;
   font-weight: 700;
   overflow: hidden;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.m360-avatar:hover {
+  border-color: rgba(130, 180, 255, 0.7);
+  box-shadow: 0 0 0 2px rgba(130, 180, 255, 0.2);
 }
 .avatar-img {
   width: 100%;
