@@ -1517,7 +1517,15 @@ function closeSensorDetails() {
       </div>
 
       <header class="content-header" v-if="activeGroup">
-        <h2>{{ activeGroup }}</h2>
+        <div class="header-title-row">
+          <button
+            v-if="appLayout.isMobile?.value"
+            class="btn-open-groups"
+            @click="appLayout.isSidebarOpen.value = true"
+            title="Ver grupos"
+          >☰ Grupos</button>
+          <h2>{{ activeGroup }}</h2>
+        </div>
         <div class="header-actions">
           
           <div class="view-controls" style="margin-right: 15px;">
@@ -1542,7 +1550,12 @@ function closeSensorDetails() {
         </div>
       </header>
       <div v-else-if="!isAccountMuted" class="empty-selection">
-        <p>Selecciona un grupo para ver sus monitores</p>
+        <p>{{ appLayout.isMobile?.value ? 'Abrí el menú de Grupos para comenzar' : 'Selecciona un grupo para ver sus monitores' }}</p>
+        <button
+          v-if="appLayout.isMobile?.value"
+          class="btn-primary btn-open-groups-main"
+          @click="appLayout.isSidebarOpen.value = true"
+        >☰ Abrir Grupos</button>
       </div>
 
       <div v-if="notification.show" :class="['notification', notification.type]">
@@ -2195,10 +2208,44 @@ function closeSensorDetails() {
 .empty-selection {
   flex-grow: 1;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
+  gap: 1rem;
   color: #666;
   font-size: 1.2rem;
+}
+.btn-open-groups-main {
+  font-size: 1rem;
+  padding: 0.75rem 1.5rem;
+}
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.header-title-row h2 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-open-groups {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #ccc;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-open-groups:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
 }
 
 /* --- FASE 5: BANNER DE SILENCIO GLOBAL --- */
@@ -2971,6 +3018,14 @@ function closeSensorDetails() {
     min-width: 0;
     max-width: 100%;
     box-sizing: border-box;
+  }
+  /* Sensores wireless: permitir que las métricas envuelvan */
+  .metric-item {
+    white-space: normal;
+    min-width: 0;
+  }
+  .sensor-tier-bottom {
+    gap: 6px;
   }
 }
 </style>

@@ -1524,9 +1524,9 @@ onUnmounted(() => {
 
     <section v-if="currentTab === 'manage'" class="control-section fade-in">
       <div class="manage-header">
-        <div style="display: flex; align-items: center; gap: 1rem;">
+        <div class="inventory-title-row">
           <h2><i class="icon">👑</i> Inventario</h2>
-          <button class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" @click="openBulkRenameModal">
+          <button class="btn-secondary btn-excel-import" @click="openBulkRenameModal">
             📂 Importar Excel (Renombrar)
           </button>
         </div>
@@ -2566,12 +2566,26 @@ label {
 .manage-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.inventory-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.btn-excel-import {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
 }
 .bulk-actions-wrapper {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 .btn-bulk {
   color: #fff;
@@ -3062,6 +3076,22 @@ input:checked + .slider:before {
     flex-direction: column;
     align-items: stretch;
     gap: 0.5rem;
+  }
+  /* Título Inventario + botón Excel: apilar en columna */
+  .inventory-title-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .btn-excel-import {
+    width: 100%;
+    text-align: left;
+  }
+  /* Acciones masivas: columna */
+  .manage-header {
+    flex-direction: column;
+  }
+  .bulk-actions-wrapper {
+    width: 100%;
   }
   /* Tabs: envuelven si no caben */
   .tabs {

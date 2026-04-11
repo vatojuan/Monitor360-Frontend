@@ -726,4 +726,17 @@ function getChannelName(id) {
 }
 .notification.success { background-color: var(--green); }
 .notification.error { background-color: var(--error-red); }
+
+@media (max-width: 820px) {
+  .grid-layout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .control-section {
+    padding: 1rem;
+  }
+  .tabs {
+    flex-wrap: wrap;
+  }
+}
 </style>

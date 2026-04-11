@@ -1515,5 +1515,31 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+  /* Toolbar: apilar en columna, alineado a la izquierda */
+  .toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .toolbar-right {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  /* El adopt-control no desborda */
+  .adopt-control {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .credential-select {
+    flex: 1;
+    min-width: 120px;
+  }
+  /* Filtro bar: columna */
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
 }
 </style>

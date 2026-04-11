@@ -1185,7 +1185,8 @@ h4 {
 }
 .sensor-type-selector {
   display: flex;
-  gap: 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem;
   margin-bottom: 1.5rem;
 }
 .sensor-type-selector button {
@@ -1196,6 +1197,7 @@ h4 {
   font-weight: bold;
   cursor: pointer;
   border-radius: 8px;
+  flex: 1 1 auto;
 }
 .notification {
   position: fixed;
@@ -1366,6 +1368,15 @@ h4 {
   }
   .modal-actions button {
     width: 100%;
+  }
+  /* Botones de tipo sensor: uno por línea en pantallas muy pequeñas */
+  .sensor-type-selector {
+    flex-direction: column;
+  }
+  .sensor-type-selector button {
+    width: 100%;
+    padding: 0.65rem 1rem;
+    text-align: left;
   }
 }
 </style>
