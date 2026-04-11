@@ -1215,4 +1215,27 @@ watch(timeRange, async (r) => {
   opacity: 0.7;
   cursor: not-allowed;
 }
+
+@media (max-width: 820px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .chart-wrapper {
+    height: 320px;
+  }
+  .large-modal {
+    width: 95vw;
+    max-width: 95vw;
+    padding: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .chart-wrapper {
+    height: 260px;
+  }
+}
 </style>

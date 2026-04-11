@@ -403,24 +403,26 @@ function formatHistoryDetails(details) {
 
       <section v-if="currentTab === 'history'" class="control-section full-width">
         <h2><i class="icon">📚</i> Historial de Alertas Enviadas</h2>
-        <table v-if="history.length > 0" class="history-table">
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Sensor Afectado</th>
-              <th>Detalles del Evento</th>
-              <th>Canal Notificado</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in history" :key="item.id">
-              <td class="nowrap">{{ formatDate(item.timestamp) }}</td>
-              <td>{{ item.sensor_name }}</td>
-              <td>{{ formatHistoryDetails(item.details) }}</td>
-              <td>{{ item.channel_name }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="history.length > 0" class="history-table-wrap">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Sensor Afectado</th>
+                <th>Detalles del Evento</th>
+                <th>Canal Notificado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in history" :key="item.id">
+                <td class="nowrap">{{ formatDate(item.timestamp) }}</td>
+                <td>{{ item.sensor_name }}</td>
+                <td>{{ formatHistoryDetails(item.details) }}</td>
+                <td>{{ item.channel_name }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div v-else class="empty-list">No se han registrado alertas.</div>
       </section>
     </div>
@@ -733,5 +735,18 @@ function formatHistoryDetails(details) {
 }
 .form-hint-box li {
   margin-bottom: 0.25rem;
+}
+
+@media (max-width: 820px) {
+  .access-panel {
+    grid-template-columns: 1fr;
+  }
+  .history-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .history-table {
+    min-width: 500px;
+  }
 }
 </style>

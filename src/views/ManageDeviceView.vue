@@ -2587,7 +2587,8 @@ label {
 }
 
 .table-responsive {
-  overflow-x: visible; /* Cambiado para no ocultar dropdowns */
+  overflow-x: auto; /* Permite scroll horizontal en móvil */
+  -webkit-overflow-scrolling: touch;
 }
 .device-table {
   width: 100%;
@@ -3026,5 +3027,41 @@ input:checked + .slider:before {
   gap: 1rem;
   justify-content: center;
   margin-top: 2rem;
+}
+
+@media (max-width: 820px) {
+  .form-layout {
+    max-width: 100%;
+  }
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .config-grid {
+    grid-template-columns: 1fr;
+  }
+  .ip-port-grid {
+    flex-direction: column;
+  }
+  .search-group {
+    min-width: auto;
+    max-width: 100%;
+  }
+  .large-modal {
+    width: 95vw;
+    max-width: 95vw;
+    padding: 1rem;
+  }
+  .modal-actions {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .modal-actions button {
+    width: 100%;
+  }
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
 }
 </style>

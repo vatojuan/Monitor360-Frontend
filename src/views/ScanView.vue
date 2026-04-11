@@ -1503,4 +1503,17 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .probe-details { display: flex; flex-direction: column; }
 .probe-details strong { color: white; font-size: 0.9rem; margin-bottom: 2px; }
 .probe-details span { color: #aaa; font-size: 0.75rem; font-family: monospace; }
+
+@media (max-width: 820px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+  .config-grid {
+    grid-template-columns: 1fr;
+  }
+  .table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
 </style>

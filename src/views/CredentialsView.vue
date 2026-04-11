@@ -1514,4 +1514,31 @@ button.toggle-password-btn:hover {
   font-size: 0.85rem;
 }
 .btn-remove-report:hover { color: var(--error-red); }
+
+@media (max-width: 820px) {
+  .credentials-layout {
+    grid-template-columns: 1fr;
+  }
+  .profiles-grid {
+    grid-template-columns: 1fr;
+  }
+  .modal-content.large-modal {
+    max-width: 95vw;
+    width: 95vw;
+    padding: 1rem;
+  }
+  .dual-list-container {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+  .dual-list-container .list-column {
+    height: 200px;
+  }
+  .dual-list-container .transfer-btns {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+  }
+}
 </style>

@@ -2938,5 +2938,13 @@ function closeSensorDetails() {
   .btn-toggle-sidebar {
     display: none; /* Ocultamos el botón interno porque usamos el del Topbar */
   }
+  .modal-content {
+    width: 95vw;
+    max-width: 95vw;
+    padding: 1.25rem;
+  }
+  .modal-content.small {
+    max-width: 95vw;
+  }
 }
 </style>

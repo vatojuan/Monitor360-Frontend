@@ -1012,5 +1012,15 @@ const closeFab = () => {
   .m360-fab-wrapper {
     display: block;
   }
+  .m360-modal {
+    max-width: 95vw;
+  }
+}
+
+@media (max-width: 400px) {
+  .notif-pop {
+    width: calc(100vw - 2rem);
+    max-width: 340px;
+  }
 }
 </style>

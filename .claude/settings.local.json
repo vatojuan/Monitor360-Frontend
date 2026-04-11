@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -rn \"scoped\\\\|<style\" /c/Users/juanc/Desktop/Monitor360-Frontend/src/components/*.vue)",
+      "Bash(grep -E \"\\([0-9]{3,}px|fixed|absolute\\)\")",
+      "Bash(grep -E \"\\([0-9]{3,}px|visible\\)\")"
+    ]
+  }
+}

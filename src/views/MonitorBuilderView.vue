@@ -1349,4 +1349,23 @@ h4 {
   background-color: var(--blue);
   color: white;
 }
+
+@media (max-width: 820px) {
+  .modal-content {
+    width: 95vw;
+    max-width: 95vw;
+    padding: 1.25rem;
+  }
+  .alert-config-item > .form-group {
+    grid-template-columns: 1fr;
+    grid-column: span 1;
+  }
+  .modal-actions {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .modal-actions button {
+    width: 100%;
+  }
+}
 </style>

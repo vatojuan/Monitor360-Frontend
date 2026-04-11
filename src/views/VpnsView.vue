@@ -1553,7 +1553,7 @@ textarea {
 }
 
 /* RESPONSIVE */
-@media (max-width: 768px) {
+@media (max-width: 820px) {
   .toolbar {
     flex-direction: column;
     align-items: stretch;
@@ -1579,10 +1579,25 @@ textarea {
   }
   .qr-container {
     flex-direction: column;
+    align-items: center;
     text-align: center;
+    gap: 1rem;
+  }
+  .qr-box {
+    min-width: auto;
+    width: 100%;
+    max-width: 260px;
+    min-height: auto;
   }
   .qr-instructions ol {
     text-align: left;
+  }
+  .create-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .desktop-name-edit input {
+    width: 100%;
+    max-width: 250px;
   }
 }
 </style>
