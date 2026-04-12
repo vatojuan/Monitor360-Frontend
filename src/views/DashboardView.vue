@@ -1588,7 +1588,7 @@ function closeSensorDetails() {
                   <div class="header-left">
                     <span class="drag-handle">::</span>
                     <div class="title-container">
-                      <h3>{{ monitor.client_name }}</h3>
+                      <h3 :title="`${monitor.client_name}${monitor.ip_address ? ' · ' + monitor.ip_address : ''}`">{{ monitor.client_name }}</h3>
                       <div class="badges-row">
                         <span v-if="!monitor.is_active" class="off-badge">OFF</span>
                         <span v-if="isItemPaused(monitor) || groupMuteMap[monitor.group_name || 'General']" class="pause-badge" title="Alertas Pausadas">⏸️</span>
