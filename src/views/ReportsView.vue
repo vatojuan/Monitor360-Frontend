@@ -162,6 +162,22 @@ async function handleDeleteSchedule(id) {
   }
 }
 
+const runningScheduleId = ref(null)
+
+async function handleRunNow(schedule) {
+  runningScheduleId.value = schedule.id
+  try {
+    await api.post(`/reports/schedules/${schedule.id}/run`)
+    showNotification(`Reporte "${schedule.name}" disparado. Aparecerá en el buzón en unos segundos.`, 'success')
+    setTimeout(() => fetchHistory(), 3000)
+  } catch (err) {
+    console.error('Error ejecutando reporte:', err)
+    showNotification(err.response?.data?.detail || 'Error al ejecutar el reporte.', 'error')
+  } finally {
+    runningScheduleId.value = null
+  }
+}
+
 async function toggleScheduleActive(schedule) {
   const newVal = !schedule.is_active
   try {
@@ -286,9 +302,17 @@ function getChannelName(id) {
               </div>
               
               <div class="item-actions">
-                <button 
-                  @click="toggleScheduleActive(schedule)" 
-                  class="test-btn" 
+                <button
+                  @click="handleRunNow(schedule)"
+                  class="run-now-btn"
+                  :disabled="runningScheduleId === schedule.id"
+                  title="Ejecutar ahora"
+                >
+                  {{ runningScheduleId === schedule.id ? '...' : '▶ Ahora' }}
+                </button>
+                <button
+                  @click="toggleScheduleActive(schedule)"
+                  class="test-btn"
                   :class="{'active-mode': schedule.is_active}"
                   :title="schedule.is_active ? 'Pausar' : 'Activar'"
                 >
@@ -579,6 +603,24 @@ function getChannelName(id) {
   gap: 0.8rem;
   flex-shrink: 0;
   margin-left: 1rem;
+}
+.run-now-btn {
+  background-color: transparent;
+  border: 1px solid var(--blue);
+  color: var(--blue);
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: bold;
+  transition: background 0.2s;
+}
+.run-now-btn:hover:not(:disabled) {
+  background-color: rgba(66, 135, 245, 0.15);
+}
+.run-now-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .test-btn {
   background-color: transparent;

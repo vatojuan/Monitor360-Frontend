@@ -112,8 +112,16 @@
                       <span class="sys-msg">{{ sys.message }}</span>
                       
                       <button
+                        v-if="getAdoptedDevices(sys).length > 0"
+                        @click.stop="openDetails(getAdoptedDevices(sys), 'Dispositivos adoptados con éxito')"
+                        class="btn-text-small view-details-btn success"
+                      >
+                        Ver adoptados ({{ getAdoptedDevices(sys).length }})
+                      </button>
+
+                      <button
                         v-if="getFailedDevices(sys).length > 0"
-                        @click.stop="openDetails(sys)"
+                        @click.stop="openDetails(getFailedDevices(sys), 'Detalles de fallo')"
                         class="btn-text-small view-details-btn"
                       >
                         Ver detalles de fallo ({{ getFailedDevices(sys).length }})
@@ -196,7 +204,7 @@
     <div v-if="showDetailsModal" class="m360-modal-overlay" @click.self="showDetailsModal = false">
       <div class="m360-modal">
         <div class="m360-modal-header">
-          <h3>Detalles de Auditoría</h3>
+          <h3>{{ currentDetailsTitle }}</h3>
           <button class="m360-close-btn" @click="showDetailsModal = false">✕</button>
         </div>
         <div class="m360-modal-body">
@@ -294,6 +302,7 @@ const totalBadgeCount = computed(() => notifications.value.length + sysNotificat
 // --- Lógica del Modal de Detalles ---
 const showDetailsModal = ref(false)
 const currentDetailsList = ref([])
+const currentDetailsTitle = ref('Detalles')
 
 const getFailedDevices = (sys) => {
   if (!sys.meta_data) return []
@@ -307,10 +316,21 @@ const getFailedDevices = (sys) => {
   return sys.meta_data.failed_devices || []
 }
 
-const openDetails = (sys) => {
-  const fails = getFailedDevices(sys)
-  if (fails.length > 0) {
-    currentDetailsList.value = fails
+const getAdoptedDevices = (sys) => {
+  if (!sys.meta_data) return []
+  if (typeof sys.meta_data === 'string') {
+    try {
+      const parsed = JSON.parse(sys.meta_data)
+      return parsed.adopted_devices || []
+    } catch(e) { return [] }
+  }
+  return sys.meta_data.adopted_devices || []
+}
+
+const openDetails = (list, title = 'Detalles de Auditoría') => {
+  if (list.length > 0) {
+    currentDetailsList.value = list
+    currentDetailsTitle.value = title
     showDetailsModal.value = true
     showNotif.value = false // Cerramos la campanita para no ensuciar la pantalla
   }
