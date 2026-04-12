@@ -281,8 +281,8 @@ const handleScanFinished = async () => {
   if (isScanning.value) {
     isScanning.value = false;
     stopPolling(); // Apagamos el motor "chupa-datos"
-    showNotification('✅ Escaneo finalizado. Red peinada.', 'success');
     await fetchPendingDevices(); // Sincronización final por si algún paquete de red se perdió
+    // La notificación de resumen la emite el backend vía system_notification (evita duplicado)
   }
 };
 
