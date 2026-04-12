@@ -29,15 +29,31 @@ const commonTimezones = [
   'Europe/Madrid',
 ]
 
+const DAYS = [
+  { value: 0, label: 'Lu' },
+  { value: 1, label: 'Ma' },
+  { value: 2, label: 'Mi' },
+  { value: 3, label: 'Ju' },
+  { value: 4, label: 'Vi' },
+  { value: 5, label: 'Sa' },
+  { value: 6, label: 'Do' },
+]
+
 const newSchedule = ref({
   name: '',
   time_str: '08:00',
   timezone: 'America/Argentina/Buenos_Aires',
+  days_of_week: [],
   target_groups: [],
   channel_ids: [],
   tone: 'profesional',
   is_active: true
 })
+
+function formatDays(days) {
+  if (!days || days.length === 0) return 'Todos los días'
+  return days.map(d => DAYS[d]?.label ?? d).join(' · ')
+}
 
 // --- VALIDACIÓN DE HORARIO COMPUTADA ---
 const isTimeInvalid = computed(() => {
@@ -136,6 +152,7 @@ async function handleAddSchedule() {
       name: '',
       time_str: '08:00',
       timezone: newSchedule.value.timezone,
+      days_of_week: [],
       target_groups: [],
       channel_ids: [],
       tone: 'profesional',
@@ -265,6 +282,20 @@ function getChannelName(id) {
               </label>
             </div>
 
+            <label>Días de Envío</label>
+            <div class="days-selector">
+              <button
+                v-for="day in DAYS"
+                :key="day.value"
+                type="button"
+                :class="['day-btn', { selected: newSchedule.days_of_week.includes(day.value) }]"
+                @click="newSchedule.days_of_week.includes(day.value)
+                  ? newSchedule.days_of_week.splice(newSchedule.days_of_week.indexOf(day.value), 1)
+                  : newSchedule.days_of_week.push(day.value)"
+              >{{ day.label }}</button>
+            </div>
+            <p class="days-hint">Sin selección = todos los días</p>
+
             <label>Tono del Reporte</label>
             <select v-model="newSchedule.tone">
               <option value="profesional">Profesional (Equilibrado)</option>
@@ -297,6 +328,9 @@ function getChannelName(id) {
                   </span>
                   <span class="meta-tag" title="Canales">
                     📡 {{ schedule.action_payload?.channel_ids?.length || 0 }} canales
+                  </span>
+                  <span class="meta-tag" title="Días">
+                    📅 {{ formatDays(schedule.schedule_config?.days_of_week) }}
                   </span>
                 </div>
               </div>
@@ -604,6 +638,39 @@ function getChannelName(id) {
   flex-shrink: 0;
   margin-left: 1rem;
 }
+.days-selector {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.day-btn {
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  color: #888;
+  width: 40px;
+  height: 36px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: bold;
+  transition: all 0.15s;
+}
+.day-btn:hover {
+  border-color: var(--blue);
+  color: #ccc;
+}
+.day-btn.selected {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: white;
+}
+.days-hint {
+  color: #555;
+  font-size: 0.78rem;
+  margin: -0.5rem 0 0;
+  font-style: italic;
+}
+
 .run-now-btn {
   background-color: transparent;
   border: 1px solid var(--blue);
