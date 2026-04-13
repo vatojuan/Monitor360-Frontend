@@ -18,6 +18,10 @@ const groupedMonitors = ref({})
 const activeGroup = ref(null)
 const isSidebarCollapsed = ref(false)
 
+// --- BÚSQUEDA ---
+const searchQuery = ref('')
+const searchInputEl = ref(null)
+
 // --- FASE 3: ESTADO GLOBAL DE SILENCIO DE CUENTA ---
 const accountMuteUntil = ref(null)
 const isAccountMuted = computed(() => {
@@ -268,6 +272,19 @@ const hasParentMaestro = computed(() => !!currentMonitorContext.value?.maestro_i
 const channelsById = ref({})
 const channelsList = computed(() => Object.values(channelsById.value))
 const availableGroups = computed(() => [...dbGroups.value].sort())
+
+const isSearching = computed(() => searchQuery.value.trim().length > 0)
+
+const searchResults = computed(() => {
+  if (!isSearching.value) return []
+  const q = searchQuery.value.trim().toLowerCase()
+  return allMonitors.value.filter((m) => {
+    if (m.client_name?.toLowerCase().includes(q)) return true
+    if (m.ip_address?.toLowerCase().includes(q)) return true
+    if ((m.group_name || '').toLowerCase().includes(q)) return true
+    return (m.sensors || []).some((s) => s.name?.toLowerCase().includes(q))
+  })
+})
 
 const suggestedTargetDevicesForEdit = computed(() => {
   if (!currentMonitorContext.value) return []
@@ -604,6 +621,34 @@ function isDegradedIgnored(sensor) {
   return !!cfg.ignore_degraded;
 }
 
+function handleSearchShortcut(e) {
+  if (e.ctrlKey && e.key === 'f') {
+    e.preventDefault()
+    searchInputEl.value?.focus()
+    searchInputEl.value?.select()
+    return
+  }
+  if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+    const tag = document.activeElement?.tagName?.toLowerCase()
+    if (['input', 'textarea', 'select'].includes(tag)) return
+    const anyModalOpen = monitorToEdit.value || monitorToDelete.value ||
+      sensorDetailsToShow.value || showGroupModal.value ||
+      showRotateCredentialsModal.value || showCommentsModal.value
+    if (anyModalOpen) return
+    e.preventDefault()
+    searchInputEl.value?.focus()
+    return
+  }
+  if (e.key === 'Escape' && isSearching.value) {
+    const anyModalOpen = monitorToEdit.value || monitorToDelete.value ||
+      sensorDetailsToShow.value || showGroupModal.value ||
+      showRotateCredentialsModal.value || showCommentsModal.value
+    if (anyModalOpen) return
+    searchQuery.value = ''
+    searchInputEl.value?.blur()
+  }
+}
+
 // --- LOGICA "MASONRY" (CSS GRID DINÁMICO) ---
 let gridResizeObserver = null;
 
@@ -695,6 +740,10 @@ watch(() => allMonitors.value.length, () => {
 
 watch(activeGroup, () => {
   nextTick(setupGridResizeObserver);
+})
+
+watch(isSearching, () => {
+  nextTick(setupGridResizeObserver)
 })
 
 async function ensureChannelsLoaded() {
@@ -835,6 +884,7 @@ onMounted(async () => {
   document.addEventListener('click', closeKebab)
   document.addEventListener('click', closeGroupKebab) 
   document.addEventListener('click', handleFirstInteraction)
+  document.addEventListener('keydown', handleSearchShortcut)
 })
 
 onUnmounted(() => {
@@ -849,6 +899,7 @@ onUnmounted(() => {
   document.removeEventListener('click', closeKebab)
   document.removeEventListener('click', closeGroupKebab)
   document.removeEventListener('click', handleFirstInteraction)
+  document.removeEventListener('keydown', handleSearchShortcut)
 })
 
 async function toggleMonitorPause(monitor) {
@@ -1121,11 +1172,13 @@ async function requestReboot() {
   }
 }
 
+const mapAlert = (alerts, type) => alerts.find((a) => a.type === type) || {}
+
 async function showSensorDetails(s, m, e) {
   e?.stopPropagation()
   closeKebab()
   await ensureChannelsLoaded()
-  
+
   sensorDetailsToShow.value = s
   currentMonitorContext.value = m
   
@@ -1546,6 +1599,23 @@ function closeSensorDetails() {
             <button class="action-icon-btn" @click="collapseAll" title="Cerrar todas las tarjetas">🔼</button>
             <button class="action-icon-btn text-orange" @click="expandAlertsOnly" title="Abrir Inteligente (Solo con alertas)">⚠️</button>
           </div>
+          <div class="search-box-wrapper">
+            <input
+              ref="searchInputEl"
+              v-model="searchQuery"
+              type="search"
+              class="search-input"
+              placeholder="Buscar monitor... (Ctrl+F)"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button
+              v-if="isSearching"
+              class="search-clear-btn"
+              @click="searchQuery = ''; searchInputEl?.focus()"
+              title="Limpiar búsqueda"
+            >×</button>
+          </div>
           <router-link to="/monitor-builder" class="btn-primary">Añadir Dispositivo</router-link>
         </div>
       </header>
@@ -1563,7 +1633,192 @@ function closeSensorDetails() {
       </div>
 
       <div class="scroll-area" v-if="activeGroup && groupedMonitors[activeGroup]">
+
+        <!-- ===== MODO BÚSQUEDA ===== -->
+        <template v-if="isSearching">
+          <div class="search-status-bar">
+            <span v-if="searchResults.length > 0">
+              {{ searchResults.length }} resultado{{ searchResults.length !== 1 ? 's' : '' }}
+              para "{{ searchQuery.trim() }}"
+            </span>
+            <span v-else class="search-no-results">
+              Sin resultados para "{{ searchQuery.trim() }}"
+            </span>
+          </div>
+          <div class="dashboard-grid">
+            <div
+              v-for="monitor in searchResults"
+              :key="monitor.monitor_id"
+              class="monitor-card-wrapper"
+              :data-id="monitor.monitor_id"
+            >
+              <div
+                class="monitor-card monitor-card-inner"
+                :class="{
+                  'status-critical': liveMonitorAlerts[monitor.monitor_id] === 'critical',
+                  'status-warning': liveMonitorAlerts[monitor.monitor_id] === 'warning',
+                  'is-inactive': !monitor.is_active,
+                  'is-collapsed': collapsedCards.has(monitor.monitor_id),
+                  'is-acknowledged': acknowledgedAlerts.has(monitor.monitor_id) || acknowledgedAlerts.has(String(monitor.monitor_id))
+                }"
+              >
+                <div class="card-header" @dblclick="toggleCardCollapse(monitor.monitor_id)">
+                  <div class="header-left">
+                    <div class="title-container">
+                      <h3 :title="`${monitor.client_name}${monitor.ip_address ? ' · ' + monitor.ip_address : ''}`">{{ monitor.client_name }}</h3>
+                      <div class="badges-row">
+                        <span v-if="!monitor.is_active" class="off-badge">OFF</span>
+                        <span v-if="isItemPaused(monitor) || groupMuteMap[monitor.group_name || 'General']" class="pause-badge" title="Alertas Pausadas">⏸️</span>
+                        <span class="group-badge">{{ monitor.group_name || 'General' }}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card-actions-right">
+                    <span class="device-ip" v-if="!collapsedCards.has(monitor.monitor_id)">
+                      {{ monitor.ip_address }}
+                    </span>
+
+                    <template v-if="liveMonitorAlerts[monitor.monitor_id] === 'critical' || liveMonitorAlerts[monitor.monitor_id] === 'warning'">
+                      <button
+                        class="action-icon-btn ack-btn"
+                        :class="{'is-acked': acknowledgedAlerts.has(monitor.monitor_id) || acknowledgedAlerts.has(String(monitor.monitor_id))}"
+                        @click="toggleAcknowledge(monitor.monitor_id, $event)"
+                        :title="(acknowledgedAlerts.has(monitor.monitor_id) || acknowledgedAlerts.has(String(monitor.monitor_id))) ? 'Reactivar Alarma' : 'Reconocer / Silenciar Alarma (Acknowledge)'"
+                      >
+                        {{ (acknowledgedAlerts.has(monitor.monitor_id) || acknowledgedAlerts.has(String(monitor.monitor_id))) ? '🔕' : '🔔' }}
+                      </button>
+                    </template>
+
+                    <button class="action-icon-btn" @click="openMonitorSettings(monitor)" title="Configuración y Herramientas">⚙️</button>
+
+                    <button
+                      class="action-icon-btn"
+                      @click="toggleCardCollapse(monitor.monitor_id)"
+                      :title="collapsedCards.has(monitor.monitor_id) ? 'Expandir' : 'Colapsar'"
+                    >
+                      {{ collapsedCards.has(monitor.monitor_id) ? '🔽' : '🔼' }}
+                    </button>
+                    <button
+                      class="action-icon-btn"
+                      :class="{ 'active-orange': isItemPaused(monitor) }"
+                      @click="toggleMonitorPause(monitor)"
+                      title="Pausar Alertas"
+                    >
+                      {{ isItemPaused(monitor) ? '🔕' : '🔔' }}
+                    </button>
+                    <button
+                      class="action-icon-btn"
+                      :class="{ 'active-red': !monitor.is_active }"
+                      @click="toggleMonitorActive(monitor)"
+                      title="Encender/Apagar"
+                    >
+                      {{ monitor.is_active ? '🔌' : '⚫' }}
+                    </button>
+                    <button class="remove-btn" @click="requestDeleteMonitor(monitor, $event)">×</button>
+                  </div>
+                </div>
+
+                <div v-if="!collapsedCards.has(monitor.monitor_id)" class="card-body">
+                  <div class="sensors-container">
+                    <div v-if="!monitor.sensors || monitor.sensors.length === 0" class="no-sensors">Sin sensores.</div>
+                    <div
+                      v-else
+                      v-for="sensor in monitor.sensors"
+                      :key="sensor.id"
+                      class="sensor-row"
+                      :class="{ 'row-inactive': !sensor.is_active, 'row-paused': isItemPaused(sensor) }"
+                    >
+                      <div class="sensor-tier-top" @click="goToSensorDetail(sensor.id)">
+                        <span class="sensor-name" :title="sensor.name">
+                          {{ sensor.name }}
+                          <small v-if="isItemPaused(sensor)" title="Alertas Pausadas">⏸️</small>
+                        </span>
+                        <div class="sensor-top-right">
+                          <div class="sensor-main-status" :class="getStatusClass(liveSensorStatus[String(sensor.id)]?.status)">
+                            <template v-if="!sensor.is_active"><span class="text-off">OFF</span></template>
+                            <template v-else-if="sensor.sensor_type === 'ping'">
+                              <span v-if="liveSensorStatus[String(sensor.id)]?.status === 'timeout'">Timeout</span>
+                              <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'error'">Error</span>
+                              <span v-else-if="liveSensorStatus[String(sensor.id)]?.status === 'pending'">...</span>
+                              <span v-else>{{ formatLatency(liveSensorStatus[String(sensor.id)]?.latency_ms) }} ms</span>
+                            </template>
+                            <template v-else-if="sensor.sensor_type === 'ethernet'">
+                              {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').replace('_', ' ').toUpperCase() }}
+                            </template>
+                            <template v-else-if="sensor.sensor_type === 'wireless'">
+                              <span v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Punto de Acceso">📡 AP</span>
+                              <span v-else-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'CPE'" title="Estación / Cliente">📶 CPE</span>
+                              <span v-else>📡</span>
+                              {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
+                            </template>
+                            <template v-else-if="sensor.sensor_type === 'system'">
+                              💻 {{ (liveSensorStatus[String(sensor.id)]?.status || 'pending').toUpperCase() }}
+                            </template>
+                            <template v-else>{{ liveSensorStatus[String(sensor.id)]?.status || 'pending' }}</template>
+                          </div>
+                          <div class="kebab-container" @click.stop>
+                            <button class="kebab-btn" @click="toggleKebab(sensor.id, $event)">⋮</button>
+                            <div v-if="openKebabId === sensor.id" class="kebab-dropdown">
+                              <button class="kebab-item" @click="toggleSensorPause(sensor, monitor, $event)">
+                                {{ isItemPaused(sensor) ? '▶ Reanudar Alertas' : '⏸ Pausar Alertas' }}
+                              </button>
+                              <button v-if="sensor.sensor_type === 'wireless'" class="kebab-item" @click="toggleIgnoreDegraded(sensor, monitor, $event)">
+                                {{ isDegradedIgnored(sensor) ? '🙉 Avisar Degraded' : '🙈 Ignorar Degraded' }}
+                              </button>
+                              <button class="kebab-item" @click="showSensorDetails(sensor, monitor, $event)">✎ Editar Sensor</button>
+                              <button class="kebab-item text-danger" @click="deleteSensor(sensor, monitor, $event)">✕ Eliminar Sensor</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div
+                        class="sensor-tier-bottom"
+                        v-if="sensor.is_active && sensor.sensor_type !== 'ping' && !['pending', 'timeout', 'error'].includes(liveSensorStatus[String(sensor.id)]?.status)"
+                      >
+                        <template v-if="sensor.sensor_type === 'ethernet'">
+                          <span class="metric-item speed" v-if="liveSensorStatus[String(sensor.id)]?.status === 'link_up'">🔗 {{ liveSensorStatus[String(sensor.id)]?.speed || '—' }}</span>
+                          <span class="metric-item">↓ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.rx_bitrate) }}</span>
+                          <span class="metric-item">↑ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}</span>
+                        </template>
+                        <template v-else-if="sensor.sensor_type === 'wireless'">
+                          <span class="metric-item" title="Señal">📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} dBm</span>
+                          <span class="metric-item" title="CCQ (TX)">📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }}%</span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}</span>
+                          <span class="metric-item" title="TX / RX Rate (Mbps)">🚀 {{ formatRateString(liveSensorStatus[String(sensor.id)]?.tx_rate) }} / {{ formatRateString(liveSensorStatus[String(sensor.id)]?.rx_rate) }} Mbps</span>
+                        </template>
+                        <template v-else-if="sensor.sensor_type === 'system'">
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.cpu_percent != null" title="Uso de CPU">⚙️ {{ Number(liveSensorStatus[String(sensor.id)]?.cpu_percent || 0).toFixed(1) }}%</span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.memory_percent != null" title="Uso de RAM">🧠 {{ Number(liveSensorStatus[String(sensor.id)]?.memory_percent || 0).toFixed(1) }}%</span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.temperature != null" title="Temperatura">🌡️ {{ liveSensorStatus[String(sensor.id)]?.temperature }}°C</span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.voltage != null" title="Voltaje">⚡ {{ Number(liveSensorStatus[String(sensor.id)]?.voltage || 0).toFixed(1) }}V</span>
+                          <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.uptime_seconds != null" title="Tiempo de Actividad">⏱️ {{ formatUptimeShort(liveSensorStatus[String(sensor.id)]?.uptime_seconds) }}</span>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  v-else
+                  class="card-body collapsed-summary"
+                  :class="{
+                    'has-critical': liveMonitorAlerts[monitor.monitor_id] === 'critical',
+                    'has-warning': liveMonitorAlerts[monitor.monitor_id] === 'warning'
+                  }"
+                >
+                  <span v-if="liveMonitorAlerts[monitor.monitor_id] === 'critical'" class="summary-alert">🔴 Atención Requerida</span>
+                  <span v-else-if="liveMonitorAlerts[monitor.monitor_id] === 'warning'" class="summary-warning">🟡 Advertencia</span>
+                  <span v-else class="summary-ok">✓ Sistema Operativo</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- ===== MODO NORMAL (con drag-and-drop) ===== -->
         <draggable
+          v-else
           :list="groupedMonitors[activeGroup]"
           group="monitors"
           item-key="monitor_id"
@@ -2966,6 +3221,70 @@ function closeSensorDetails() {
 .notification.error {
   background: var(--secondary-color);
 }
+
+/* =========================================
+   BUSCADOR DE MONITORES
+   ========================================= */
+.search-box-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-input {
+  background: var(--bg-color);
+  border: 1px solid var(--primary-color);
+  border-radius: 4px;
+  color: #eee;
+  padding: 0.4rem 2rem 0.4rem 0.7rem;
+  font-size: 0.85rem;
+  width: 220px;
+  transition: border-color 0.2s, width 0.2s;
+  font-family: inherit;
+}
+.search-input:focus {
+  outline: none;
+  border-color: var(--blue);
+  width: 280px;
+}
+.search-input::-webkit-search-cancel-button {
+  display: none;
+}
+.search-clear-btn {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0 2px;
+}
+.search-clear-btn:hover {
+  color: #fff;
+}
+.search-status-bar {
+  padding: 0.5rem 0;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  color: #aaa;
+  border-bottom: 1px solid var(--primary-color);
+}
+.search-no-results {
+  color: #888;
+  font-style: italic;
+}
+.group-badge {
+  background: var(--primary-color);
+  color: #ccc;
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--blue);
+  letter-spacing: 0.02em;
+  margin-left: 2px;
+}
+
 /* CONTROL RESPONSIVO DEL SIDEBAR INYECTADO DESDE APPLAYOUT */
 @media (max-width: 820px) {
   .sidebar {
@@ -3026,6 +3345,13 @@ function closeSensorDetails() {
   }
   .sensor-tier-bottom {
     gap: 6px;
+  }
+  .search-input {
+    width: 130px;
+    font-size: 0.8rem;
+  }
+  .search-input:focus {
+    width: 170px;
   }
 }
 </style>
