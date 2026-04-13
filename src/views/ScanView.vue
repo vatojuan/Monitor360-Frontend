@@ -88,6 +88,23 @@ const newSensorType = ref('ping') // Usado tanto por Scanner como por Modal
 const hasSystemSensorScanner = computed(() => sensorsTemplateList.value.some(s => s.sensor_type === 'system'))
 const hasSystemSensorModal = computed(() => adoptSensorsList.value.some(s => s.sensor_type === 'system'))
 
+// --- COMPUTADA: Si la sonda de red seleccionada en el scanner es maestro ---
+const isSelectedProbeMaestro = computed(() => {
+  if (!scanConfig.value.source_device_id) return false;
+  const probe = availableProbes.value.find(p => p.id === scanConfig.value.source_device_id);
+  return probe?.is_maestro === true;
+});
+
+// --- COMPUTADA: Si el origen de los dispositivos seleccionados en el modal es maestro ---
+const isModalSourceMaestro = computed(() => {
+  if (selectedPending.value.length === 0) return false;
+  const firstDevice = pendingDevices.value.find(d => d.mac_address === selectedPending.value[0]);
+  if (!firstDevice) return false;
+  const sourceId = firstDevice.source_device_id || firstDevice.maestro_id;
+  const sourceDevice = allDevicesList.value.find(d => d.id === sourceId);
+  return sourceDevice?.is_maestro === true;
+});
+
 
 // --- COMPUTADA: Sondas Sugeridas (Filtro Autocomplete) ---
 const filteredProbes = computed(() => {
@@ -1027,12 +1044,12 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     :channels="channels"
                                     :auto-tasks="autoTasks"
                                     :suggested-target-devices="[]"
-                                    :has-parent-maestro="true"
+                                    :has-parent-maestro="isSelectedProbeMaestro"
                                     :device-interfaces="[]"
                                     :is-loading-interfaces="isLoadingInterfaces"
                                     hide-name
                                     is-compact
-                                    :is-template-mode="true" 
+                                    :is-template-mode="true"
                                 />
                             </div>
                         </div>
@@ -1214,7 +1231,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     :channels="channels"
                                     :auto-tasks="autoTasks"
                                     :suggested-target-devices="[]"
-                                    :has-parent-maestro="true"
+                                    :has-parent-maestro="isModalSourceMaestro"
                                     :device-interfaces="[]"
                                     :is-loading-interfaces="false"
                                     hide-name
