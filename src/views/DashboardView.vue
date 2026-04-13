@@ -107,16 +107,33 @@ async function muteGroup(groupName, hours, e) {
 async function deleteGroupWithMonitors(groupName, e) {
   e?.stopPropagation()
   closeGroupKebab()
-  
+
   const count = groupedMonitors.value[groupName]?.length || 0
-  const msg = `¿ESTÁS ABSOLUTAMENTE SEGURO?\n\nVas a eliminar el grupo "${groupName}".\nEsto eliminará permanentemente ${count} dispositivos y todos sus sensores asociados de tu cuenta.`
-  
+  const msg = `¿ESTÁS ABSOLUTAMENTE SEGURO?\n\nVas a eliminar el grupo "${groupName}".\nEsto eliminará permanentemente ${count} dispositivos y todos sus sensores asociados de tu cuenta.\nTambién se eliminarán o actualizarán los Reportes IA que referencian este grupo.`
+
   if (!confirm(msg)) return
 
   try {
+    // Antes de borrar el grupo, limpiar los reportes IA que lo referencian
+    const { data: schedules } = await api.get('/reports/schedules')
+    if (Array.isArray(schedules)) {
+      await Promise.all(
+        schedules
+          .filter(s => Array.isArray(s.target_groups) && s.target_groups.includes(groupName))
+          .map(s => {
+            const remaining = s.target_groups.filter(g => g !== groupName)
+            if (remaining.length === 0) {
+              return api.delete(`/reports/schedules/${s.id}`)
+            } else {
+              return api.put(`/reports/schedules/${s.id}`, { target_groups: remaining })
+            }
+          })
+      )
+    }
+
     await api.delete(`/groups/${encodeURIComponent(groupName)}`)
     showNotification(`Grupo ${groupName} eliminado.`, 'success')
-    
+
     // Refrescamos todo el entorno
     if (activeGroup.value === groupName) {
       activeGroup.value = 'General'
