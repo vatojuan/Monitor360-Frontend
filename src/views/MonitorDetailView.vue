@@ -187,12 +187,16 @@ const stats = computed(() => {
   } else if (sensorInfo.value?.sensor_type === 'wireless') {
     const last = data[data.length - 1]
     const sig = last.signal_strength || 0
-    const ccq = last.tx_ccq || 0
+    const remoteSig = last.remote_signal || 0
+    const txCcq = last.tx_ccq || 0
+    const rxCcq = last.rx_ccq || 0
     const role = last.wireless_role || 'unknown'
 
     const kpis = [
-      { label: 'Señal', value: `${sig} dBm`, color: sig <= -80 ? '#e94560' : '#36a2eb' },
-      { label: 'CCQ TX', value: `${ccq}%`, color: ccq < 75 ? '#facc15' : '#4caf50' },
+      { label: 'Señal Local', value: `${sig} dBm`, color: sig <= -80 ? '#e94560' : '#36a2eb' },
+      { label: 'Señal Remota', value: `${remoteSig} dBm`, color: remoteSig <= -80 ? '#e94560' : '#9c27b0' },
+      { label: 'CCQ TX', value: `${txCcq}%`, color: txCcq < 75 ? '#facc15' : '#4caf50' },
+      { label: 'CCQ RX', value: `${rxCcq}%`, color: rxCcq < 75 ? '#facc15' : '#4caf50' },
       { label: 'TX Rate', value: `${last.tx_rate || 'N/A'}`, color: '#facc15' },
       { label: 'RX Rate', value: `${last.rx_rate || 'N/A'}`, color: '#ff9800' }
     ]
@@ -417,16 +421,18 @@ const chartOption = computed(() => {
   // --- Lógica WIRELESS ---
   if (type === 'wireless') {
     const signals = data.map((d) => Number(d.signal_strength || 0))
-    const ccqs = data.map((d) => Number(d.tx_ccq || 0))
+    const remoteSignals = data.map((d) => Number(d.remote_signal || 0))
+    const txCcqs = data.map((d) => Number(d.tx_ccq || 0))
+    const rxCcqs = data.map((d) => Number(d.rx_ccq || 0))
     const txRates = data.map((d) => parseMbps(d.tx_rate))
     const rxRates = data.map((d) => parseMbps(d.rx_rate))
     const clients = data.map((d) => Number(d.client_count || 0))
-    
+
     const isAP = data.some((d) => d.wireless_role === 'AP')
 
     const series = [
       {
-        name: 'Señal (dBm)',
+        name: 'Señal Local (dBm)',
         type: 'line',
         data: signals,
         smooth: true,
@@ -436,14 +442,34 @@ const chartOption = computed(() => {
         lineStyle: { width: 2 }
       },
       {
+        name: 'Señal Remota (dBm)',
+        type: 'line',
+        data: remoteSignals,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 0,
+        itemStyle: { color: '#9c27b0' },
+        lineStyle: { width: 2, type: 'dashed' }
+      },
+      {
         name: 'CCQ TX (%)',
         type: 'line',
-        data: ccqs,
+        data: txCcqs,
         smooth: true,
         showSymbol: false,
         yAxisIndex: 1,
         itemStyle: { color: '#4caf50' },
         lineStyle: { width: 2 }
+      },
+      {
+        name: 'CCQ RX (%)',
+        type: 'line',
+        data: rxCcqs,
+        smooth: true,
+        showSymbol: false,
+        yAxisIndex: 1,
+        itemStyle: { color: '#00bcd4' },
+        lineStyle: { width: 2, type: 'dashed' }
       },
       {
         name: 'TX Rate (Mbps)',
@@ -467,7 +493,7 @@ const chartOption = computed(() => {
       }
     ]
 
-    const legendData = ['Señal (dBm)', 'CCQ TX (%)', 'TX Rate (Mbps)', 'RX Rate (Mbps)']
+    const legendData = ['Señal Local (dBm)', 'Señal Remota (dBm)', 'CCQ TX (%)', 'CCQ RX (%)', 'TX Rate (Mbps)', 'RX Rate (Mbps)']
     
     // Múltiples ejes Y para que las escalas no se rompan visualmente
     const yAxes = [

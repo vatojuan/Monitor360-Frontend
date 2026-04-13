@@ -1799,8 +1799,8 @@ function closeSensorDetails() {
                           <span class="metric-item">↑ {{ formatBitrate(liveSensorStatus[String(sensor.id)]?.tx_bitrate) }}</span>
                         </template>
                         <template v-else-if="sensor.sensor_type === 'wireless'">
-                          <span class="metric-item" title="Señal">📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} dBm</span>
-                          <span class="metric-item" title="CCQ (TX)">📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }}%</span>
+                          <span class="metric-item" title="Señal Local / Remota">📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} / {{ liveSensorStatus[String(sensor.id)]?.remote_signal || 0 }} dBm</span>
+                          <span class="metric-item" title="CCQ TX / RX">📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }} / {{ liveSensorStatus[String(sensor.id)]?.rx_ccq || 0 }}%</span>
                           <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}</span>
                           <span class="metric-item" title="TX / RX Rate (Mbps)">🚀 {{ formatRateString(liveSensorStatus[String(sensor.id)]?.tx_rate) }} / {{ formatRateString(liveSensorStatus[String(sensor.id)]?.rx_rate) }} Mbps</span>
                         </template>
@@ -2016,11 +2016,11 @@ function closeSensorDetails() {
                         </template>
 
                         <template v-else-if="sensor.sensor_type === 'wireless'">
-                          <span class="metric-item" title="Señal">
-                            📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} dBm
+                          <span class="metric-item" title="Señal Local / Remota">
+                            📶 {{ liveSensorStatus[String(sensor.id)]?.signal_strength || 0 }} / {{ liveSensorStatus[String(sensor.id)]?.remote_signal || 0 }} dBm
                           </span>
-                          <span class="metric-item" title="CCQ (TX)">
-                            📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }}%
+                          <span class="metric-item" title="CCQ TX / RX">
+                            📊 {{ liveSensorStatus[String(sensor.id)]?.tx_ccq || 0 }} / {{ liveSensorStatus[String(sensor.id)]?.rx_ccq || 0 }}%
                           </span>
                           <span class="metric-item" v-if="liveSensorStatus[String(sensor.id)]?.wireless_role === 'AP'" title="Clientes">
                             👥 {{ liveSensorStatus[String(sensor.id)]?.client_count || 0 }}
