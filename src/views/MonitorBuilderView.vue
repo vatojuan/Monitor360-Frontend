@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, onMounted, computed } from 'vue'
 import api from '@/lib/api'
-import SensorConfigurator from '@/components/SensorConfigurator.vue' // <-- NUEVO COMPONENTE IMPORTADO
+import SensorConfigurator from '@/components/SensorConfigurator.vue'
 
 //
 // --- Estado General ---
@@ -15,21 +15,21 @@ const activeSensors = ref([])
 const notification = ref({ show: false, message: '', type: 'success' })
 const formToShow = ref(null)
 const channels = ref([])
-const autoTasks = ref([]) // NUEVO: Tareas programadas/manuales disponibles
+const autoTasks = ref([])
 
 // --- Nuevo Estado para Grupo ---
-const dbGroups = ref([]) // Grupos traídos de la API
-const selectedGroupOption = ref('') // Dropdown
-const customGroupName = ref('') // Input manual
+const dbGroups = ref([])
+const selectedGroupOption = ref('')
+const customGroupName = ref('')
 
 // --- Estado para Edición ---
 const sensorToEdit = ref(null)
 const isEditMode = ref(false)
 
 // --- Estado para Selector de Destino (Ping) ---
-const allDevicesList = ref([]) // Lista completa para el selector de destino
+const allDevicesList = ref([])
 
-// --- NUEVO ESTADO PARA INTERFACES ---
+// --- ESTADO PARA INTERFACES ---
 const deviceInterfaces = ref([])
 const isLoadingInterfaces = ref(false)
 
@@ -40,10 +40,7 @@ const hasParentMaestro = computed(() => {
 
 // --- COMPUTADO: Grupos Disponibles ---
 const availableGroups = computed(() => {
-  // Inicializamos con los grupos traídos de la DB
   const groups = new Set(dbGroups.value)
-
-  // Por seguridad, agregamos también los que estén en uso en monitores cargados
   if (Array.isArray(allMonitors.value)) {
     allMonitors.value.forEach((m) => {
       const g = m.group_name ? m.group_name.trim() : null
@@ -52,7 +49,6 @@ const availableGroups = computed(() => {
       }
     })
   }
-  // Convertimos a array y ordenamos alfabéticamente
   return Array.from(groups).sort()
 })
 
@@ -60,10 +56,8 @@ const availableGroups = computed(() => {
 const suggestedTargetDevices = computed(() => {
   if (!selectedDevice.value) return []
 
-  // 1. Identificar el contexto de red del dispositivo seleccionado
   let currentVpnId = selectedDevice.value.vpn_profile_id
 
-  // Si tiene maestro, usamos el perfil del maestro (ya que es quien enruta)
   if (selectedDevice.value.maestro_id) {
     const maestro = allDevicesList.value.find((d) => d.id === selectedDevice.value.maestro_id)
     if (maestro) {
@@ -71,32 +65,22 @@ const suggestedTargetDevices = computed(() => {
     }
   }
 
-  // 2. Filtrar dispositivos que compartan ese contexto
   return allDevicesList.value.filter((d) => {
-    // Excluirse a sí mismo
     if (d.id === selectedDevice.value.id) return false
-
-    // Si no detectamos VPN, mostramos todos (fallback)
     if (!currentVpnId) return true
-
-    // Si el destino es un maestro, chequear su VPN directa
     if (d.is_maestro) {
       return d.vpn_profile_id === currentVpnId
     }
-
-    // Si el destino es un esclavo, chequear la VPN de SU maestro
     if (d.maestro_id) {
       const destMaestro = allDevicesList.value.find((m) => m.id === d.maestro_id)
       return destMaestro && destMaestro.vpn_profile_id === currentVpnId
     }
-
-    // Si tiene VPN directa asignada
     return d.vpn_profile_id === currentVpnId
   })
 })
 
 //
-// --- Plantillas de Formularios (ACTUALIZADO: Mensajes Personalizados y Auto-Tasks) ---
+// --- Plantillas de Formularios ---
 const createNewPingSensor = () => ({
   name: '',
   config: {
@@ -117,8 +101,8 @@ const createNewPingSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
-    use_auto_task: false, // NUEVO
-    trigger_task_id: null, // NUEVO
+    use_auto_task: false,
+    trigger_task_id: null,
   },
   ui_alert_latency: {
     enabled: false,
@@ -131,8 +115,8 @@ const createNewPingSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
-    use_auto_task: false, // NUEVO
-    trigger_task_id: null, // NUEVO
+    use_auto_task: false,
+    trigger_task_id: null,
   },
 })
 
@@ -152,8 +136,8 @@ const createNewEthernetSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
-    use_auto_task: false, // NUEVO
-    trigger_task_id: null, // NUEVO
+    use_auto_task: false,
+    trigger_task_id: null,
   },
   ui_alert_traffic: {
     enabled: false,
@@ -167,8 +151,8 @@ const createNewEthernetSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
-    use_auto_task: false, // NUEVO
-    trigger_task_id: null, // NUEVO
+    use_auto_task: false,
+    trigger_task_id: null,
   },
 })
 
@@ -176,7 +160,7 @@ const createNewWirelessSensor = () => ({
   name: '',
   config: {
     interface_name: '',
-    interval_sec: 60, // <-- AÑADIDO
+    interval_sec: 60,
     thresholds: {
       min_signal_dbm: -80,
       min_ccq_percent: 75,
@@ -195,15 +179,15 @@ const createNewWirelessSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
-    use_auto_task: false, // NUEVO
-    trigger_task_id: null, // NUEVO
+    use_auto_task: false,
+    trigger_task_id: null,
   },
 })
 
 const createNewSystemSensor = () => ({
   name: '',
   config: {
-    interval_sec: 60, // <-- AÑADIDO
+    interval_sec: 60,
     thresholds: {
       max_cpu_percent: 85,
       max_memory_percent: 90,
@@ -223,8 +207,8 @@ const createNewSystemSensor = () => ({
     custom_message: '',
     use_custom_recovery_message: false,
     custom_recovery_message: '',
-    use_auto_task: false, // NUEVO
-    trigger_task_id: null, // NUEVO
+    use_auto_task: false,
+    trigger_task_id: null,
   },
 })
 
@@ -239,13 +223,14 @@ onMounted(() => {
   fetchGroups()
   fetchAllMonitors()
   fetchChannels()
-  fetchAllDevices() 
-  fetchAutoTasks() // NUEVO: Cargar las tareas para los selectores
+  fetchAllDevices()
+  fetchAutoTasks()
 })
 
-// RESETEO
+// RESETEO al cambiar de dispositivo
 watch(selectedDevice, () => {
   newPingSensor.value = createNewPingSensor()
+  // Forzar device_to_external si el dispositivo no tiene maestro
   if (!hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
   }
@@ -297,18 +282,17 @@ async function fetchAllDevices() {
   }
 }
 
-// --- NUEVO: Obtener Interfaces del Dispositivo Activo ---
 async function fetchDeviceInterfaces(deviceId) {
-  isLoadingInterfaces.value = true;
-  deviceInterfaces.value = [];
+  isLoadingInterfaces.value = true
+  deviceInterfaces.value = []
   try {
-    const { data } = await api.get(`/devices/${deviceId}/interfaces`);
-    deviceInterfaces.value = data || [];
+    const { data } = await api.get(`/devices/${deviceId}/interfaces`)
+    deviceInterfaces.value = data || []
   } catch (e) {
-    console.warn(`No se pudieron cargar las interfaces para el equipo ${deviceId}. Fallback a input manual.`);
-    deviceInterfaces.value = []; // Queda vacío para activar el fallback manual
+    console.warn(`No se pudieron cargar las interfaces para el equipo ${deviceId}. Fallback a input manual.`)
+    deviceInterfaces.value = []
   } finally {
-    isLoadingInterfaces.value = false;
+    isLoadingInterfaces.value = false
   }
 }
 
@@ -328,6 +312,7 @@ function buildSensorPayload(sensorType, sensorData) {
   const onlyNums = (v, fallback = undefined) => (typeof v === 'number' && !isNaN(v) ? v : fallback)
 
   if (sensorType === 'ping') {
+    // Garantía de seguridad: si el dispositivo no tiene maestro, siempre forzar device_to_external
     if (!hasParentMaestro.value) {
       finalConfig.ping_type = 'device_to_external'
     }
@@ -343,7 +328,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
       finalConfig.alerts.push(alertObj)
     }
     if (sensorData.ui_alert_latency.enabled) {
@@ -359,7 +344,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
       finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'ethernet') {
@@ -375,7 +360,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
       finalConfig.alerts.push(alertObj)
     }
     if (sensorData.ui_alert_traffic.enabled) {
@@ -392,7 +377,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
       finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'wireless') {
@@ -416,7 +401,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
       finalConfig.alerts.push(alertObj)
     }
   } else if (sensorType === 'system') {
@@ -441,7 +426,7 @@ function buildSensorPayload(sensorType, sensorData) {
       }
       if (a.use_custom_message && a.custom_message?.trim()) alertObj.custom_message = a.custom_message.trim()
       if (a.use_custom_recovery_message && a.custom_recovery_message?.trim()) alertObj.custom_recovery_message = a.custom_recovery_message.trim()
-      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id // NUEVO
+      if (a.use_auto_task && a.trigger_task_id) alertObj.trigger_task_id = a.trigger_task_id
       finalConfig.alerts.push(alertObj)
     }
   }
@@ -450,14 +435,15 @@ function buildSensorPayload(sensorType, sensorData) {
 
 async function handleSaveSensor() {
   if (!formToShow.value) return
-  
-  const sensorData = formToShow.value === 'ping' 
-    ? newPingSensor.value 
-    : formToShow.value === 'ethernet' 
-      ? newEthernetSensor.value 
-      : formToShow.value === 'wireless'
-        ? newWirelessSensor.value
-        : newSystemSensor.value
+
+  const sensorData =
+    formToShow.value === 'ping'
+      ? newPingSensor.value
+      : formToShow.value === 'ethernet'
+        ? newEthernetSensor.value
+        : formToShow.value === 'wireless'
+          ? newWirelessSensor.value
+          : newSystemSensor.value
 
   try {
     const payload = buildSensorPayload(formToShow.value, sensorData)
@@ -492,7 +478,7 @@ async function handleSaveSensor() {
     await selectDevice(selectedDevice.value)
     closeForm()
   } catch (err) {
-    showNotification(err?.message || 'Error al guardar el sensor.', 'error')
+    showNotification(err?.message || err?.response?.data?.detail || 'Error al guardar el sensor.', 'error')
   }
 }
 
@@ -503,7 +489,8 @@ function openFormForCreate(type) {
   newEthernetSensor.value = createNewEthernetSensor()
   newWirelessSensor.value = createNewWirelessSensor()
   newSystemSensor.value = createNewSystemSensor()
-  
+
+  // Forzar device_to_external si el dispositivo no tiene maestro
   if (type === 'ping' && !hasParentMaestro.value) {
     newPingSensor.value.config.ping_type = 'device_to_external'
   }
@@ -515,7 +502,6 @@ function openFormForEdit(sensor) {
   sensorToEdit.value = sensor
   const cfg = typeof sensor.config === 'string' ? safeJsonParse(sensor.config, {}) : sensor.config
 
-  // Helper para mapear alerta
   const mapAlert = (alerts, type) => alerts.find((a) => a.type === type) || {}
   const alerts = cfg?.alerts || []
 
@@ -523,6 +509,7 @@ function openFormForEdit(sensor) {
     const uiData = createNewPingSensor()
     uiData.name = sensor.name
     uiData.config = { ...uiData.config, ...cfg }
+    // Corregir ping_type si el dispositivo no tiene maestro
     if (!hasParentMaestro.value) uiData.config.ping_type = 'device_to_external'
 
     const tOut = mapAlert(alerts, 'timeout')
@@ -536,8 +523,8 @@ function openFormForEdit(sensor) {
         custom_message: tOut.custom_message || '',
         use_custom_recovery_message: !!tOut.custom_recovery_message,
         custom_recovery_message: tOut.custom_recovery_message || '',
-        use_auto_task: !!tOut.trigger_task_id, // NUEVO
-        trigger_task_id: tOut.trigger_task_id || null, // NUEVO
+        use_auto_task: !!tOut.trigger_task_id,
+        trigger_task_id: tOut.trigger_task_id || null,
       }
     }
 
@@ -552,18 +539,17 @@ function openFormForEdit(sensor) {
         custom_message: tLat.custom_message || '',
         use_custom_recovery_message: !!tLat.custom_recovery_message,
         custom_recovery_message: tLat.custom_recovery_message || '',
-        use_auto_task: !!tLat.trigger_task_id, // NUEVO
-        trigger_task_id: tLat.trigger_task_id || null, // NUEVO
+        use_auto_task: !!tLat.trigger_task_id,
+        trigger_task_id: tLat.trigger_task_id || null,
       }
     }
     newPingSensor.value = uiData
-
   } else if (sensor.sensor_type === 'ethernet') {
     const uiData = createNewEthernetSensor()
     uiData.name = sensor.name
     uiData.config = {
       interface_name: cfg.interface_name || '',
-      interval_sec: cfg.interval_sec || 60, // <-- Edit: Carga correcta
+      interval_sec: cfg.interval_sec || 60,
     }
 
     const tSpd = mapAlert(alerts, 'speed_change')
@@ -577,8 +563,8 @@ function openFormForEdit(sensor) {
         custom_message: tSpd.custom_message || '',
         use_custom_recovery_message: !!tSpd.custom_recovery_message,
         custom_recovery_message: tSpd.custom_recovery_message || '',
-        use_auto_task: !!tSpd.trigger_task_id, // NUEVO
-        trigger_task_id: tSpd.trigger_task_id || null, // NUEVO
+        use_auto_task: !!tSpd.trigger_task_id,
+        trigger_task_id: tSpd.trigger_task_id || null,
       }
     }
 
@@ -593,18 +579,17 @@ function openFormForEdit(sensor) {
         custom_message: tTrf.custom_message || '',
         use_custom_recovery_message: !!tTrf.custom_recovery_message,
         custom_recovery_message: tTrf.custom_recovery_message || '',
-        use_auto_task: !!tTrf.trigger_task_id, // NUEVO
-        trigger_task_id: tTrf.trigger_task_id || null, // NUEVO
+        use_auto_task: !!tTrf.trigger_task_id,
+        trigger_task_id: tTrf.trigger_task_id || null,
       }
     }
     newEthernetSensor.value = uiData
-
   } else if (sensor.sensor_type === 'wireless') {
     const uiData = createNewWirelessSensor()
     uiData.name = sensor.name
     uiData.config = {
       interface_name: cfg.interface_name || '',
-      interval_sec: cfg.interval_sec || 60, // <-- Edit: AÑADIDO
+      interval_sec: cfg.interval_sec || 60,
       tolerance_checks: cfg.tolerance_checks ?? 3,
       thresholds: {
         min_signal_dbm: cfg.thresholds?.min_signal_dbm ?? -80,
@@ -612,7 +597,7 @@ function openFormForEdit(sensor) {
         min_client_count: cfg.thresholds?.min_client_count ?? 0,
         min_tx_rate_mbps: cfg.thresholds?.min_tx_rate_mbps ?? 0,
         min_rx_rate_mbps: cfg.thresholds?.min_rx_rate_mbps ?? 0,
-      }
+      },
     }
 
     const tWir = mapAlert(alerts, 'wireless_status')
@@ -626,17 +611,16 @@ function openFormForEdit(sensor) {
         custom_message: tWir.custom_message || '',
         use_custom_recovery_message: !!tWir.custom_recovery_message,
         custom_recovery_message: tWir.custom_recovery_message || '',
-        use_auto_task: !!tWir.trigger_task_id, // NUEVO
-        trigger_task_id: tWir.trigger_task_id || null, // NUEVO
+        use_auto_task: !!tWir.trigger_task_id,
+        trigger_task_id: tWir.trigger_task_id || null,
       }
     }
     newWirelessSensor.value = uiData
-
   } else if (sensor.sensor_type === 'system') {
     const uiData = createNewSystemSensor()
     uiData.name = sensor.name
     uiData.config = {
-      interval_sec: cfg.interval_sec || 60, // <-- Edit: AÑADIDO
+      interval_sec: cfg.interval_sec || 60,
       tolerance_checks: cfg.tolerance_checks ?? 3,
       thresholds: {
         max_cpu_percent: cfg.thresholds?.max_cpu_percent ?? null,
@@ -645,7 +629,7 @@ function openFormForEdit(sensor) {
         min_voltage: cfg.thresholds?.min_voltage ?? null,
         max_voltage: cfg.thresholds?.max_voltage ?? null,
         restart_uptime_seconds: cfg.thresholds?.restart_uptime_seconds ?? 300,
-      }
+      },
     }
 
     const tSys = mapAlert(alerts, 'system_status')
@@ -659,13 +643,13 @@ function openFormForEdit(sensor) {
         custom_message: tSys.custom_message || '',
         use_custom_recovery_message: !!tSys.custom_recovery_message,
         custom_recovery_message: tSys.custom_recovery_message || '',
-        use_auto_task: !!tSys.trigger_task_id, // NUEVO
-        trigger_task_id: tSys.trigger_task_id || null, // NUEVO
+        use_auto_task: !!tSys.trigger_task_id,
+        trigger_task_id: tSys.trigger_task_id || null,
       }
     }
     newSystemSensor.value = uiData
   }
-  
+
   formToShow.value = sensor.sensor_type
 }
 
@@ -691,8 +675,7 @@ async function selectDevice(device) {
   selectedGroupOption.value = ''
   customGroupName.value = ''
 
-  // Despachamos la carga de interfaces en background
-  fetchDeviceInterfaces(device.id);
+  fetchDeviceInterfaces(device.id)
 
   await fetchAllMonitors()
   const monitor = allMonitors.value.find((m) => m.device_id === device.id)
@@ -714,7 +697,7 @@ function clearSelectedDevice() {
   selectedDevice.value = null
   currentMonitor.value = null
   activeSensors.value = []
-  deviceInterfaces.value = [] // Limpiamos las interfaces en cache
+  deviceInterfaces.value = []
   closeForm()
 }
 
@@ -819,11 +802,7 @@ watch(searchQuery, (newQuery) => {
             <label>Asignar Grupo</label>
             <select v-model="selectedGroupOption" class="search-input">
               <option value="">-- Grupo General / Sin Grupo --</option>
-
-              <option v-for="g in availableGroups" :key="g" :value="g">
-                {{ g }}
-              </option>
-
+              <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
               <option disabled>──────────────────</option>
               <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
             </select>
@@ -847,7 +826,7 @@ watch(searchQuery, (newQuery) => {
         </div>
         <div v-else>
           <h2><span class="step-number">2</span> Gestionar Sensores</h2>
-          
+
           <div class="add-sensor-section">
             <h4>Añadir Nuevo Sensor</h4>
             <div class="sensor-type-selector">
@@ -866,12 +845,27 @@ watch(searchQuery, (newQuery) => {
                   <strong :title="sensor.name">{{ sensor.name }}</strong>
                 </div>
                 <div class="sensor-actions">
-                  <span v-if="sensor.config?.alerts?.length" class="alert-enabled-badge" title="Alerta configurada">🔔</span>
+                  <span
+                    v-if="sensor.config?.alerts?.length"
+                    class="alert-enabled-badge"
+                    title="Alerta configurada"
+                    >🔔</span
+                  >
                   <span class="sensor-type-badge" :class="sensor.sensor_type">{{
                     sensor.sensor_type
                   }}</span>
-                  <button @click="openFormForEdit(sensor)" class="action-btn edit-btn" title="Editar Sensor">✏️</button>
-                  <button @click="deleteSensor(sensor.id)" class="action-btn delete-btn" title="Eliminar Sensor">×</button>
+                  <button
+                    @click="openFormForEdit(sensor)"
+                    class="action-btn edit-btn"
+                    title="Editar Sensor"
+                    >✏️</button
+                  >
+                  <button
+                    @click="deleteSensor(sensor.id)"
+                    class="action-btn delete-btn"
+                    title="Eliminar Sensor"
+                    >×</button
+                  >
                 </div>
               </li>
             </ul>
@@ -886,7 +880,6 @@ watch(searchQuery, (newQuery) => {
         <h3>{{ isEditMode ? 'Editar' : 'Añadir' }} Sensor {{ formToShow.toUpperCase() }}</h3>
 
         <form @submit.prevent="handleSaveSensor" class="config-form-wrapper">
-          
           <SensorConfigurator
             v-if="formToShow === 'ping'"
             v-model="newPingSensor"
@@ -930,26 +923,22 @@ watch(searchQuery, (newQuery) => {
             <button type="submit" class="btn-add">Guardar</button>
           </div>
         </form>
-
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Estilos necesarios para corregir la visibilidad del Select */
 .search-input option {
-  background-color: var(--surface-color); /* Fondo oscuro para las opciones */
-  color: white; /* Texto blanco */
+  background-color: var(--surface-color);
+  color: white;
 }
 
-/* Permitir cambiar el alto manualmente del área de texto personalizado */
 textarea.search-input {
   resize: vertical;
   min-height: 60px;
 }
 
-/* Resto de estilos */
 .builder-layout {
   max-width: 900px;
   margin: auto;
@@ -987,12 +976,6 @@ h4 {
   margin-left: 8px;
   font-weight: bold;
 }
-.warning-text {
-  color: #fbbf24;
-  font-size: 0.85rem;
-  margin-top: 0.5rem;
-  font-weight: 500;
-}
 .search-wrapper {
   position: relative;
 }
@@ -1005,11 +988,6 @@ h4 {
   color: white;
 }
 
-/* ==============================================
-   FIX: TRUNCADO PROFESIONAL PARA LISTAS Y TARJETAS
-   ============================================== */
-
-/* 1. Resultados de búsqueda blindados */
 .search-results {
   list-style: none;
   padding: 0;
@@ -1024,7 +1002,7 @@ h4 {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem; /* Espaciado entre nombre e IP */
+  gap: 1rem;
   transition: background-color 0.2s;
 }
 .search-results li:hover {
@@ -1042,7 +1020,6 @@ h4 {
   color: #aaa;
 }
 
-/* 2. Tarjeta de dispositivo seleccionado blindada */
 .selected-device-card {
   background-color: var(--bg-color);
   padding: 1rem;
@@ -1051,7 +1028,7 @@ h4 {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem; /* Previene colisiones */
+  gap: 1rem;
   border-left: 4px solid var(--green);
 }
 .selected-device-card > div {
@@ -1071,7 +1048,7 @@ h4 {
   color: #f1f1f1;
   cursor: pointer;
   border-radius: 6px;
-  flex-shrink: 0; /* Nunca se aplasta el botón */
+  flex-shrink: 0;
 }
 
 .btn-create {
@@ -1087,7 +1064,6 @@ h4 {
   margin-top: 1rem;
 }
 
-/* 3. Lista de Sensores (MonitorBuilder) blindada */
 .sensor-list {
   margin-top: 1.5rem;
   padding-top: 1.5rem;
@@ -1107,7 +1083,7 @@ h4 {
   background-color: var(--bg-color);
   padding: 0.75rem 1rem;
   border-radius: 8px;
-  gap: 1rem; /* Previene que el nombre y botones choquen */
+  gap: 1rem;
 }
 .sensor-info {
   display: flex;
@@ -1129,7 +1105,7 @@ h4 {
   padding: 0.2rem 0.5rem;
   border-radius: 12px;
   text-transform: uppercase;
-  flex-shrink: 0; /* Badge sagrado */
+  flex-shrink: 0;
 }
 .sensor-type-badge.ping {
   background-color: var(--blue);
@@ -1144,15 +1120,15 @@ h4 {
   color: white;
 }
 .sensor-type-badge.system {
-  background-color: #f59e0b; /* Color Ambar distintivo */
+  background-color: #f59e0b;
   color: var(--bg-color);
 }
 
 .sensor-actions {
   display: flex;
   align-items: center;
-  gap: 0.8rem; /* Aumentado ligeramente para separar el badge de los botones */
-  flex-shrink: 0; /* Botones sagrados */
+  gap: 0.8rem;
+  flex-shrink: 0;
 }
 .action-btn {
   background: none;
@@ -1174,14 +1150,13 @@ h4 {
   background-color: transparent;
   color: var(--secondary-color);
 }
-/* ============================================== */
 
 .empty-list {
   color: var(--gray);
   font-style: italic;
 }
 .add-sensor-section {
-  margin-top: 1rem; /* Modificado para integrarlo mejor */
+  margin-top: 1rem;
 }
 .sensor-type-selector {
   display: flex;
@@ -1251,7 +1226,6 @@ h4 {
   margin-top: 0;
 }
 
-/* CLASE NUEVA PARA EL WRAPPER DEL COMPONENTE */
 .config-form-wrapper {
   padding: 1.5rem;
   background-color: var(--bg-color);
@@ -1266,12 +1240,6 @@ h4 {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-}
-.form-group.span-2 {
-  grid-column: span 2;
-}
-.form-group.span-3 {
-  grid-column: span 3;
 }
 .form-group label {
   font-weight: bold;
@@ -1290,43 +1258,6 @@ h4 {
   opacity: 0.7;
   cursor: not-allowed;
   background-color: #2a2a2a;
-}
-.sub-section {
-  grid-column: span 3;
-  background-color: var(--surface-color);
-  padding: 1.5rem;
-  border-radius: 8px;
-  margin-top: 1rem;
-  border: 1px solid var(--primary-color);
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-.sub-section h4 {
-  margin: 0 0 0.5rem 0;
-  border-bottom: 1px solid var(--primary-color);
-  padding-bottom: 0.5rem;
-}
-.checkbox-group {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.8rem;
-}
-.checkbox-group input[type='checkbox'] {
-  width: auto;
-  accent-color: var(--blue);
-}
-.alert-config-item {
-  border-top: 1px dashed var(--primary-color);
-  padding-top: 1.5rem;
-  display: contents;
-}
-.alert-config-item > .form-group {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-  grid-column: span 3;
-  align-items: center;
 }
 .modal-actions {
   display: flex;
@@ -1358,10 +1289,6 @@ h4 {
     max-width: 95vw;
     padding: 1.25rem;
   }
-  .alert-config-item > .form-group {
-    grid-template-columns: 1fr;
-    grid-column: span 1;
-  }
   .modal-actions {
     flex-direction: column;
     gap: 0.5rem;
@@ -1369,7 +1296,6 @@ h4 {
   .modal-actions button {
     width: 100%;
   }
-  /* Botones de tipo sensor: uno por línea en pantallas muy pequeñas */
   .sensor-type-selector {
     flex-direction: column;
   }
