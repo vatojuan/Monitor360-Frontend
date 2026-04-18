@@ -598,8 +598,8 @@ async function runScan() {
 
     const payload = { ...scanConfig.value }
     if (scanConfig.value.is_active && scanConfig.value.scan_mode === 'auto') {
-      const expandedSensors = expandSensorsIfNeeded(sensorsTemplateList.value, maestroInterfaces.value)
-      payload.sensors_config = expandedSensors.map(s => buildSensorConfigPayload(s))
+      // La expansión de "Todas las interfaces" se hace en el backend después de conocer los dispositivos reales
+      payload.sensors_config = sensorsTemplateList.value.map(s => buildSensorConfigPayload(s))
     }
 
     if (scanConfig.value.is_active) {
@@ -1044,7 +1044,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
               <input type="checkbox" id="activeTask" v-model="scanConfig.is_active" />
               <label for="activeTask">Tarea Recurrente</label>
             </div>
-            <template v-if="scanConfig.is_active">
+            <template v-if="scanConfig.is_active || scanConfig.id">
               <div class="form-group interval-group">
                 <label>Intervalo (min) - Mín. 15 min</label>
                 <div class="input-hint-row">
@@ -1071,66 +1071,67 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                    <input type="checkbox" id="chkSkipDisabled" v-model="scanConfig.skip_disabled_interfaces" />
                    <label for="chkSkipDisabled" style="font-size:0.9rem; color:#ccc;">Omitir Ethernet Apagada</label>
               </div>
-              <div v-if="scanConfig.scan_mode === 'auto'" class="auto-adopt-panel fade-in">
-                <hr class="separator" />
-                <h4 class="mini-title">🏗️ Receta</h4>
-                <div class="form-group" style="margin-bottom: 0.5rem">
-                  <label>Grupo de Dispositivos Nuevos</label>
-                  <select v-model="scanGroupOption" class="search-input">
-                    <option value="General">General</option>
-                    <option v-for="g in filteredGroups" :key="g" :value="g">{{ g }}</option>
-                    <option disabled>──────────────────</option>
-                    <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
-                  </select>
-                </div>
-                
-                <div v-if="scanGroupOption === '__NEW__'" class="form-group fade-in">
-                    <input 
-                        type="text" 
-                        v-model="scanCustomGroup" 
-                        placeholder="Escribe el nombre del grupo..." 
-                        class="search-input"
-                    />
-                </div>
-                
-                <div class="sensors-recipe-container">
-                    <div class="add-sensor-controls">
-                        <select v-model="newSensorType" class="mini-select" style="width: auto;">
-                            <option value="ping">📡 Ping</option>
-                            <option value="ethernet">🔌 Ethernet</option>
-                            <option value="wireless">📶 Wireless</option>
-                            <option value="system" :disabled="hasSystemSensorScanner">🖥️ Sistema</option>
-                        </select>
-                        <button @click="addSensorToRecipe(sensorsTemplateList, hasSystemSensorScanner)" class="btn-sm btn-action-restore" style="margin-left: 10px;">➕ Añadir Sensor</button>
-                    </div>
-
-                    <div class="sensor-cards-list">
-                        <div v-for="(sensor, index) in sensorsTemplateList" :key="sensor.id" class="sensor-card fade-in">
-                            <div class="sensor-card-header">
-                                <div><span class="sensor-icon">{{ getSensorIcon(sensor.sensor_type) }}</span><strong>{{ sensor.sensor_type.toUpperCase() }}</strong></div>
-                                <button @click="removeSensor(sensorsTemplateList, index)" class="btn-sm btn-del btn-remove-sensor" title="Eliminar Sensor">🗑️</button>
-                            </div>
-
-                            <div class="mini-config">
-                                <SensorConfigurator
-                                    v-model="sensorsTemplateList[index]"
-                                    :sensor-type="sensor.sensor_type"
-                                    :channels="channels"
-                                    :auto-tasks="autoTasks"
-                                    :suggested-target-devices="[]"
-                                    :has-parent-maestro="isSelectedProbeMaestro"
-                                    :device-interfaces="maestroInterfaces"
-                                    :is-loading-interfaces="isLoadingInterfaces"
-                                    hide-name
-                                    is-compact
-                                    :is-template-mode="true"
-                                />
-                            </div>
-                        </div>
-                    </div>
-                </div>
-              </div>
             </template>
+
+            <div v-if="scanConfig.scan_mode === 'auto'" class="auto-adopt-panel fade-in">
+              <hr class="separator" />
+              <h4 class="mini-title">🏗️ Receta</h4>
+              <div class="form-group" style="margin-bottom: 0.5rem">
+                <label>Grupo de Dispositivos Nuevos</label>
+                <select v-model="scanGroupOption" class="search-input">
+                  <option value="General">General</option>
+                  <option v-for="g in filteredGroups" :key="g" :value="g">{{ g }}</option>
+                  <option disabled>──────────────────</option>
+                  <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
+                </select>
+              </div>
+
+              <div v-if="scanGroupOption === '__NEW__'" class="form-group fade-in">
+                  <input
+                      type="text"
+                      v-model="scanCustomGroup"
+                      placeholder="Escribe el nombre del grupo..."
+                      class="search-input"
+                  />
+              </div>
+
+              <div class="sensors-recipe-container">
+                  <div class="add-sensor-controls">
+                      <select v-model="newSensorType" class="mini-select" style="width: auto;">
+                          <option value="ping">📡 Ping</option>
+                          <option value="ethernet">🔌 Ethernet</option>
+                          <option value="wireless">📶 Wireless</option>
+                          <option value="system" :disabled="hasSystemSensorScanner">🖥️ Sistema</option>
+                      </select>
+                      <button @click="addSensorToRecipe(sensorsTemplateList, hasSystemSensorScanner)" class="btn-sm btn-action-restore" style="margin-left: 10px;">➕ Añadir Sensor</button>
+                  </div>
+
+                  <div class="sensor-cards-list">
+                      <div v-for="(sensor, index) in sensorsTemplateList" :key="sensor.id" class="sensor-card fade-in">
+                          <div class="sensor-card-header">
+                              <div><span class="sensor-icon">{{ getSensorIcon(sensor.sensor_type) }}</span><strong>{{ sensor.sensor_type.toUpperCase() }}</strong></div>
+                              <button @click="removeSensor(sensorsTemplateList, index)" class="btn-sm btn-del btn-remove-sensor" title="Eliminar Sensor">🗑️</button>
+                          </div>
+
+                          <div class="mini-config">
+                              <SensorConfigurator
+                                  v-model="sensorsTemplateList[index]"
+                                  :sensor-type="sensor.sensor_type"
+                                  :channels="channels"
+                                  :auto-tasks="autoTasks"
+                                  :suggested-target-devices="[]"
+                                  :has-parent-maestro="isSelectedProbeMaestro"
+                                  :device-interfaces="[]"
+                                  :is-loading-interfaces="false"
+                                  hide-name
+                                  is-compact
+                                  :is-template-mode="true"
+                              />
+                          </div>
+                      </div>
+                  </div>
+              </div>
+            </div>
           </div>
           <div class="form-actions" style="align-items: center;">
             <span v-if="!isRecipeValid" style="color: var(--error-red); font-size: 0.8rem; font-weight: bold; margin-right: auto;">
@@ -1647,6 +1648,56 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
+  }
+  /* Profiles panel en móvil */
+  .profiles-panel {
+    padding: 12px;
+  }
+  .profile-card {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 10px;
+    gap: 10px;
+  }
+  .profile-info {
+    width: 100%;
+  }
+  .profile-details {
+    flex-direction: column;
+    gap: 5px !important;
+    font-size: 0.75rem !important;
+  }
+  .profile-sub-details {
+    flex-direction: column;
+    gap: 3px !important;
+  }
+  .profile-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .btn-icon-action {
+    width: 28px;
+    height: 28px;
+    font-size: 0.9rem;
+  }
+  .config-panel {
+    padding: 12px;
+  }
+  .form-body {
+    padding: 12px;
+  }
+  .form-group label {
+    font-size: 0.8rem;
+  }
+  .form-group input,
+  .form-group select {
+    padding: 8px;
+    font-size: 0.9rem;
+  }
+  .btn-scan,
+  .btn-cancel {
+    padding: 10px 12px;
+    font-size: 0.9rem;
   }
 }
 </style>
