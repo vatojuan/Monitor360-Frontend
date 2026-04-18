@@ -66,12 +66,13 @@ const scanConfig = ref({
   network_cidr: '192.168.88.0/24',
   interface: '',
   scan_ports: '8728, 22', // FASE 3: Puerto 80 removido por defecto
-  scan_mode: 'manual', 
+  scan_mode: 'manual',
   credential_profile_id: null,
   is_active: false,
-  scan_interval_minutes: 60, 
+  scan_interval_minutes: 60,
   target_group: 'General',
   adopt_only_managed: false,
+  skip_disabled_interfaces: false,
 })
 
 // --- ESTADO: LISTA DINÁMICA DE SENSORES PARA LA RECETA (SCANNER) ---
@@ -345,7 +346,7 @@ async function fetchMaestrosAndDevices() {
   try {
     const { data } = await api.get('/devices')
     allDevicesList.value = data || []
-    maestro.value = (data || []).filter((d) => d.is_maestro === true)
+    maestros.value = (data || []).filter((d) => d.is_maestro === true)
   } catch (e) { maestros.value = []; allDevicesList.value = [] }
 }
 async function fetchProbes() {
@@ -387,6 +388,35 @@ async function fetchAutoTasks() { try { const { data } = await api.get('/schedul
 // =============================================================================
 // GESTIÓN DINÁMICA DE SENSORES (RECETA REUTILIZABLE) CON FORMATO UNIFICADO
 // =============================================================================
+
+function expandSensorsIfNeeded(sensors, availableInterfaces = []) {
+  const expanded = [];
+
+  sensors.forEach(sensor => {
+    if (sensor.sensor_type === 'ethernet' && sensor.config?.interface_name === '__ALL_RUNNING__') {
+      // Expandir a múltiples sensores, uno por cada interfaz running
+      const runningInterfaces = availableInterfaces.filter(iface =>
+        !iface.disabled && iface.name && !iface.name.toLowerCase().includes('loopback')
+      );
+
+      if (runningInterfaces.length === 0) {
+        // Si no hay interfaces, guardar como está para que el backend lo maneje
+        expanded.push(sensor);
+      } else {
+        runningInterfaces.forEach(iface => {
+          const expandedSensor = { ...sensor };
+          expandedSensor.config = { ...sensor.config };
+          expandedSensor.config.interface_name = iface.name;
+          expanded.push(expandedSensor);
+        });
+      }
+    } else {
+      expanded.push(sensor);
+    }
+  });
+
+  return expanded;
+}
 
 function createDefaultSensor(type) {
   const base = {
@@ -568,7 +598,8 @@ async function runScan() {
 
     const payload = { ...scanConfig.value }
     if (scanConfig.value.is_active && scanConfig.value.scan_mode === 'auto') {
-      payload.sensors_config = sensorsTemplateList.value.map(s => buildSensorConfigPayload(s))
+      const expandedSensors = expandSensorsIfNeeded(sensorsTemplateList.value, maestroInterfaces.value)
+      payload.sensors_config = expandedSensors.map(s => buildSensorConfigPayload(s))
     }
 
     if (scanConfig.value.is_active) {
@@ -615,7 +646,7 @@ async function runScan() {
 
 function resetConfigForm() {
     // FASE 3: Eliminar puerto 80 del reinicio de form
-    scanConfig.value = { id: null, source_device_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false }
+    scanConfig.value = { id: null, source_device_id: '', network_cidr: '192.168.88.0/24', interface: '', scan_ports: '8728, 22', scan_mode: 'manual', credential_profile_id: null, is_active: false, scan_interval_minutes: 60, target_group: 'General', adopt_only_managed: false, skip_disabled_interfaces: false }
     probeSearchText.value = '';
     sensorsTemplateList.value = []
     
@@ -662,7 +693,8 @@ async function confirmAdoption() {
     let finalTargetGroup = adoptGroupOption.value === '__NEW__' ? adoptCustomGroup.value.trim() : adoptGroupOption.value;
     if (!finalTargetGroup) finalTargetGroup = 'General';
 
-    const finalSensorsPayload = adoptSensorsList.value.map(s => buildSensorConfigPayload(s));
+    const expandedSensors = expandSensorsIfNeeded(adoptSensorsList.value, maestroInterfaces.value)
+    const finalSensorsPayload = expandedSensors.map(s => buildSensorConfigPayload(s));
 
     const payload = { 
         source_device_id: devicesToAdopt[0].source_device_id || devicesToAdopt[0].maestro_id, 
@@ -681,12 +713,10 @@ async function confirmAdoption() {
       pendingDevices.value = pendingDevices.value.filter(d => !selectedPending.value.includes(d.mac_address));
       selectedPending.value = [];
 
-      [4000, 10000].forEach(delay => {
-        setTimeout(async () => {
-          await fetchPendingDevices();
-          window.dispatchEvent(new Event('refresh-notifications'));
-        }, delay);
-      });
+      setTimeout(async () => {
+        await fetchPendingDevices();
+        window.dispatchEvent(new Event('refresh-notifications'));
+      }, 4000);
 
     } else if (data.adopted !== undefined) {
       if (data.adopted > 0) showNotification(`¡${data.adopted} adoptados!`, 'success');
@@ -713,14 +743,23 @@ async function ignoreSelected() {
     if (!confirm(`¿Ignorar ${selectedPending.value.length} dispositivos?`)) return;
     isLoading.value = true;
     try {
-        await Promise.all(selectedPending.value.map(mac => api.delete(`/discovery/pending/${mac}`)));
-        showNotification('Ignorados correctamente', 'success'); selectedPending.value = []; await fetchPendingDevices(); await fetchIgnoredDevices();
+        const macsToIgnore = [...selectedPending.value]
+        await Promise.all(macsToIgnore.map(mac => api.delete(`/discovery/pending/${mac}`)));
+        pendingDevices.value = pendingDevices.value.filter(d => !macsToIgnore.includes(d.mac_address));
+        selectedPending.value = [];
+        showNotification('Ignorados correctamente', 'success');
+        fetchIgnoredDevices().catch(err => console.error('Background sync failed:', err))
     } catch (e) { showNotification('Error', 'error') } finally { isLoading.value = false; }
 }
 
 async function deletePending(mac) {
   if (!confirm('¿Ignorar este dispositivo?')) return
-  try { await api.delete(`/discovery/pending/${mac}`); await fetchPendingDevices(); await fetchIgnoredDevices(); showNotification('Movido a Ignorados', 'success') } catch (e) { showNotification('Error', 'error') }
+  try {
+    await api.delete(`/discovery/pending/${mac}`)
+    pendingDevices.value = pendingDevices.value.filter(d => d.mac_address !== mac)
+    showNotification('Movido a Ignorados', 'success')
+    fetchIgnoredDevices().catch(err => console.error('Background sync failed:', err))
+  } catch (e) { showNotification('Error', 'error') }
 }
 
 function toggleIgnoredSelection(mac) { selectedIgnored.value.includes(mac) ? selectedIgnored.value = selectedIgnored.value.filter(m => m !== mac) : selectedIgnored.value.push(mac) }
@@ -741,23 +780,54 @@ async function restoreSelected() {
     if (selectedIgnored.value.length === 0) return;
     if (!confirm(`¿Restaurar ${selectedIgnored.value.length} dispositivos?`)) return;
     isLoading.value = true;
-    try { await Promise.all(selectedIgnored.value.map(mac => api.post(`/discovery/restore/${mac}`))); showNotification('Restaurados', 'success'); selectedIgnored.value = []; await fetchIgnoredDevices(); await fetchPendingDevices(); } catch (e) { showNotification('Error', 'error') } finally { isLoading.value = false; }
+    try {
+        const macsToRestore = [...selectedIgnored.value]
+        await Promise.all(macsToRestore.map(mac => api.post(`/discovery/restore/${mac}`)));
+        ignoredDevices.value = ignoredDevices.value.filter(d => !macsToRestore.includes(d.mac_address));
+        selectedIgnored.value = [];
+        showNotification('Restaurados', 'success');
+        fetchPendingDevices().catch(err => console.error('Background sync failed:', err))
+    } catch (e) { showNotification('Error', 'error') } finally { isLoading.value = false; }
 }
 
 async function hardDeleteSelected() {
     if (selectedIgnored.value.length === 0) return;
     if (!confirm(`⚠️ ¿Eliminar DEFINITIVAMENTE ${selectedIgnored.value.length} dispositivos?`)) return;
     isLoading.value = true;
-    try { await Promise.all(selectedIgnored.value.map(mac => api.delete(`/discovery/ignored/${mac}`))); showNotification('Eliminados', 'info'); selectedIgnored.value = []; await fetchIgnoredDevices(); } catch (e) { showNotification('Error', 'error') } finally { isLoading.value = false; }
+    try {
+        const macsToDelete = [...selectedIgnored.value]
+        await Promise.all(macsToDelete.map(mac => api.delete(`/discovery/ignored/${mac}`)));
+        ignoredDevices.value = ignoredDevices.value.filter(d => !macsToDelete.includes(d.mac_address));
+        selectedIgnored.value = [];
+        showNotification('Eliminados', 'info');
+    } catch (e) { showNotification('Error', 'error') } finally { isLoading.value = false; }
 }
 
-async function restoreDevice(mac) { if(!confirm('¿Restaurar?')) return; try { await api.post(`/discovery/restore/${mac}`); await fetchIgnoredDevices(); await fetchPendingDevices(); showNotification('Restaurado', 'success') } catch(e) {} }
-async function hardDeleteDevice(mac) { if(!confirm('¿Eliminar DEFINITIVAMENTE?')) return; try { await api.delete(`/discovery/ignored/${mac}`); await fetchIgnoredDevices(); showNotification('Eliminado', 'info') } catch(e) {} }
+async function restoreDevice(mac) {
+  if(!confirm('¿Restaurar?')) return
+  try {
+    await api.post(`/discovery/restore/${mac}`)
+    ignoredDevices.value = ignoredDevices.value.filter(d => d.mac_address !== mac)
+    showNotification('Restaurado', 'success')
+    fetchIgnoredDevices().catch(err => console.error('Background sync failed:', err))
+    fetchPendingDevices().catch(err => console.error('Background sync failed:', err))
+  } catch(e) { showNotification('Error', 'error') }
+}
+
+async function hardDeleteDevice(mac) {
+  if(!confirm('¿Eliminar DEFINITIVAMENTE?')) return
+  try {
+    await api.delete(`/discovery/ignored/${mac}`)
+    ignoredDevices.value = ignoredDevices.value.filter(d => d.mac_address !== mac)
+    showNotification('Eliminado', 'info')
+    fetchIgnoredDevices().catch(err => console.error('Background sync failed:', err))
+  } catch(e) { showNotification('Error', 'error') }
+}
 
 async function deleteScanProfile(id) { if (!confirm('¿Eliminar tarea?')) return; try { await api.delete(`/discovery/profiles/${id}`); await fetchScanProfiles(); showNotification('Eliminada', 'success') } catch (e) {} }
 
-function editScanProfile(profile) { 
-    scanConfig.value = { ...scanConfig.value, id: profile.id, source_device_id: profile.source_device_id || profile.maestro_id, network_cidr: profile.network_cidr, interface: profile.interface, scan_ports: profile.scan_ports, scan_mode: profile.scan_mode, credential_profile_id: profile.credential_profile_id, is_active: profile.is_active, scan_interval_minutes: profile.scan_interval_minutes, target_group: profile.target_group || 'General', adopt_only_managed: profile.adopt_only_managed || false }
+function editScanProfile(profile) {
+    scanConfig.value = { ...scanConfig.value, id: profile.id, source_device_id: profile.source_device_id || profile.maestro_id, network_cidr: profile.network_cidr, interface: profile.interface, scan_ports: profile.scan_ports, scan_mode: profile.scan_mode, credential_profile_id: profile.credential_profile_id, is_active: profile.is_active, scan_interval_minutes: profile.scan_interval_minutes, target_group: profile.target_group || 'General', adopt_only_managed: profile.adopt_only_managed || false, skip_disabled_interfaces: profile.skip_disabled_interfaces || false }
     
     if (profile.target_group && profile.target_group !== 'General' && !groups.value.includes(profile.target_group)) {
         groups.value.push(profile.target_group); 
@@ -997,6 +1067,10 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                    <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
                    <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">Solo Gestionados (Credenciales)</label>
               </div>
+              <div v-if="scanConfig.scan_mode === 'auto'" class="checkbox-row" style="margin-top:5px; margin-bottom:10px; margin-left:5px;">
+                   <input type="checkbox" id="chkSkipDisabled" v-model="scanConfig.skip_disabled_interfaces" />
+                   <label for="chkSkipDisabled" style="font-size:0.9rem; color:#ccc;">Omitir Ethernet Apagada</label>
+              </div>
               <div v-if="scanConfig.scan_mode === 'auto'" class="auto-adopt-panel fade-in">
                 <hr class="separator" />
                 <h4 class="mini-title">🏗️ Receta</h4>
@@ -1045,7 +1119,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     :auto-tasks="autoTasks"
                                     :suggested-target-devices="[]"
                                     :has-parent-maestro="isSelectedProbeMaestro"
-                                    :device-interfaces="[]"
+                                    :device-interfaces="maestroInterfaces"
                                     :is-loading-interfaces="isLoadingInterfaces"
                                     hide-name
                                     is-compact
@@ -1232,7 +1306,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                     :auto-tasks="autoTasks"
                                     :suggested-target-devices="[]"
                                     :has-parent-maestro="isModalSourceMaestro"
-                                    :device-interfaces="[]"
+                                    :device-interfaces="maestroInterfaces"
                                     :is-loading-interfaces="false"
                                     hide-name
                                     is-compact

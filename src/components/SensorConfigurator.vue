@@ -239,19 +239,20 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
             <span v-if="!isTemplateMode && isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
             <span v-else-if="!isTemplateMode && !deviceInterfaces.length" style="font-size: 0.8rem; color: var(--error-red);">⚠️ Falló detección</span>
         </label>
-        <template v-if="isTemplateMode">
-            <input type="text" v-model="s.config.interface_name" required placeholder="Ej: ether1" />
-        </template>
-        <template v-else-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
-            <select v-model="s.config.interface_name" required :disabled="isLoadingInterfaces">
-                <option value="" disabled>Seleccione una interfaz</option>
-                <option v-if="s.config.interface_name && !deviceInterfaces.some(i => i.name === s.config.interface_name)" :value="s.config.interface_name">
+        <template v-if="deviceInterfaces.length > 0 || (isTemplateMode && deviceInterfaces.length > 0)">
+            <select v-model="s.config.interface_name" required :disabled="!isTemplateMode && isLoadingInterfaces">
+                <option value="">-- Escribir manualmente --</option>
+                <option value="__ALL_RUNNING__">🔄 Todas las interfaces (Running)</option>
+                <option v-if="s.config.interface_name && s.config.interface_name !== '__ALL_RUNNING__' && !deviceInterfaces.some(i => i.name === s.config.interface_name)" :value="s.config.interface_name">
                     {{ s.config.interface_name }} (Actual)
                 </option>
                 <option v-for="iface in deviceInterfaces" :key="iface.name" :value="iface.name">
                     {{ iface.name }} {{ iface.type !== 'unknown' ? `[${iface.type}]` : '' }} {{ iface.disabled ? '(Inactiva)' : '' }}
                 </option>
             </select>
+            <template v-if="s.config.interface_name === '' && !isTemplateMode">
+                <input type="text" v-model="s.config.interface_name" required placeholder="Ej: ether1" style="margin-top: 8px;" />
+            </template>
         </template>
         <template v-else>
             <input type="text" v-model="s.config.interface_name" required placeholder="Ej: ether1" />

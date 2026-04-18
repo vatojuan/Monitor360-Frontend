@@ -1173,10 +1173,17 @@ async function handleBulkDelete() {
 
   isDeletingBulk.value = true
   try {
-    await api.post('/devices/bulk-delete', { device_ids: selectedDevices.value })
-    showNotification(`${selectedDevices.value.length} dispositivos eliminados.`, 'success')
+    const idsToDelete = [...selectedDevices.value]
+    await api.post('/devices/bulk-delete', { device_ids: idsToDelete })
+
+    // Optimistic update: remove deleted devices immediately
+    allDevices.value = allDevices.value.filter(d => !idsToDelete.includes(d.id))
+    allDevicesList.value = allDevices.value
     selectedDevices.value = []
-    await fetchAllDevices()
+    showNotification(`${idsToDelete.length} dispositivos eliminados.`, 'success')
+
+    // Background sync (don't await)
+    fetchAllDevices().catch(err => console.error('Background sync failed:', err))
   } catch (error) {
     console.error(error)
     showNotification('Error en borrado masivo.', 'error')

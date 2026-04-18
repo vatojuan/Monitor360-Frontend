@@ -314,12 +314,26 @@ const parseMeta = (sys) => {
 
 const getFailedDevices = (sys) => {
   const m = parseMeta(sys)
-  return m.failed_devices || m.failed || m.errors || []
+  let devices = m.failed_devices || m.failed || m.errors || m.failed_items || m.error_details || []
+
+  // Si es un array de objetos con status, filtrar por los fallidos
+  if (Array.isArray(devices) && devices.length > 0 && typeof devices[0] === 'object' && devices[0]?.status) {
+    devices = devices.filter(d => d.status === 'failed' || d.status === 'error')
+  }
+
+  return devices || []
 }
 
 const getAdoptedDevices = (sys) => {
   const m = parseMeta(sys)
-  return m.adopted_devices || m.adopted || m.results || []
+  let devices = m.adopted_devices || m.adopted || m.results || m.successful || m.successful_devices || m.success_items || m.devices || []
+
+  // Si es un array de objetos con status, filtrar por los adoptados
+  if (Array.isArray(devices) && devices.length > 0 && typeof devices[0] === 'object' && devices[0]?.status) {
+    devices = devices.filter(d => d.status === 'adopted' || d.status === 'success')
+  }
+
+  return devices || []
 }
 
 const openDetails = (list, title = 'Detalles de Auditoría') => {
