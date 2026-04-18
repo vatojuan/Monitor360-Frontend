@@ -742,24 +742,33 @@ async function ignoreSelected() {
     if (selectedPending.value.length === 0) return;
     if (!confirm(`¿Ignorar ${selectedPending.value.length} dispositivos?`)) return;
     isLoading.value = true;
+    const macsToIgnore = [...selectedPending.value]
+    const prevPending = pendingDevices.value
+    pendingDevices.value = pendingDevices.value.filter(d => !macsToIgnore.includes(d.mac_address));
+    selectedPending.value = [];
     try {
-        const macsToIgnore = [...selectedPending.value]
         await Promise.all(macsToIgnore.map(mac => api.delete(`/discovery/pending/${mac}`)));
-        pendingDevices.value = pendingDevices.value.filter(d => !macsToIgnore.includes(d.mac_address));
-        selectedPending.value = [];
         showNotification('Ignorados correctamente', 'success');
         fetchIgnoredDevices().catch(err => console.error('Background sync failed:', err))
-    } catch (e) { showNotification('Error', 'error') } finally { isLoading.value = false; }
+    } catch (e) {
+        pendingDevices.value = prevPending;
+        selectedPending.value = macsToIgnore;
+        showNotification('Error', 'error')
+    } finally { isLoading.value = false; }
 }
 
 async function deletePending(mac) {
   if (!confirm('¿Ignorar este dispositivo?')) return
+  const prevPending = pendingDevices.value
+  pendingDevices.value = pendingDevices.value.filter(d => d.mac_address !== mac)
   try {
     await api.delete(`/discovery/pending/${mac}`)
-    pendingDevices.value = pendingDevices.value.filter(d => d.mac_address !== mac)
     showNotification('Movido a Ignorados', 'success')
     fetchIgnoredDevices().catch(err => console.error('Background sync failed:', err))
-  } catch (e) { showNotification('Error', 'error') }
+  } catch (e) {
+    pendingDevices.value = prevPending
+    showNotification('Error', 'error')
+  }
 }
 
 function toggleIgnoredSelection(mac) { selectedIgnored.value.includes(mac) ? selectedIgnored.value = selectedIgnored.value.filter(m => m !== mac) : selectedIgnored.value.push(mac) }

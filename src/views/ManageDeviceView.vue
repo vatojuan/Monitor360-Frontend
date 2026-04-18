@@ -1123,16 +1123,23 @@ async function handleVpnAssociation(device) {
 }
 
 async function deleteDevice(device) {
-  activeDropdown.value = null 
+  activeDropdown.value = null
   if (!confirm(`¿Eliminar "${device.client_name}"?`)) return
+
+  // Optimistic update: remove immediately before the API call
+  const prevDevices = allDevices.value
+  allDevices.value = allDevices.value.filter(d => d.id !== device.id)
+  allDevicesList.value = allDevices.value
+  selectedDevices.value = selectedDevices.value.filter(id => id !== device.id)
+
   try {
     deletingId.value = device.id
     await api.delete(`/devices/${device.id}`)
-    allDevices.value = allDevices.value.filter(d => d.id !== device.id)
-    allDevicesList.value = allDevices.value
-    selectedDevices.value = selectedDevices.value.filter(id => id !== device.id)
     showNotification('Eliminado.', 'success')
   } catch (error) {
+    // Restore list if API call failed
+    allDevices.value = prevDevices
+    allDevicesList.value = prevDevices
     console.error(error)
     showNotification('Error al eliminar.', 'error')
   } finally {
