@@ -1,6 +1,14 @@
 <script setup>
 import { computed, getCurrentInstance } from 'vue'
 
+// Controla el modo del campo interfaz en template mode: 'MANUAL' o '__ALL_RUNNING__'
+const templateInterfaceMode = computed({
+  get: () => s.value.config?.interface_name === '__ALL_RUNNING__' ? '__ALL_RUNNING__' : 'MANUAL',
+  set: (val) => {
+    s.value.config.interface_name = val === '__ALL_RUNNING__' ? '__ALL_RUNNING__' : ''
+  }
+})
+
 const props = defineProps({
   modelValue: { type: Object, required: true },
   sensorType: { type: String, required: true }, // 'ping', 'ethernet', 'wireless', 'system'
@@ -239,9 +247,16 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
             <span v-if="!isTemplateMode && isLoadingInterfaces" style="font-size: 0.8rem; color: var(--blue);">⏳ Detectando...</span>
             <span v-else-if="!isTemplateMode && !deviceInterfaces.length" style="font-size: 0.8rem; color: var(--error-red);">⚠️ Falló detección</span>
         </label>
-        <template v-if="deviceInterfaces.length > 0 || (isTemplateMode && deviceInterfaces.length > 0)">
-            <select v-model="s.config.interface_name" required :disabled="!isTemplateMode && isLoadingInterfaces">
-                <option value="">-- Escribir manualmente --</option>
+        <template v-if="isTemplateMode">
+            <select v-model="templateInterfaceMode">
+                <option value="MANUAL">✏️ Escribir manualmente</option>
+                <option value="__ALL_RUNNING__">🔄 Todas las interfaces (Running)</option>
+            </select>
+            <input v-if="templateInterfaceMode === 'MANUAL'" type="text" v-model="s.config.interface_name" placeholder="Ej: ether1" style="margin-top: 8px;" />
+        </template>
+        <template v-else-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
+            <select v-model="s.config.interface_name" required :disabled="isLoadingInterfaces">
+                <option value="" disabled>Seleccione una interfaz</option>
                 <option value="__ALL_RUNNING__">🔄 Todas las interfaces (Running)</option>
                 <option v-if="s.config.interface_name && s.config.interface_name !== '__ALL_RUNNING__' && !deviceInterfaces.some(i => i.name === s.config.interface_name)" :value="s.config.interface_name">
                     {{ s.config.interface_name }} (Actual)
@@ -250,9 +265,6 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
                     {{ iface.name }} {{ iface.type !== 'unknown' ? `[${iface.type}]` : '' }} {{ iface.disabled ? '(Inactiva)' : '' }}
                 </option>
             </select>
-            <template v-if="s.config.interface_name === '' && !isTemplateMode">
-                <input type="text" v-model="s.config.interface_name" required placeholder="Ej: ether1" style="margin-top: 8px;" />
-            </template>
         </template>
         <template v-else>
             <input type="text" v-model="s.config.interface_name" required placeholder="Ej: ether1" />
