@@ -298,36 +298,35 @@ const stopPolling = () => {
 const handleScanFinished = async () => {
   if (isScanning.value) {
     isScanning.value = false;
-    stopPolling(); // Apagamos el motor "chupa-datos"
-    await fetchPendingDevices(); // Sincronización final por si algún paquete de red se perdió
-    // La notificación de resumen la emite el backend vía system_notification (evita duplicado)
+    stopPolling();
+    await fetchPendingDevices();
   }
 };
 
-onMounted(async () => { 
+const handleDiscoveryDeviceDismissed = (event) => {
+  const mac = event?.detail?.mac
+  if (!mac) return
+  pendingDevices.value = pendingDevices.value.filter(d => d.mac_address !== mac)
+}
+
+onMounted(async () => {
   await loadGlobalData();
-  
-  // 1. Escuchar señal de refresco (general)
+
   window.addEventListener('discovery_refresh', handleDiscoveryRefresh);
-  
-  // 2. Escuchar hallazgos automáticos (estos sí podrían sonar en la campanita)
-  window.addEventListener('discovery_device_found', handleDeviceFound); 
-  
-  // 3. ESCUCHA SILENCIOSA (MANUAL): Por si acaso el Celery logra enviarlo
-  window.addEventListener('discovery_manual_hit', handleDeviceFound); 
-  
-  // 4. Escuchar fin de tarea
+  window.addEventListener('discovery_device_found', handleDeviceFound);
+  window.addEventListener('discovery_manual_hit', handleDeviceFound);
   window.addEventListener('discovery_scan_finished', handleScanFinished);
+  window.addEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
 })
 
 onUnmounted(() => {
-  stopPolling(); // Importante para no dejar bucles fantasma si el usuario cambia de página
-  
-  // Limpieza de todos los listeners para evitar fugas de memoria
+  stopPolling();
+
   window.removeEventListener('discovery_refresh', handleDiscoveryRefresh);
   window.removeEventListener('discovery_device_found', handleDeviceFound);
   window.removeEventListener('discovery_manual_hit', handleDeviceFound);
   window.removeEventListener('discovery_scan_finished', handleScanFinished);
+  window.removeEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
 })
 
 async function loadGlobalData() {

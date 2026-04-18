@@ -902,8 +902,8 @@ async function submitBulkRename() {
 }
 
 const handleRenameComplete = (event) => {
-  const payload = event?.detail; 
-  
+  const payload = event?.detail;
+
   if (payload && typeof payload.success_count !== 'undefined') {
       let msg = `Renombramiento listo: ${payload.success_count} exitosos.`;
       if (payload.not_found_count > 0) {
@@ -915,6 +915,23 @@ const handleRenameComplete = (event) => {
   }
 
   fetchAllDevices()
+}
+
+const handleDeviceDeleted = (event) => {
+  const { device_id } = event?.detail || {}
+  if (!device_id) return
+  allDevices.value = allDevices.value.filter(d => d.id !== device_id)
+  allDevicesList.value = allDevicesList.value.filter(d => d.id !== device_id)
+  selectedDevices.value = selectedDevices.value.filter(id => id !== device_id)
+}
+
+const handleBulkDeleteCompleted = (event) => {
+  const { device_ids } = event?.detail || {}
+  if (!Array.isArray(device_ids) || device_ids.length === 0) return
+  const deleted = new Set(device_ids)
+  allDevices.value = allDevices.value.filter(d => !deleted.has(d.id))
+  allDevicesList.value = allDevicesList.value.filter(d => !deleted.has(d.id))
+  selectedDevices.value = selectedDevices.value.filter(id => !deleted.has(id))
 }
 
 // ===== CARGA DE DATOS =====
@@ -1386,7 +1403,9 @@ async function submitBulkMonitors() {
 // ===== Lifecycle =====
 onMounted(() => {
   document.addEventListener('click', closeDropdownOnClickOutside)
-  window.addEventListener('bulk_rename_completed', handleRenameComplete) 
+  window.addEventListener('bulk_rename_completed', handleRenameComplete)
+  window.addEventListener('device_deleted', handleDeviceDeleted)
+  window.addEventListener('bulk_delete_completed', handleBulkDeleteCompleted)
   fetchAllDevices()
   fetchVpnProfiles()
   fetchCredentials()
@@ -1396,7 +1415,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeDropdownOnClickOutside)
-  window.removeEventListener('bulk_rename_completed', handleRenameComplete) 
+  window.removeEventListener('bulk_rename_completed', handleRenameComplete)
+  window.removeEventListener('device_deleted', handleDeviceDeleted)
+  window.removeEventListener('bulk_delete_completed', handleBulkDeleteCompleted)
 })
 </script>
 

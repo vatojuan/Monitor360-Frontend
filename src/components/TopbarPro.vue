@@ -113,7 +113,7 @@
                       
                       <button
                         v-if="getAdoptedDevices(sys).length > 0"
-                        @click.stop="openDetails(getAdoptedDevices(sys), 'Dispositivos adoptados con éxito')"
+                        @click.stop="openDetails(getAdoptedDevices(sys), 'Dispositivos adoptados con éxito', 'success')"
                         class="btn-text-small view-details-btn success"
                       >
                         Ver adoptados ({{ getAdoptedDevices(sys).length }})
@@ -121,7 +121,7 @@
 
                       <button
                         v-if="getFailedDevices(sys).length > 0"
-                        @click.stop="openDetails(getFailedDevices(sys), 'Detalles de fallo')"
+                        @click.stop="openDetails(getFailedDevices(sys), 'Detalles de fallo', 'error')"
                         class="btn-text-small view-details-btn"
                       >
                         Ver detalles de fallo ({{ getFailedDevices(sys).length }})
@@ -209,7 +209,7 @@
         </div>
         <div class="m360-modal-body">
           <ul class="details-list">
-            <li v-for="(item, idx) in currentDetailsList" :key="idx">{{ item }}</li>
+            <li v-for="(item, idx) in currentDetailsList" :key="idx" :class="currentDetailsType">{{ formatDeviceItem(item) }}</li>
           </ul>
         </div>
       </div>
@@ -303,6 +303,17 @@ const totalBadgeCount = computed(() => notifications.value.length + sysNotificat
 const showDetailsModal = ref(false)
 const currentDetailsList = ref([])
 const currentDetailsTitle = ref('Detalles')
+const currentDetailsType = ref('error') // 'success' | 'error'
+
+const formatDeviceItem = (item) => {
+  if (typeof item === 'string') return item
+  const name = item.name || item.hostname || item.host || item.device_name || ''
+  const ip = item.ip_address || item.ip || ''
+  if (name && ip) return `${name} — ${ip}`
+  if (ip) return ip
+  if (name) return name
+  return JSON.stringify(item)
+}
 
 const parseMeta = (sys) => {
   if (!sys.meta_data) return {}
@@ -336,12 +347,13 @@ const getAdoptedDevices = (sys) => {
   return devices || []
 }
 
-const openDetails = (list, title = 'Detalles de Auditoría') => {
+const openDetails = (list, title = 'Detalles de Auditoría', type = 'error') => {
   if (list.length > 0) {
     currentDetailsList.value = list
     currentDetailsTitle.value = title
+    currentDetailsType.value = type
     showDetailsModal.value = true
-    showNotif.value = false // Cerramos la campanita para no ensuciar la pantalla
+    showNotif.value = false
   }
 }
 // ------------------------------------
@@ -460,13 +472,19 @@ const handleGlobalNotificationEvent = () => {
     fetchAllNotifications();
 };
 
+const handleDiscoveryDeviceDismissed = (event) => {
+  const mac = event?.detail?.mac
+  if (!mac) return
+  notifications.value = notifications.value.filter(n => n.mac_address !== mac)
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown, true)
-  
-  // Escuchar eventos globales disparados desde ScanView o AppLayout
+
   window.addEventListener('refresh-notifications', handleGlobalNotificationEvent);
   window.addEventListener('new_notification', handleGlobalNotificationEvent);
+  window.addEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
 
   fetchAllNotifications()
   notifInterval = setInterval(fetchAllNotifications, 30000)
@@ -475,9 +493,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('pointerdown', onDocPointerDown, true)
-  
+
   window.removeEventListener('refresh-notifications', handleGlobalNotificationEvent);
   window.removeEventListener('new_notification', handleGlobalNotificationEvent);
+  window.removeEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
 
   if (notifInterval) clearInterval(notifInterval)
 })
@@ -914,11 +933,17 @@ const onLogout = () => {
   background: rgba(255, 255, 255, 0.03);
   padding: 12px;
   border-radius: 6px;
-  color: #ff9a9a;
   font-size: 13px;
   font-family: monospace;
-  border-left: 3px solid #e94560;
   word-break: break-all;
+}
+.details-list li.error {
+  color: #ff9a9a;
+  border-left: 3px solid #e94560;
+}
+.details-list li.success {
+  color: #3ddc84;
+  border-left: 3px solid #3ddc84;
 }
 
 /* Transitions */
