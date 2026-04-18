@@ -1072,7 +1072,7 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                 <label><input type="radio" v-model="scanConfig.scan_mode" value="notify" /> Notificar</label>
                 <label><input type="radio" v-model="scanConfig.scan_mode" value="auto" /> Auto-Adoptar</label>
               </div>
-               <div v-if="scanConfig.scan_mode === 'notify' || (scanConfig.scan_mode === 'auto' && sensorsTemplateList.length === 0)" class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
+               <div v-if="scanConfig.scan_mode === 'notify' || scanConfig.scan_mode === 'auto'" class="checkbox-row" style="margin-top:10px; margin-bottom:15px; margin-left:5px;">
                    <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
                    <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">Solo Gestionados (Credenciales)</label>
               </div>
