@@ -158,10 +158,17 @@ async function openAppWebSocket() {
         // ✅ Reenviamos el resultado del escaneo remoto
         notifyAll(msg)
       } else if (msg?.type === 'bulk_rename_completed') {
-        // ✅ EVENTO NUEVO: Actualización Masiva de Nombres (Bulk Rename)
         wsLog('Evento de bulk_rename_completed recibido.', msg)
         window.dispatchEvent(new CustomEvent('bulk_rename_completed', { detail: msg }))
         notifyAll(msg)
+      } else if (
+        msg?.type === 'new_notification' ||
+        msg?.type === 'system_notification' ||
+        msg?.type === 'adoption_complete'
+      ) {
+        wsLog('Notificación de sistema recibida vía WS, refrescando topbar.', msg)
+        window.dispatchEvent(new Event('new_notification'))
+        window.dispatchEvent(new Event('refresh-notifications'))
       }
     } catch (err) {
       if (DEV) console.debug('[WS] parse skip:', err?.message || err)

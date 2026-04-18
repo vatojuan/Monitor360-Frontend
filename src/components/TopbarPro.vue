@@ -304,27 +304,22 @@ const showDetailsModal = ref(false)
 const currentDetailsList = ref([])
 const currentDetailsTitle = ref('Detalles')
 
-const getFailedDevices = (sys) => {
-  if (!sys.meta_data) return []
-  // Parseo seguro por si el backend mandó un string JSON o un objeto directo
+const parseMeta = (sys) => {
+  if (!sys.meta_data) return {}
   if (typeof sys.meta_data === 'string') {
-    try {
-      const parsed = JSON.parse(sys.meta_data)
-      return parsed.failed_devices || []
-    } catch(e) { return [] }
+    try { return JSON.parse(sys.meta_data) } catch { return {} }
   }
-  return sys.meta_data.failed_devices || []
+  return sys.meta_data
+}
+
+const getFailedDevices = (sys) => {
+  const m = parseMeta(sys)
+  return m.failed_devices || m.failed || m.errors || []
 }
 
 const getAdoptedDevices = (sys) => {
-  if (!sys.meta_data) return []
-  if (typeof sys.meta_data === 'string') {
-    try {
-      const parsed = JSON.parse(sys.meta_data)
-      return parsed.adopted_devices || []
-    } catch(e) { return [] }
-  }
-  return sys.meta_data.adopted_devices || []
+  const m = parseMeta(sys)
+  return m.adopted_devices || m.adopted || m.results || []
 }
 
 const openDetails = (list, title = 'Detalles de Auditoría') => {

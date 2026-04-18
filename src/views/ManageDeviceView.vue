@@ -1128,8 +1128,11 @@ async function deleteDevice(device) {
   try {
     deletingId.value = device.id
     await api.delete(`/devices/${device.id}`)
-    await fetchAllDevices()
+    allDevices.value = allDevices.value.filter(d => d.id !== device.id)
+    allDevicesList.value = allDevices.value
+    selectedDevices.value = selectedDevices.value.filter(id => id !== device.id)
     showNotification('Eliminado.', 'success')
+    fetchAllDevices() // background sync, no await
   } catch (error) {
     console.error(error)
     showNotification('Error al eliminar.', 'error')
