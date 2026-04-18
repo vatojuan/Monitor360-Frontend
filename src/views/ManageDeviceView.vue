@@ -1132,7 +1132,6 @@ async function deleteDevice(device) {
     allDevicesList.value = allDevices.value
     selectedDevices.value = selectedDevices.value.filter(id => id !== device.id)
     showNotification('Eliminado.', 'success')
-    fetchAllDevices() // background sync, no await
   } catch (error) {
     console.error(error)
     showNotification('Error al eliminar.', 'error')

@@ -1522,6 +1522,22 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
 .probe-details span { color: #aaa; font-size: 0.75rem; font-family: monospace; }
 
 @media (max-width: 820px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .tabs {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 0.85rem;
+    text-align: center;
+  }
   .content-grid {
     grid-template-columns: 1fr;
   }
