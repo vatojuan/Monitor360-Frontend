@@ -148,38 +148,85 @@ async function openAppWebSocket() {
   ws.addEventListener('message', (ev) => {
     try {
       const msg = JSON.parse(ev.data)
+
+      // --- Datos de sensores (batch o individual) ---
       if (msg?.type === 'sensor_batch' && Array.isArray(msg?.items)) {
-        for (const item of msg.items) {
-          notifyAll(item)
-        }
-      } else if (msg && Object.prototype.hasOwnProperty.call(msg, 'sensor_id')) {
+        for (const item of msg.items) notifyAll(item)
+        return
+      }
+      if (msg && Object.prototype.hasOwnProperty.call(msg, 'sensor_id')) {
         notifyAll(msg)
-      } else if (msg?.type === 'qr_config') {
-        notifyAll(msg)
-      } else if (msg?.type === 'bulk_rename_completed') {
-        wsLog('Evento de bulk_rename_completed recibido.', msg)
-        window.dispatchEvent(new CustomEvent('bulk_rename_completed', { detail: msg }))
-        notifyAll(msg)
-      } else if (
-        msg?.type === 'new_notification' ||
-        msg?.type === 'system_notification' ||
-        msg?.type === 'adoption_complete'
-      ) {
-        wsLog('Notificación de sistema recibida vía WS, refrescando topbar.', msg)
-        window.dispatchEvent(new Event('new_notification'))
-        window.dispatchEvent(new Event('refresh-notifications'))
-        notifyAll(msg)
-      } else if (msg?.type) {
-        // Ignorar mensajes de control internos del WS
-        if (msg.type !== 'pong' && msg.type !== 'hello' && msg.type !== 'ready') {
-          console.log('[WS] Evento recibido:', msg.type, msg)
-        }
-        notifyAll(msg)
-        // Si el evento indica fin de tarea/trabajo, refrescar campanita
-        if (/notif|complete|finish|adopt|discover|task|profile|scan/i.test(msg.type)) {
+        return
+      }
+
+      // --- Eventos con dispatch explícito ---
+      switch (msg?.type) {
+        case 'qr_config':
+          notifyAll(msg)
+          break
+
+        case 'bulk_rename_completed':
+          wsLog('bulk_rename_completed', msg)
+          window.dispatchEvent(new CustomEvent('bulk_rename_completed', { detail: msg }))
+          notifyAll(msg)
+          break
+
+        case 'device_deleted':
+          wsLog('device_deleted', msg)
+          window.dispatchEvent(new CustomEvent('device_deleted', { detail: { device_id: msg.device_id } }))
+          notifyAll(msg)
+          break
+
+        case 'bulk_delete_completed':
+          wsLog('bulk_delete_completed', msg)
+          window.dispatchEvent(new CustomEvent('bulk_delete_completed', { detail: msg }))
+          notifyAll(msg)
+          break
+
+        case 'discovery_device_dismissed':
+          wsLog('discovery_device_dismissed', msg)
+          window.dispatchEvent(new CustomEvent('discovery_device_dismissed', { detail: { mac: msg.mac } }))
+          notifyAll(msg)
+          break
+
+        case 'discovery_scan_finished':
+          wsLog('discovery_scan_finished', msg)
+          window.dispatchEvent(new Event('discovery_scan_finished'))
+          window.dispatchEvent(new Event('refresh-notifications'))
+          notifyAll(msg)
+          break
+
+        case 'adoption_complete':
+          wsLog('adoption_complete', msg)
+          window.dispatchEvent(new Event('adoption_complete'))
           window.dispatchEvent(new Event('new_notification'))
           window.dispatchEvent(new Event('refresh-notifications'))
-        }
+          notifyAll(msg)
+          break
+
+        case 'new_notification':
+        case 'system_notification':
+          wsLog('notificación de sistema', msg)
+          window.dispatchEvent(new Event('new_notification'))
+          window.dispatchEvent(new Event('refresh-notifications'))
+          notifyAll(msg)
+          break
+
+        case 'pong':
+        case 'hello':
+        case 'ready':
+          // mensajes de control internos — ignorar
+          break
+
+        default:
+          if (msg?.type) {
+            wsLog('Evento recibido:', msg.type, msg)
+            notifyAll(msg)
+            if (/notif|complete|finish|adopt|discover|task|profile|scan/i.test(msg.type)) {
+              window.dispatchEvent(new Event('new_notification'))
+              window.dispatchEvent(new Event('refresh-notifications'))
+            }
+          }
       }
     } catch (err) {
       if (DEV) console.debug('[WS] parse skip:', err?.message || err)

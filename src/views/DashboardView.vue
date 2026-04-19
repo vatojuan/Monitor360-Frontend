@@ -887,6 +887,21 @@ const handleAdoptionComplete = async () => {
   wireWsSyncAndSubs()
 }
 
+const handleDeviceDeleted = (event) => {
+  const { device_id } = event?.detail || {}
+  if (!device_id) return
+  allMonitors.value = allMonitors.value.filter(m => m.device_id !== device_id)
+  refreshGroupedMonitors()
+}
+
+const handleBulkDeleteCompleted = (event) => {
+  const { device_ids } = event?.detail || {}
+  if (!Array.isArray(device_ids) || device_ids.length === 0) return
+  const deleted = new Set(device_ids)
+  allMonitors.value = allMonitors.value.filter(m => !deleted.has(m.device_id))
+  refreshGroupedMonitors()
+}
+
 // El discovery_scan_finished llega antes que el adoption worker termine.
 // Recargamos monitores escalonadamente para capturar lo que el worker adopte.
 const handleDiscoveryScanFinished = () => {
@@ -920,6 +935,8 @@ onMounted(async () => {
   window.addEventListener('adoption_complete', handleAdoptionComplete)
   window.addEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
   window.addEventListener('discovery_refresh', handleAdoptionComplete)
+  window.addEventListener('device_deleted', handleDeviceDeleted)
+  window.addEventListener('bulk_delete_completed', handleBulkDeleteCompleted)
 
   document.addEventListener('click', closeKebab)
   document.addEventListener('click', closeGroupKebab)
@@ -938,6 +955,8 @@ onUnmounted(() => {
   window.removeEventListener('adoption_complete', handleAdoptionComplete)
   window.removeEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
   window.removeEventListener('discovery_refresh', handleAdoptionComplete)
+  window.removeEventListener('device_deleted', handleDeviceDeleted)
+  window.removeEventListener('bulk_delete_completed', handleBulkDeleteCompleted)
   if (gridResizeObserver) gridResizeObserver.disconnect();
   document.removeEventListener('click', closeKebab)
   document.removeEventListener('click', closeGroupKebab)
