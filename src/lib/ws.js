@@ -169,6 +169,9 @@ async function openAppWebSocket() {
         wsLog('Notificación de sistema recibida vía WS, refrescando topbar.', msg)
         window.dispatchEvent(new Event('new_notification'))
         window.dispatchEvent(new Event('refresh-notifications'))
+      } else if (msg?.type) {
+        // Eventos genéricos (device_deleted, bulk_delete_completed, discovery_device_dismissed, etc.)
+        notifyAll(msg)
       }
     } catch (err) {
       if (DEV) console.debug('[WS] parse skip:', err?.message || err)
