@@ -216,6 +216,7 @@
     </div>
   </transition>
 
+
 </template>
 
 <script setup>
@@ -468,7 +469,6 @@ const onDocPointerDown = (e) => {
 
 // --- EVENTOS GLOBALES DE WEBSOCKET Y POLLING ---
 const handleGlobalNotificationEvent = () => {
-    console.log("Topbar: Escuchando evento para refrescar notificaciones");
     fetchAllNotifications();
 };
 
@@ -478,6 +478,11 @@ const handleDiscoveryDeviceDismissed = (event) => {
   notifications.value = notifications.value.filter(n => n.mac_address !== mac)
 }
 
+// Adopción completada: espera a que el backend escriba en DB antes de fetchear
+const handleAdoptionComplete = () => {
+  setTimeout(fetchAllNotifications, 1500)
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown, true)
@@ -485,6 +490,7 @@ onMounted(() => {
   window.addEventListener('refresh-notifications', handleGlobalNotificationEvent);
   window.addEventListener('new_notification', handleGlobalNotificationEvent);
   window.addEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
+  window.addEventListener('adoption_complete', handleAdoptionComplete);
 
   fetchAllNotifications()
   notifInterval = setInterval(fetchAllNotifications, 30000)
@@ -497,6 +503,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('refresh-notifications', handleGlobalNotificationEvent);
   window.removeEventListener('new_notification', handleGlobalNotificationEvent);
   window.removeEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
+  window.removeEventListener('adoption_complete', handleAdoptionComplete);
 
   if (notifInterval) clearInterval(notifInterval)
 })

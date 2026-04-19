@@ -881,6 +881,12 @@ function wireWsSyncAndSubs() {
   }
 }
 
+const handleAdoptionComplete = async () => {
+  await fetchAllMonitors()
+  await fetchAllDevices()
+  wireWsSyncAndSubs()
+}
+
 onMounted(async () => {
   try {
     await waitForSession({ requireAuth: true })
@@ -896,10 +902,11 @@ onMounted(async () => {
   wireWsSyncAndSubs()
 
   wsBufferTimer = setInterval(flushWsUpdates, 500)
-  window.addEventListener("resize", resizeAllGridItems);
-  
+  window.addEventListener("resize", resizeAllGridItems)
+  window.addEventListener('adoption_complete', handleAdoptionComplete)
+
   document.addEventListener('click', closeKebab)
-  document.addEventListener('click', closeGroupKebab) 
+  document.addEventListener('click', closeGroupKebab)
   document.addEventListener('click', handleFirstInteraction)
   document.addEventListener('keydown', handleSearchShortcut)
 })
@@ -908,10 +915,11 @@ onUnmounted(() => {
   if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
   if (typeof directMsgUnbind === 'function') directMsgUnbind()
   if (wsBufferTimer) clearInterval(wsBufferTimer)
-  
+
   if (typeof audioLoopTimer !== 'undefined' && audioLoopTimer) clearInterval(audioLoopTimer)
-  
-  window.removeEventListener("resize", resizeAllGridItems);
+
+  window.removeEventListener("resize", resizeAllGridItems)
+  window.removeEventListener('adoption_complete', handleAdoptionComplete)
   if (gridResizeObserver) gridResizeObserver.disconnect();
   document.removeEventListener('click', closeKebab)
   document.removeEventListener('click', closeGroupKebab)
