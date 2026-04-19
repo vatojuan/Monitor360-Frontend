@@ -911,6 +911,23 @@ const handleDiscoveryScanFinished = async () => {
   }, 6000)
 }
 
+// Polling de monitores atado al primer evento de adopción (system_notification).
+// Garantiza la actualización del dashboard aunque los eventos WS posteriores se pierdan.
+let _adoptionPollInterval = null
+const startAdoptionPolling = () => {
+  if (_adoptionPollInterval) clearInterval(_adoptionPollInterval)
+  let ticks = 0
+  _adoptionPollInterval = setInterval(async () => {
+    await fetchAllMonitors()
+    wireWsSyncAndSubs()
+    ticks++
+    if (ticks >= 6) {
+      clearInterval(_adoptionPollInterval)
+      _adoptionPollInterval = null
+    }
+  }, 4000) // 6 × 4s = 24s de cobertura
+}
+
 onMounted(async () => {
   try {
     await waitForSession({ requireAuth: true })
@@ -930,6 +947,8 @@ onMounted(async () => {
   window.addEventListener('adoption_complete', handleAdoptionComplete)
   window.addEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
   window.addEventListener('discovery_refresh', handleAdoptionComplete)
+  window.addEventListener('system_notification', startAdoptionPolling)
+  window.addEventListener('new_notification', startAdoptionPolling)
   window.addEventListener('device_deleted', handleDeviceDeleted)
   window.addEventListener('bulk_delete_completed', handleBulkDeleteCompleted)
 
@@ -950,6 +969,9 @@ onUnmounted(() => {
   window.removeEventListener('adoption_complete', handleAdoptionComplete)
   window.removeEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
   window.removeEventListener('discovery_refresh', handleAdoptionComplete)
+  window.removeEventListener('system_notification', startAdoptionPolling)
+  window.removeEventListener('new_notification', startAdoptionPolling)
+  if (_adoptionPollInterval) clearInterval(_adoptionPollInterval)
   window.removeEventListener('device_deleted', handleDeviceDeleted)
   window.removeEventListener('bulk_delete_completed', handleBulkDeleteCompleted)
   if (gridResizeObserver) gridResizeObserver.disconnect();

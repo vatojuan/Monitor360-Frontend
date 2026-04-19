@@ -488,21 +488,37 @@ const handleGlobalNotificationEvent = () => {
 const handleSystemNotificationWS = async (event) => {
   const msg = event?.detail
   if (msg?.title || msg?.message) {
-    // Inyectar notificación inmediata sin esperar el fetch REST
+    // Construir meta_data desde todas las ubicaciones posibles del mensaje WS:
+    // el backend puede enviar los datos dentro de meta_data o al nivel raíz del mensaje.
+    let baseMeta = {}
+    if (msg.meta_data) {
+      baseMeta = typeof msg.meta_data === 'string'
+        ? (() => { try { return JSON.parse(msg.meta_data) } catch { return {} } })()
+        : msg.meta_data
+    }
+    const mergedMeta = {
+      ...baseMeta,
+      successful_count: baseMeta.successful_count ?? msg.successful_count ?? msg.num_candidates,
+      adopted_devices:  baseMeta.adopted_devices  ?? msg.adopted_devices  ?? [],
+      failed_devices:   baseMeta.failed_devices   ?? msg.failed_devices   ?? [],
+    }
+
     const synthetic = {
       id: `ws-${Date.now()}`,
       title: msg.title || 'Aviso del sistema',
       message: msg.message || '',
       type: msg.level || 'info',
-      meta_data: msg.meta_data ?? null,
+      meta_data: mergedMeta,
       created_at: new Date().toISOString(),
       _synthetic: true,
     }
     sysNotifications.value = [synthetic, ...sysNotifications.value.filter(n => !n._synthetic)]
     if (showNotif.value) activeNotifTab.value = 'system'
   }
-  // Sincronizar con REST tras breve delay (reemplaza la entrada sintética con la real de BD)
+  // Sincronizar con REST en varias pasadas: el backend puede persistir los datos con delay
   setTimeout(fetchSystemNotifications, 1500)
+  setTimeout(fetchSystemNotifications, 5000)
+  setTimeout(fetchSystemNotifications, 12000)
 }
 
 const handleDiscoveryDeviceDismissed = (event) => {
