@@ -1143,20 +1143,15 @@ async function deleteDevice(device) {
   activeDropdown.value = null
   if (!confirm(`¿Eliminar "${device.client_name}"?`)) return
 
-  // Optimistic update: remove immediately before the API call
-  const prevDevices = allDevices.value
-  allDevices.value = allDevices.value.filter(d => d.id !== device.id)
-  allDevicesList.value = allDevices.value
-  selectedDevices.value = selectedDevices.value.filter(id => id !== device.id)
-
   try {
     deletingId.value = device.id
     await api.delete(`/devices/${device.id}`)
+    // Eliminar del estado local tras confirmar 204
+    allDevices.value = allDevices.value.filter(d => d.id !== device.id)
+    allDevicesList.value = [...allDevices.value]
+    selectedDevices.value = selectedDevices.value.filter(id => id !== device.id)
     showNotification('Eliminado.', 'success')
   } catch (error) {
-    // Restore list if API call failed
-    allDevices.value = prevDevices
-    allDevicesList.value = prevDevices
     console.error(error)
     showNotification('Error al eliminar.', 'error')
   } finally {
@@ -1200,14 +1195,12 @@ async function handleBulkDelete() {
     const idsToDelete = [...selectedDevices.value]
     await api.post('/devices/bulk-delete', { device_ids: idsToDelete })
 
-    // Optimistic update: remove deleted devices immediately
-    allDevices.value = allDevices.value.filter(d => !idsToDelete.includes(d.id))
-    allDevicesList.value = allDevices.value
+    // Eliminar del estado local tras confirmar respuesta del servidor
+    const deletedSet = new Set(idsToDelete)
+    allDevices.value = allDevices.value.filter(d => !deletedSet.has(d.id))
+    allDevicesList.value = [...allDevices.value]
     selectedDevices.value = []
     showNotification(`${idsToDelete.length} dispositivos eliminados.`, 'success')
-
-    // Background sync (don't await)
-    fetchAllDevices().catch(err => console.error('Background sync failed:', err))
   } catch (error) {
     console.error(error)
     showNotification('Error en borrado masivo.', 'error')

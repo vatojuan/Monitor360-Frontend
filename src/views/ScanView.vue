@@ -309,6 +309,18 @@ const handleDiscoveryDeviceDismissed = (event) => {
   pendingDevices.value = pendingDevices.value.filter(d => d.mac_address !== mac)
 }
 
+const handleAdoptionComplete = async (event) => {
+  const payload = event?.detail || {}
+  const adopted = payload.adopted_count ?? payload.success_count ?? payload.adopted ?? 0
+  const failed = payload.failed_count ?? payload.error_count ?? payload.failed ?? 0
+  if (adopted > 0) {
+    showNotification(`✅ Adopción completada: ${adopted} dispositivo(s) adoptado(s)${failed > 0 ? `, ${failed} con error` : ''}.`, 'success')
+  } else if (failed > 0) {
+    showNotification(`⚠️ Adopción finalizada con ${failed} error(es).`, 'warning')
+  }
+  await fetchPendingDevices()
+}
+
 onMounted(async () => {
   await loadGlobalData();
 
@@ -317,6 +329,7 @@ onMounted(async () => {
   window.addEventListener('discovery_manual_hit', handleDeviceFound);
   window.addEventListener('discovery_scan_finished', handleScanFinished);
   window.addEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
+  window.addEventListener('adoption_complete', handleAdoptionComplete);
 })
 
 onUnmounted(() => {
@@ -327,6 +340,7 @@ onUnmounted(() => {
   window.removeEventListener('discovery_manual_hit', handleDeviceFound);
   window.removeEventListener('discovery_scan_finished', handleScanFinished);
   window.removeEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
+  window.removeEventListener('adoption_complete', handleAdoptionComplete);
 })
 
 async function loadGlobalData() {
