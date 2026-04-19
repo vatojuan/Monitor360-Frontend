@@ -902,18 +902,16 @@ const handleBulkDeleteCompleted = (event) => {
   refreshGroupedMonitors()
 }
 
-// El discovery_scan_finished llega antes que el adoption worker termine.
-// Recargamos monitores escalonadamente para capturar lo que el worker adopte.
-const handleDiscoveryScanFinished = () => {
+// El backend envía discovery_scan_finished como ÚLTIMO evento, después de que
+// la adopción ya está completa. Fetch inmediato + un reintento de seguridad.
+const handleDiscoveryScanFinished = async () => {
+  await fetchAllMonitors()
+  await fetchAllDevices()
+  wireWsSyncAndSubs()
   setTimeout(async () => {
     await fetchAllMonitors()
-    await fetchAllDevices()
     wireWsSyncAndSubs()
   }, 6000)
-  setTimeout(async () => {
-    await fetchAllMonitors()
-    wireWsSyncAndSubs()
-  }, 15000)
 }
 
 onMounted(async () => {

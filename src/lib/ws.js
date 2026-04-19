@@ -154,7 +154,15 @@ async function openAppWebSocket() {
         for (const item of msg.items) notifyAll(item)
         return
       }
-      if (msg && Object.prototype.hasOwnProperty.call(msg, 'sensor_id')) {
+      // Solo hacer early-return para mensajes de métricas puras (sin tipo de evento reconocido).
+      // Si el mensaje tiene un tipo conocido en el switch, debe llegar al switch aunque tenga sensor_id.
+      const KNOWN_EVENT_TYPES = new Set([
+        'adoption_complete', 'new_notification', 'system_notification',
+        'discovery_scan_finished', 'discovery_refresh', 'discovery_device_dismissed',
+        'device_deleted', 'bulk_delete_completed', 'bulk_rename_completed',
+        'ui_reload_required', 'qr_config', 'pong', 'hello', 'ready',
+      ])
+      if (msg && Object.prototype.hasOwnProperty.call(msg, 'sensor_id') && !KNOWN_EVENT_TYPES.has(msg?.type)) {
         notifyAll(msg)
         return
       }
@@ -186,6 +194,13 @@ async function openAppWebSocket() {
         case 'discovery_device_dismissed':
           wsLog('discovery_device_dismissed', msg)
           window.dispatchEvent(new CustomEvent('discovery_device_dismissed', { detail: { mac: msg.mac } }))
+          notifyAll(msg)
+          break
+
+        case 'discovery_refresh':
+          wsLog('discovery_refresh', msg)
+          window.dispatchEvent(new Event('discovery_refresh'))
+          window.dispatchEvent(new Event('refresh-notifications'))
           notifyAll(msg)
           break
 
