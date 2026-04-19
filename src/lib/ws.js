@@ -199,31 +199,38 @@ async function openAppWebSocket() {
 
         case 'discovery_refresh':
           wsLog('discovery_refresh', msg)
-          window.dispatchEvent(new Event('discovery_refresh'))
-          window.dispatchEvent(new Event('refresh-notifications'))
+          window.dispatchEvent(new CustomEvent('discovery_refresh', { detail: msg }))
+          window.dispatchEvent(new CustomEvent('refresh-notifications', { detail: msg }))
           notifyAll(msg)
           break
 
         case 'discovery_scan_finished':
           wsLog('discovery_scan_finished', msg)
-          window.dispatchEvent(new Event('discovery_scan_finished'))
-          window.dispatchEvent(new Event('refresh-notifications'))
+          window.dispatchEvent(new CustomEvent('discovery_scan_finished', { detail: msg }))
+          window.dispatchEvent(new CustomEvent('refresh-notifications', { detail: msg }))
           notifyAll(msg)
           break
 
         case 'adoption_complete':
           wsLog('adoption_complete', msg)
-          window.dispatchEvent(new Event('adoption_complete'))
-          window.dispatchEvent(new Event('new_notification'))
-          window.dispatchEvent(new Event('refresh-notifications'))
+          window.dispatchEvent(new CustomEvent('adoption_complete', { detail: msg }))
+          window.dispatchEvent(new CustomEvent('new_notification', { detail: msg }))
+          window.dispatchEvent(new CustomEvent('refresh-notifications', { detail: msg }))
           notifyAll(msg)
           break
 
         case 'new_notification':
+          wsLog('new_notification', msg)
+          window.dispatchEvent(new CustomEvent('new_notification', { detail: msg }))
+          window.dispatchEvent(new CustomEvent('refresh-notifications', { detail: msg }))
+          notifyAll(msg)
+          break
+
         case 'system_notification':
-          wsLog('notificación de sistema', msg)
-          window.dispatchEvent(new Event('new_notification'))
-          window.dispatchEvent(new Event('refresh-notifications'))
+          wsLog('system_notification', msg)
+          window.dispatchEvent(new CustomEvent('system_notification', { detail: msg }))
+          window.dispatchEvent(new CustomEvent('new_notification', { detail: msg }))
+          window.dispatchEvent(new CustomEvent('refresh-notifications', { detail: msg }))
           notifyAll(msg)
           break
 

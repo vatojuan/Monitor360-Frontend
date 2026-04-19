@@ -821,19 +821,16 @@ function handleRawMessage(evt) {
     // 1. Homogeneizamos la respuesta a un Array (sea un objeto único o un Batch de Fase 3)
     const eventsArray = Array.isArray(parsed) ? parsed : [parsed]
 
-    // 2. --- NUEVO: Interceptar comandos del Bot de Telegram ---
-    // Buscamos si AL MENOS UN evento en el lote solicita recargar la UI
-    const needsReload = eventsArray.some(e => e && e.type === 'ui_reload_required')
-    
+    // 2. Interceptar eventos que requieren recargar la lista de monitores
+    const RELOAD_TYPES = new Set(['ui_reload_required', 'discovery_refresh', 'discovery_scan_finished'])
+    const needsReload = eventsArray.some(e => e && RELOAD_TYPES.has(e.type))
+
     if (needsReload) {
-      console.log("[WS] Recarga de UI solicitada por backend (Silencio/Bot).")
-      fetchGroups()
-      fetchAllMonitors()
-      // IMPORTANTE: Ya no hacemos "return" aquí. 
-      // El lote (batch) podría contener también pings o métricas importantes 
-      // mezcladas con la alerta de recarga, así que dejamos que el código continúe.
+      fetchAllMonitors().then(() => {
+        fetchAllDevices()
+        wireWsSyncAndSubs()
+      })
     }
-    // ------------------------------------------------------------------
 
     // 3. Dejamos que el normalizador extraiga únicamente lo que es de sensores
     const updates = normalizeWsPayload(parsed)

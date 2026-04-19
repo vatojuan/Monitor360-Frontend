@@ -328,9 +328,13 @@ const getFailedDevices = (sys) => {
   const m = parseMeta(sys)
   let devices = m.failed_devices || m.failed || m.errors || m.failed_items || m.error_details || []
 
-  // Si es un array de objetos con status, filtrar por los fallidos
   if (Array.isArray(devices) && devices.length > 0 && typeof devices[0] === 'object' && devices[0]?.status) {
     devices = devices.filter(d => d.status === 'failed' || d.status === 'error')
+  }
+
+  // Fallback: si solo tenemos un conteo, crear placeholder legible
+  if ((!devices || devices.length === 0) && Number(m.failed_count) > 0) {
+    return [`${m.failed_count} dispositivo(s) con error de adopción`]
   }
 
   return devices || []
@@ -340,9 +344,13 @@ const getAdoptedDevices = (sys) => {
   const m = parseMeta(sys)
   let devices = m.adopted_devices || m.adopted || m.results || m.successful || m.successful_devices || m.success_items || m.devices || []
 
-  // Si es un array de objetos con status, filtrar por los adoptados
   if (Array.isArray(devices) && devices.length > 0 && typeof devices[0] === 'object' && devices[0]?.status) {
     devices = devices.filter(d => d.status === 'adopted' || d.status === 'success')
+  }
+
+  // Fallback: si el backend solo envía el conteo (successful_count), generar placeholder
+  if ((!devices || devices.length === 0) && Number(m.successful_count) > 0) {
+    return [`${m.successful_count} dispositivo(s) adoptado(s) con éxito`]
   }
 
   return devices || []
@@ -470,10 +478,31 @@ const onDocPointerDown = (e) => {
 // --- EVENTOS GLOBALES DE WEBSOCKET Y POLLING ---
 const handleGlobalNotificationEvent = () => {
   fetchAllNotifications()
-  // Reintentos escalonados: el worker de adopción puede llegar hasta ~10s después del scan
+  // Reintentos escalonados para cubrir latencia de BD
   setTimeout(fetchAllNotifications, 3000)
   setTimeout(fetchAllNotifications, 8000)
   setTimeout(fetchAllNotifications, 15000)
+}
+
+// Recibe el payload completo del WS vía CustomEvent.detail (system_notification)
+const handleSystemNotificationWS = async (event) => {
+  const msg = event?.detail
+  if (msg?.title || msg?.message) {
+    // Inyectar notificación inmediata sin esperar el fetch REST
+    const synthetic = {
+      id: `ws-${Date.now()}`,
+      title: msg.title || 'Aviso del sistema',
+      message: msg.message || '',
+      type: msg.level || 'info',
+      meta_data: msg.meta_data ?? null,
+      created_at: new Date().toISOString(),
+      _synthetic: true,
+    }
+    sysNotifications.value = [synthetic, ...sysNotifications.value.filter(n => !n._synthetic)]
+    if (showNotif.value) activeNotifTab.value = 'system'
+  }
+  // Sincronizar con REST tras breve delay (reemplaza la entrada sintética con la real de BD)
+  setTimeout(fetchSystemNotifications, 1500)
 }
 
 const handleDiscoveryDeviceDismissed = (event) => {
@@ -504,6 +533,7 @@ onMounted(() => {
 
   window.addEventListener('refresh-notifications', handleGlobalNotificationEvent)
   window.addEventListener('new_notification', handleGlobalNotificationEvent)
+  window.addEventListener('system_notification', handleSystemNotificationWS)
   window.addEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed)
   window.addEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
   window.addEventListener('adoption_complete', handleGlobalNotificationEvent)
@@ -518,6 +548,7 @@ onBeforeUnmount(() => {
 
   window.removeEventListener('refresh-notifications', handleGlobalNotificationEvent)
   window.removeEventListener('new_notification', handleGlobalNotificationEvent)
+  window.removeEventListener('system_notification', handleSystemNotificationWS)
   window.removeEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed)
   window.removeEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
   window.removeEventListener('adoption_complete', handleGlobalNotificationEvent)
