@@ -482,11 +482,20 @@ const handleDiscoveryDeviceDismissed = (event) => {
   notifications.value = notifications.value.filter(n => n.mac_address !== mac)
 }
 
-// Cuando termina un scan (auto o manual) el worker de adopción puede llegar segundos después
+// Cuando termina un scan, el worker de adopción puede tardar hasta ~60s en completar.
+// Hacemos polling cada 8s durante 60s para no depender del WS (que puede perderse en reconexiones).
+let _scanPollingInterval = null
 const handleDiscoveryScanFinished = () => {
-  setTimeout(fetchAllNotifications, 5000)
-  setTimeout(fetchAllNotifications, 12000)
-  setTimeout(fetchAllNotifications, 20000)
+  if (_scanPollingInterval) clearInterval(_scanPollingInterval)
+  let elapsed = 0
+  _scanPollingInterval = setInterval(() => {
+    fetchAllNotifications()
+    elapsed += 8000
+    if (elapsed >= 60000) {
+      clearInterval(_scanPollingInterval)
+      _scanPollingInterval = null
+    }
+  }, 8000)
 }
 
 onMounted(() => {
@@ -514,6 +523,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('adoption_complete', handleGlobalNotificationEvent)
 
   if (notifInterval) clearInterval(notifInterval)
+  if (_scanPollingInterval) clearInterval(_scanPollingInterval)
 })
 
 /* Logout handlers */

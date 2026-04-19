@@ -9,7 +9,7 @@ import * as XLSX from 'xlsx' // <-- DEPENDENCIA PARA LEER EXCEL
 const router = useRouter()
 
 // ===== UI Estado general =====
-const currentTab = ref('add') // 'add' | 'manage' | 'tasks'
+const currentTab = ref('manage') // 'manage' | 'add' | 'tasks'
 const notification = ref({ show: false, message: '', type: 'success' })
 
 // --- MODAL DE ERROR DE AUTENTICACIÓN ---
@@ -1421,10 +1421,10 @@ onUnmounted(() => {
     </header>
 
     <div class="tabs">
-      <button :class="{ active: currentTab === 'add' }" @click="currentTab = 'add'">Agregar</button>
       <button :class="{ active: currentTab === 'manage' }" @click="currentTab = 'manage'">
         Gestionar
       </button>
+      <button :class="{ active: currentTab === 'add' }" @click="currentTab = 'add'">Agregar</button>
       <button :class="{ active: currentTab === 'tasks' }" @click="currentTab = 'tasks'">
         Panel de Tareas
       </button>

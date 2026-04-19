@@ -170,8 +170,10 @@ async function openAppWebSocket() {
         window.dispatchEvent(new Event('refresh-notifications'))
         notifyAll(msg)
       } else if (msg?.type) {
-        // Log siempre para identificar tipos de evento del backend
-        console.log('[WS] Evento recibido:', msg.type, msg)
+        // Ignorar mensajes de control internos del WS
+        if (msg.type !== 'pong' && msg.type !== 'hello' && msg.type !== 'ready') {
+          console.log('[WS] Evento recibido:', msg.type, msg)
+        }
         notifyAll(msg)
         // Si el evento indica fin de tarea/trabajo, refrescar campanita
         if (/notif|complete|finish|adopt|discover|task|profile|scan/i.test(msg.type)) {

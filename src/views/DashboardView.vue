@@ -1620,6 +1620,7 @@ function closeSensorDetails() {
             @click="appLayout.isSidebarOpen.value = true"
             title="Ver grupos"
           >☰ Grupos</button>
+          <span :class="['status-dot', getGroupStatusClass(activeGroup)]" style="flex-shrink:0"></span>
           <h2>{{ activeGroup }}</h2>
         </div>
         <div class="header-actions">
