@@ -60,6 +60,10 @@ const currentWindow = ref(null) // { startMs, endMs, mode }
 const zoomStart = ref(0)
 const zoomEnd = ref(100)
 
+/* ====== RESPONSIVE ====== */
+const isMobile = ref(typeof window !== 'undefined' && window.innerWidth <= 820)
+function onResize() { isMobile.value = window.innerWidth <= 820 }
+
 /* ====== STORE (raw/auto) OPTIMIZADO ====== */
 // Usamos un objeto puro para máximo rendimiento. Evitamos que Vue rastree miles de puntos de datos inútilmente.
 const store = {
@@ -251,6 +255,7 @@ const chartOption = computed(() => {
 
   const type = sensorInfo.value.sensor_type
   const data = visibleData.value
+  const mobile = isMobile.value
 
   // Extraer timestamps y valores
   const timestamps = data.map((d) => d._ms)
@@ -263,19 +268,19 @@ const chartOption = computed(() => {
       axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
       backgroundColor: 'rgba(20, 20, 20, 0.9)',
       borderColor: '#333',
-      textStyle: { color: '#fff' },
+      textStyle: { color: '#fff', fontSize: mobile ? 11 : 13 },
       confine: true,
     },
-    // Ajuste de Bottom fijo en píxeles para evitar que se pise con el Slider de zoom
-    grid: { left: '2%', right: '3%', bottom: 75, top: '10%', containLabel: true },
+    // Bottom reducido en móvil para que el área de gráfico sea mayor
+    grid: { left: '2%', right: '3%', bottom: mobile ? 50 : 75, top: mobile ? '8%' : '10%', containLabel: true },
     dataZoom: [
-      { type: 'inside', start: zoomStart.value, end: zoomEnd.value }, // Zoom con rueda (respeta estado)
+      { type: 'inside', start: zoomStart.value, end: zoomEnd.value },
       {
         type: 'slider',
-        start: zoomStart.value, // Mantener posicion
-        end: zoomEnd.value,     // Mantener posicion
-        bottom: 10,
-        height: 24,
+        start: zoomStart.value,
+        end: zoomEnd.value,
+        bottom: mobile ? 5 : 10,
+        height: mobile ? 18 : 24,
         handleSize: '100%',
         showDetail: false,
         fillerColor: 'rgba(83, 114, 240, 0.2)',
@@ -293,12 +298,12 @@ const chartOption = computed(() => {
       ),
       boundaryGap: false,
       axisLine: { lineStyle: { color: '#555' } },
-      axisLabel: { color: '#888' },
+      axisLabel: { color: '#888', fontSize: mobile ? 10 : 12, hideOverlap: true },
     },
     yAxis: {
       type: 'value',
       splitLine: { lineStyle: { color: '#333', type: 'dashed' } },
-      axisLabel: { color: '#888' },
+      axisLabel: { color: '#888', fontSize: mobile ? 10 : 12 },
     },
   }
 
@@ -369,7 +374,7 @@ const chartOption = computed(() => {
 
     return {
       ...baseOption,
-      legend: { data: ['Descarga', 'Subida'], textStyle: { color: '#ccc' }, top: 0 },
+      legend: { data: ['Descarga', 'Subida'], textStyle: { color: '#ccc', fontSize: mobile ? 11 : 12 }, top: 0, type: 'scroll' },
       yAxis: { ...baseOption.yAxis, name: 'Mbps' },
       series: [
         {
@@ -549,10 +554,25 @@ const chartOption = computed(() => {
 
     return {
       ...baseOption,
-      legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
-      // Ajuste de grid para dejar espacio a los ejes Y derechos y fijar el bottom en 75px
-      grid: { left: '2%', right: isAP ? '18%' : '10%', bottom: 75, top: '15%', containLabel: true },
-      yAxis: yAxes,
+      legend: {
+        data: legendData,
+        textStyle: { color: '#ccc', fontSize: mobile ? 10 : 12 },
+        top: 0,
+        type: 'scroll',
+        itemWidth: mobile ? 14 : 25,
+        itemHeight: mobile ? 8 : 14,
+        pageIconSize: mobile ? 10 : 15,
+      },
+      grid: {
+        left: '2%',
+        right: mobile ? '2%' : (isAP ? '18%' : '10%'),
+        bottom: mobile ? 50 : 75,
+        top: mobile ? '22%' : '15%',
+        containLabel: true,
+      },
+      yAxis: yAxes.map((axis) =>
+        mobile ? { ...axis, name: '', offset: axis.offset ?? 0 } : axis
+      ),
       series: series
     }
   }
@@ -662,15 +682,25 @@ const chartOption = computed(() => {
 
     return {
       ...baseOption,
-      legend: { data: legendData, textStyle: { color: '#ccc' }, top: 0 },
-      grid: { 
-        left: '2%', 
-        right: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', 
-        bottom: 75, 
-        top: '15%', 
-        containLabel: true 
+      legend: {
+        data: legendData,
+        textStyle: { color: '#ccc', fontSize: mobile ? 10 : 12 },
+        top: 0,
+        type: 'scroll',
+        itemWidth: mobile ? 14 : 25,
+        itemHeight: mobile ? 8 : 14,
+        pageIconSize: mobile ? 10 : 15,
       },
-      yAxis: yAxes,
+      grid: {
+        left: '2%',
+        right: mobile ? '2%' : (rightOffset > 0 ? `${rightOffset + 30}px` : '5%'),
+        bottom: mobile ? 50 : 75,
+        top: mobile ? '18%' : '15%',
+        containLabel: true,
+      },
+      yAxis: yAxes.map((axis) =>
+        mobile ? { ...axis, name: '', offset: axis.offset ?? 0 } : axis
+      ),
       series: series
     }
   }
@@ -871,6 +901,7 @@ function formatDate(isoStr) {
 
 /* ====== LIFECYCLE ====== */
 onMounted(async () => {
+  window.addEventListener('resize', onResize)
   try {
     const { data } = await api.get(`/sensors/${sensorId}/details`)
     sensorInfo.value = data
@@ -887,6 +918,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
   if (historyAbort) historyAbort.abort()
   if (wsUnbind) wsUnbind()
 })
@@ -1247,7 +1279,21 @@ watch(timeRange, async (r) => {
     grid-template-columns: repeat(2, 1fr);
   }
   .chart-wrapper {
-    height: 320px;
+    height: 460px;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .range-btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  .range-btns button {
+    margin-right: 0;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.82rem;
   }
   .large-modal {
     width: 95vw;
@@ -1261,7 +1307,7 @@ watch(timeRange, async (r) => {
     grid-template-columns: 1fr;
   }
   .chart-wrapper {
-    height: 260px;
+    height: 420px;
   }
 }
 </style>
