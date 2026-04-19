@@ -887,6 +887,20 @@ const handleAdoptionComplete = async () => {
   wireWsSyncAndSubs()
 }
 
+// El discovery_scan_finished llega antes que el adoption worker termine.
+// Recargamos monitores escalonadamente para capturar lo que el worker adopte.
+const handleDiscoveryScanFinished = () => {
+  setTimeout(async () => {
+    await fetchAllMonitors()
+    await fetchAllDevices()
+    wireWsSyncAndSubs()
+  }, 6000)
+  setTimeout(async () => {
+    await fetchAllMonitors()
+    wireWsSyncAndSubs()
+  }, 15000)
+}
+
 onMounted(async () => {
   try {
     await waitForSession({ requireAuth: true })
@@ -904,6 +918,8 @@ onMounted(async () => {
   wsBufferTimer = setInterval(flushWsUpdates, 500)
   window.addEventListener("resize", resizeAllGridItems)
   window.addEventListener('adoption_complete', handleAdoptionComplete)
+  window.addEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
+  window.addEventListener('discovery_refresh', handleAdoptionComplete)
 
   document.addEventListener('click', closeKebab)
   document.addEventListener('click', closeGroupKebab)
@@ -920,6 +936,8 @@ onUnmounted(() => {
 
   window.removeEventListener("resize", resizeAllGridItems)
   window.removeEventListener('adoption_complete', handleAdoptionComplete)
+  window.removeEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
+  window.removeEventListener('discovery_refresh', handleAdoptionComplete)
   if (gridResizeObserver) gridResizeObserver.disconnect();
   document.removeEventListener('click', closeKebab)
   document.removeEventListener('click', closeGroupKebab)

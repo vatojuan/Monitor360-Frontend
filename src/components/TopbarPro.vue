@@ -469,8 +469,12 @@ const onDocPointerDown = (e) => {
 
 // --- EVENTOS GLOBALES DE WEBSOCKET Y POLLING ---
 const handleGlobalNotificationEvent = () => {
-    fetchAllNotifications();
-};
+  fetchAllNotifications()
+  // Reintentos escalonados: el worker de adopción puede llegar hasta ~10s después del scan
+  setTimeout(fetchAllNotifications, 3000)
+  setTimeout(fetchAllNotifications, 8000)
+  setTimeout(fetchAllNotifications, 15000)
+}
 
 const handleDiscoveryDeviceDismissed = (event) => {
   const mac = event?.detail?.mac
@@ -478,19 +482,22 @@ const handleDiscoveryDeviceDismissed = (event) => {
   notifications.value = notifications.value.filter(n => n.mac_address !== mac)
 }
 
-// Adopción completada: espera a que el backend escriba en DB antes de fetchear
-const handleAdoptionComplete = () => {
-  setTimeout(fetchAllNotifications, 1500)
+// Cuando termina un scan (auto o manual) el worker de adopción puede llegar segundos después
+const handleDiscoveryScanFinished = () => {
+  setTimeout(fetchAllNotifications, 5000)
+  setTimeout(fetchAllNotifications, 12000)
+  setTimeout(fetchAllNotifications, 20000)
 }
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown, true)
 
-  window.addEventListener('refresh-notifications', handleGlobalNotificationEvent);
-  window.addEventListener('new_notification', handleGlobalNotificationEvent);
-  window.addEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
-  window.addEventListener('adoption_complete', handleAdoptionComplete);
+  window.addEventListener('refresh-notifications', handleGlobalNotificationEvent)
+  window.addEventListener('new_notification', handleGlobalNotificationEvent)
+  window.addEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed)
+  window.addEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
+  window.addEventListener('adoption_complete', handleGlobalNotificationEvent)
 
   fetchAllNotifications()
   notifInterval = setInterval(fetchAllNotifications, 30000)
@@ -500,10 +507,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('pointerdown', onDocPointerDown, true)
 
-  window.removeEventListener('refresh-notifications', handleGlobalNotificationEvent);
-  window.removeEventListener('new_notification', handleGlobalNotificationEvent);
-  window.removeEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed);
-  window.removeEventListener('adoption_complete', handleAdoptionComplete);
+  window.removeEventListener('refresh-notifications', handleGlobalNotificationEvent)
+  window.removeEventListener('new_notification', handleGlobalNotificationEvent)
+  window.removeEventListener('discovery_device_dismissed', handleDiscoveryDeviceDismissed)
+  window.removeEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
+  window.removeEventListener('adoption_complete', handleGlobalNotificationEvent)
 
   if (notifInterval) clearInterval(notifInterval)
 })

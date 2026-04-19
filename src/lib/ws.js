@@ -155,7 +155,6 @@ async function openAppWebSocket() {
       } else if (msg && Object.prototype.hasOwnProperty.call(msg, 'sensor_id')) {
         notifyAll(msg)
       } else if (msg?.type === 'qr_config') {
-        // ✅ Reenviamos el resultado del escaneo remoto
         notifyAll(msg)
       } else if (msg?.type === 'bulk_rename_completed') {
         wsLog('Evento de bulk_rename_completed recibido.', msg)
@@ -171,8 +170,14 @@ async function openAppWebSocket() {
         window.dispatchEvent(new Event('refresh-notifications'))
         notifyAll(msg)
       } else if (msg?.type) {
-        // Eventos genéricos (device_deleted, bulk_delete_completed, discovery_device_dismissed, etc.)
+        // Log siempre para identificar tipos de evento del backend
+        console.log('[WS] Evento recibido:', msg.type, msg)
         notifyAll(msg)
+        // Si el evento indica fin de tarea/trabajo, refrescar campanita
+        if (/notif|complete|finish|adopt|discover|task|profile|scan/i.test(msg.type)) {
+          window.dispatchEvent(new Event('new_notification'))
+          window.dispatchEvent(new Event('refresh-notifications'))
+        }
       }
     } catch (err) {
       if (DEV) console.debug('[WS] parse skip:', err?.message || err)
