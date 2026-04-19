@@ -88,6 +88,7 @@ const newSensorType = ref('ping') // Usado tanto por Scanner como por Modal
 
 const hasSystemSensorScanner = computed(() => sensorsTemplateList.value.some(s => s.sensor_type === 'system'))
 const hasSystemSensorModal = computed(() => adoptSensorsList.value.some(s => s.sensor_type === 'system'))
+const hasAllRunningEthernetSensor = computed(() => sensorsTemplateList.value.some(s => s.sensor_type === 'ethernet' && s.config?.interface_name === '__ALL_RUNNING__'))
 
 // --- COMPUTADA: Si la sonda de red seleccionada en el scanner es maestro ---
 const isSelectedProbeMaestro = computed(() => {
@@ -1089,10 +1090,6 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                    <input type="checkbox" id="chkManaged" v-model="scanConfig.adopt_only_managed" />
                    <label for="chkManaged" style="font-size:0.9rem; color:#ccc;">Solo Gestionados (Credenciales)</label>
               </div>
-              <div v-if="scanConfig.scan_mode === 'auto'" class="checkbox-row" style="margin-top:5px; margin-bottom:10px; margin-left:5px;">
-                   <input type="checkbox" id="chkSkipDisabled" v-model="scanConfig.skip_disabled_interfaces" />
-                   <label for="chkSkipDisabled" style="font-size:0.9rem; color:#ccc;">Omitir Ethernet Apagada</label>
-              </div>
             </template>
 
             <div v-if="scanConfig.scan_mode === 'auto'" class="auto-adopt-panel fade-in">
@@ -1145,10 +1142,19 @@ async function toggleProfileStatus(profile) { const newState = !profile.is_activ
                                   :has-parent-maestro="isSelectedProbeMaestro"
                                   :device-interfaces="[]"
                                   :is-loading-interfaces="false"
+                                  :disable-all-running="hasAllRunningEthernetSensor && sensor.config?.interface_name !== '__ALL_RUNNING__'"
                                   hide-name
                                   is-compact
                                   :is-template-mode="true"
                               />
+                              <div
+                                v-if="sensor.sensor_type === 'ethernet' && sensor.config?.interface_name === '__ALL_RUNNING__'"
+                                class="checkbox-row"
+                                style="margin-top: 8px; margin-left: 2px;"
+                              >
+                                <input type="checkbox" :id="`chkSkip_${index}`" v-model="scanConfig.skip_disabled_interfaces" />
+                                <label :for="`chkSkip_${index}`" style="font-size: 0.9rem; color: #ccc;">Omitir Ethernet Apagada</label>
+                              </div>
                           </div>
                       </div>
                   </div>

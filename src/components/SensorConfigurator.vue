@@ -20,7 +20,8 @@ const props = defineProps({
   isLoadingInterfaces: { type: Boolean, default: false },
   hideName: { type: Boolean, default: false }, // Útil para acciones masivas
   isCompact: { type: Boolean, default: false }, // Útil para la Receta de ScanView
-  isTemplateMode: { type: Boolean, default: false } // <-- NUEVO: Desactiva detecciones en recetas
+  isTemplateMode: { type: Boolean, default: false }, // <-- NUEVO: Desactiva detecciones en recetas
+  disableAllRunning: { type: Boolean, default: false } // Bloquea __ALL_RUNNING__ si ya hay otro sensor ethernet con esa opción
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -250,21 +251,21 @@ const uid = getCurrentInstance()?.uid || Math.random().toString(36).substr(2, 9)
         <template v-if="isTemplateMode">
             <select v-model="templateInterfaceMode">
                 <option value="MANUAL">✏️ Escribir manualmente</option>
-                <option value="__ALL_RUNNING__">🔄 Todas las interfaces (Running)</option>
+                <option value="__ALL_RUNNING__" :disabled="disableAllRunning">🔄 Todas las interfaces (Running){{ disableAllRunning ? ' — ya usada' : '' }}</option>
             </select>
             <input v-if="templateInterfaceMode === 'MANUAL'" type="text" v-model="s.config.interface_name" placeholder="Ej: ether1" style="margin-top: 8px;" />
         </template>
         <template v-else-if="deviceInterfaces.length > 0 || isLoadingInterfaces">
-            <select v-model="s.config.interface_name" required :disabled="isLoadingInterfaces">
-                <option value="" disabled>Seleccione una interfaz</option>
-                <option value="__ALL_RUNNING__">🔄 Todas las interfaces (Running)</option>
-                <option v-if="s.config.interface_name && s.config.interface_name !== '__ALL_RUNNING__' && !deviceInterfaces.some(i => i.name === s.config.interface_name)" :value="s.config.interface_name">
+            <select v-model="s.config.interface_name" :disabled="isLoadingInterfaces">
+                <option value="">— Seleccione o escriba abajo —</option>
+                <option v-if="s.config.interface_name && !deviceInterfaces.some(i => i.name === s.config.interface_name)" :value="s.config.interface_name">
                     {{ s.config.interface_name }} (Actual)
                 </option>
                 <option v-for="iface in deviceInterfaces" :key="iface.name" :value="iface.name">
                     {{ iface.name }} {{ iface.type !== 'unknown' ? `[${iface.type}]` : '' }} {{ iface.disabled ? '(Inactiva)' : '' }}
                 </option>
             </select>
+            <input type="text" v-model="s.config.interface_name" placeholder="O escribe el nombre manualmente" style="margin-top: 8px;" />
         </template>
         <template v-else>
             <input type="text" v-model="s.config.interface_name" required placeholder="Ej: ether1" />
