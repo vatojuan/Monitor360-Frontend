@@ -52,10 +52,28 @@
             <span class="l-gradient-text">antes de que llamen tus clientes</span>
           </h1>
           <p class="l-hero-sub">
-            MonitorWISP centraliza el estado de toda tu infraestructura de red en un solo panel.
-            API nativa MikroTik, alertas por Telegram, reportes diarios con IA y terminal remota
-            integrada — diseñado para WISPs e ISPs que no pueden darse el lujo de enterarse tarde.
+            Monitoreá, gestioná y diagnosticá toda tu red WISP desde un solo panel — sin abrir
+            puertos, sin VPN externa y con un copiloto de IA que te ayuda a resolver los
+            problemas en segundos.
           </p>
+          <ul class="l-hero-bullets">
+            <li>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="#3ddc84" stroke-width="1.5"/><path d="M5 8l2 2 4-4" stroke="#3ddc84" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Descubrimiento automático de toda tu red</span>
+            </li>
+            <li>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="#3ddc84" stroke-width="1.5"/><path d="M5 8l2 2 4-4" stroke="#3ddc84" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Acceso remoto a equipos detrás de NAT sin abrir puertos</span>
+            </li>
+            <li>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="#3ddc84" stroke-width="1.5"/><path d="M5 8l2 2 4-4" stroke="#3ddc84" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Reportes ejecutivos generados por IA cada mañana</span>
+            </li>
+            <li>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="#3ddc84" stroke-width="1.5"/><path d="M5 8l2 2 4-4" stroke="#3ddc84" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Terminal remota con copiloto IA integrado</span>
+            </li>
+          </ul>
           <div class="l-hero-actions">
             <router-link to="/login" class="l-btn l-btn-primary l-btn-lg">
               Crear Cuenta
@@ -234,7 +252,7 @@
             Dispositivos SSH genéricos
           </div>
         </div>
-        <span class="l-compat-note">Conexión directa · Maestro (bridge) · Túnel SSH L4</span>
+        <span class="l-compat-note">Conexión directa · Dispositivo sonda · Acceso seguro detrás de NAT</span>
       </div>
     </section>
 
@@ -283,7 +301,7 @@
                 <div class="l-solution-icon">
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="#3ddc84" stroke-width="1.5"/><path d="M5 8l2.5 2.5L11 6" stroke="#3ddc84" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </div>
-                <span>Sondeo cada <strong>10 segundos</strong>, dashboard vía WebSocket</span>
+                <span>Sondeo cada <strong>10 segundos</strong>, dashboard en vivo sin refrescar</span>
               </div>
               <div class="l-solution-item">
                 <div class="l-solution-icon">
@@ -309,6 +327,106 @@
       </div>
     </section>
 
+    <!-- ======================== SCENARIOS ======================== -->
+    <section class="l-section l-scenarios">
+      <div class="l-container">
+        <div class="l-section-header">
+          <div class="l-section-eyebrow">Casos de uso</div>
+          <h2 class="l-section-title l-centered">Así lo usan los WISPs todos los días</h2>
+          <p class="l-section-sub">Tres escenarios reales donde MonitorWISP ahorra horas de guardia, evita reclamos y automatiza tareas tediosas.</p>
+        </div>
+        <div class="l-scenarios-grid">
+
+          <!-- Scenario 1 — Alert at dawn -->
+          <div class="l-scenario">
+            <div class="l-scenario-time">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="#fbbf24" stroke-width="1.3"/><path d="M7 4v3l2 1.5" stroke="#fbbf24" stroke-width="1.3" stroke-linecap="round"/></svg>
+              03:14 AM
+            </div>
+            <h3>Caída en el enlace troncal</h3>
+            <p class="l-scenario-sub">WISP con 180 dispositivos · Equipo de guardia de 1 persona</p>
+            <div class="l-scenario-body">
+              <p>El enlace wireless hacia Torre Norte empieza a perder paquetes. MonitorWISP lo detecta en el siguiente ciclo de sondeo y manda la alerta a Telegram:</p>
+              <div class="l-scenario-chat">
+                <div class="l-sc-msg critical">🔴 CRÍTICO · Router-Torre-Norte<br><span>Pérdida: 38% · Latencia: 412 ms</span></div>
+              </div>
+              <p>El técnico de guardia abre la terminal desde el navegador, diagnostica y resetea la interfaz. <strong>A las 03:21 el problema ya estaba resuelto.</strong> Ningún cliente llamó.</p>
+            </div>
+            <div class="l-scenario-outcome">
+              <strong>+7 min</strong> para resolver un incidente que, sin visibilidad, se habría convertido en <strong>horas de reclamos</strong>.
+            </div>
+          </div>
+
+          <!-- Scenario 2 — Mass password rotation -->
+          <div class="l-scenario">
+            <div class="l-scenario-time">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="6" width="10" height="7" rx="1.5" stroke="#5372f0" stroke-width="1.3"/><path d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6" stroke="#5372f0" stroke-width="1.3"/></svg>
+              1 CLIC
+            </div>
+            <h3>Cambio masivo de contraseñas</h3>
+            <p class="l-scenario-sub">Se fue el técnico que conocía el password de admin</p>
+            <div class="l-scenario-body">
+              <p>Había que rotar la contraseña de administrador en <strong>200 routers</strong> distribuidos en toda la red. Hacerlo a mano implicaba 3 días.</p>
+              <div class="l-scenario-progress">
+                <div class="l-sc-prog-label">
+                  <span>Rotando credenciales…</span>
+                  <span><strong>182</strong>/200</span>
+                </div>
+                <div class="l-sc-prog-bar"><div class="l-sc-prog-fill" style="width:91%"></div></div>
+                <div class="l-sc-prog-foot">
+                  <span class="l-sc-prog-dot ok"></span> 178 OK <span class="l-sc-prog-dot critical"></span> 4 fallidas
+                </div>
+              </div>
+              <p>Seleccionaron los equipos, eligieron la credencial nueva y MonitorWISP se conectó equipo por equipo actualizando el password. <strong>Tiempo total: 8 minutos.</strong></p>
+            </div>
+            <div class="l-scenario-outcome">
+              De <strong>3 días</strong> de trabajo manual a <strong>8 minutos</strong> automatizados, con reporte de fallas equipo por equipo.
+            </div>
+          </div>
+
+          <!-- Scenario 3 — Auto discovery -->
+          <div class="l-scenario">
+            <div class="l-scenario-time">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="#3ddc84" stroke-width="1.3" stroke-dasharray="2 1.5"/><circle cx="7" cy="7" r="2" fill="#3ddc84"/></svg>
+              47 NUEVOS
+            </div>
+            <h3>Inventario completo en 5 minutos</h3>
+            <p class="l-scenario-sub">Migración desde un sistema anterior · ISP urbano</p>
+            <div class="l-scenario-body">
+              <p>El cliente llegó con una planilla Excel incompleta y una frase: "tenemos como 40 o 50 equipos". Configuraron MonitorWISP, ingresaron el rango de la red y apretaron "Escanear ahora".</p>
+              <div class="l-scenario-discovery">
+                <div class="l-sc-disc-row">
+                  <span class="l-sc-disc-ip">192.168.88.3</span>
+                  <span class="l-sc-disc-vendor mikrotik">MikroTik · CCR1009</span>
+                  <span class="l-sc-disc-status ok">✓ Autenticado</span>
+                </div>
+                <div class="l-sc-disc-row">
+                  <span class="l-sc-disc-ip">192.168.88.14</span>
+                  <span class="l-sc-disc-vendor mikrotik">MikroTik · hAP ac²</span>
+                  <span class="l-sc-disc-status ok">✓ Autenticado</span>
+                </div>
+                <div class="l-sc-disc-row">
+                  <span class="l-sc-disc-ip">192.168.88.22</span>
+                  <span class="l-sc-disc-vendor ubnt">Ubiquiti · NanoStation</span>
+                  <span class="l-sc-disc-status ok">✓ Autenticado</span>
+                </div>
+                <div class="l-sc-disc-row ghost">
+                  <span class="l-sc-disc-ip">…</span>
+                  <span class="l-sc-disc-vendor">44 equipos más</span>
+                  <span class="l-sc-disc-status ok">✓</span>
+                </div>
+              </div>
+              <p>En 5 minutos aparecieron <strong>47 equipos</strong>, detectados por vendor y listos para adoptar. Clic en "Adoptar todo", aplicar plantilla de sensores, y el NOC quedó armado.</p>
+            </div>
+            <div class="l-scenario-outcome">
+              De <strong>Excel desactualizado</strong> a <strong>NOC completo y monitoreado</strong> antes del café de la mañana.
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
     <!-- ======================== FEATURES ======================== -->
     <section id="features" class="l-section l-features">
       <div class="l-container">
@@ -322,17 +440,17 @@
             <div class="l-feature-icon blue">
               <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M11 6v5l3.5 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="11" cy="11" r="2" fill="currentColor" opacity=".4"/></svg>
             </div>
-            <h3>Tiempo Real · 10 segundos</h3>
-            <p>Sondeo continuo con actualizaciones instantáneas vía WebSocket al navegador. No necesitás refrescar — el dashboard se actualiza solo.</p>
-            <div class="l-feature-tag">WebSocket · Polling activo</div>
+            <h3>Detección en menos de 10 segundos</h3>
+            <p>Cuando un enlace se cae o un router se recalienta, lo ves en el dashboard antes de terminar de tomar café. El panel se actualiza solo, sin refrescar la página ni apretar ningún botón.</p>
+            <div class="l-feature-tag">Tiempo real · Sondeo continuo</div>
           </div>
 
           <div class="l-feature-card">
             <div class="l-feature-icon purple">
               <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="2" y="6" width="8" height="10" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="12" y="6" width="8" height="10" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M10 11h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </div>
-            <h3>Multi-vendor nativo</h3>
-            <p>API RouterOS para MikroTik, SSH para Ubiquiti y Linux. Conexión directa, por dispositivo Maestro (bridge) o vía túnel SSH L4 para equipos detrás de NAT.</p>
+            <h3>Compatible con lo que ya tenés</h3>
+            <p>Integración nativa con MikroTik vía API RouterOS, Ubiquiti y cualquier dispositivo con SSH. No importa si están en la oficina, en una torre remota o en casa del cliente detrás de NAT — los monitoreás a todos desde el mismo panel.</p>
             <div class="l-feature-tag">MikroTik · Ubiquiti · Linux · SSH</div>
           </div>
 
@@ -341,26 +459,26 @@
               <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 3l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="11" cy="11" r="2" fill="currentColor" opacity=".3"/></svg>
             </div>
             <h3>VPN WireGuard integrada</h3>
-            <p>Creá perfiles VPN para routers y escritorios en segundos. Acceso remoto seguro a cualquier dispositivo sin abrir puertos públicos. Reconciliación automática de peers.</p>
-            <div class="l-feature-tag">WireGuard · BoringTun · Zero-config</div>
+            <p>Accedé a cualquier router de tu red — incluso los que están detrás de NAT o sin IP pública — sin abrir puertos, sin VPNs externas y sin configuraciones manuales. Generás un script, lo pegás en el MikroTik, y listo.</p>
+            <div class="l-feature-tag">WireGuard · Sin abrir puertos · Configuración automática</div>
           </div>
 
           <div class="l-feature-card">
             <div class="l-feature-icon orange">
               <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 2"/><circle cx="11" cy="11" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M11 3v2M11 17v2M3 11h2M17 11h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </div>
-            <h3>Descubrimiento automático</h3>
-            <p>Escaneo de rangos CIDR completos con nmap. Detección automática de vendor y modelo. Adopción de dispositivos en un solo clic desde el panel.</p>
-            <div class="l-feature-tag">CIDR scan · nmap · Auto-detección</div>
+            <h3>Descubrí toda tu red en minutos</h3>
+            <p>¿Tenés 200 equipos sin inventariar? MonitorWISP escanea tu red, detecta automáticamente qué marca y modelo es cada uno, prueba las credenciales y los adopta en bloque. Lo que te tomaría días, en minutos.</p>
+            <div class="l-feature-tag">Escaneo automático · Detección de vendor · Adopción masiva</div>
           </div>
 
           <div class="l-feature-card">
             <div class="l-feature-icon blue">
               <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="2" y="4" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M6 9l2 2-2 2M11 13h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </div>
-            <h3>Terminal remota en el navegador</h3>
-            <p>Sesión SSH interactiva con xterm.js. Comandos RouterOS API para MikroTik. Asistente IA integrado que sugiere comandos y explica salidas en lenguaje natural.</p>
-            <div class="l-feature-tag">xterm.js · RouterOS API · Asistente IA</div>
+            <h3>Terminal + Copiloto IA</h3>
+            <p>Abrí una terminal contra cualquier router directamente desde el navegador. Y si no te acordás el comando exacto, pedile a la IA: "¿cómo bloqueo esta IP en el firewall?" — te responde con el comando RouterOS listo para ejecutar.</p>
+            <div class="l-feature-tag">Terminal remota · IA integrada · Comandos asistidos</div>
           </div>
 
           <div class="l-feature-card">
@@ -368,8 +486,8 @@
               <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 18V8l7-5 7 5v10H4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 14v4h4v-4" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 11h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </div>
             <h3>Reportes diarios con IA</h3>
-            <p>Resumen ejecutivo generado automáticamente a las 07:00 UTC. Análisis de uptime, latencia promedio y eventos críticos. Tonos técnico, ejecutivo o profesional. Entrega por Telegram o Webhook.</p>
-            <div class="l-feature-tag">IA · Telegram · Webhook · Tonos</div>
+            <p>Cada mañana recibís un resumen con todo lo importante: qué se cayó, cuánto duró, qué clientes se vieron afectados y qué recomienda la IA hacer. En tono técnico, ejecutivo o para mandarle al dueño del WISP. Directo a tu Telegram.</p>
+            <div class="l-feature-tag">Resumen diario · 3 tonos · Telegram o Webhook</div>
           </div>
         </div>
       </div>
@@ -390,7 +508,7 @@
               <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="4" y="8" width="20" height="14" rx="3" stroke="#5372f0" stroke-width="1.8"/><path d="M10 8V6a4 4 0 0 1 8 0v2" stroke="#5372f0" stroke-width="1.8" stroke-linecap="round"/><circle cx="14" cy="15" r="2" fill="#5372f0"/></svg>
             </div>
             <h3>Conectá tus dispositivos</h3>
-            <p>Ingresás las credenciales de acceso: RouterOS API, SSH o SNMP. Compatible con dispositivos detrás de NAT vía túnel L4.</p>
+            <p>Cargás las credenciales una sola vez (usuario y contraseña) y los equipos quedan conectados. ¿Están detrás de NAT? Copiás un script que te genera el sistema, lo pegás en el MikroTik y listo — aparece conectado en segundos, sin abrir puertos ni tocar el firewall.</p>
           </div>
           <div class="l-step">
             <div class="l-step-number">2</div>
@@ -398,8 +516,8 @@
             <div class="l-step-icon">
               <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="10" stroke="#3ddc84" stroke-width="1.8"/><circle cx="14" cy="14" r="4" fill="#3ddc84" opacity=".3" stroke="#3ddc84" stroke-width="1.8"/><path d="M14 4v4M14 20v4M4 14h4M20 14h4" stroke="#3ddc84" stroke-width="1.8" stroke-linecap="round"/></svg>
             </div>
-            <h3>MonitorWISP monitorea</h3>
-            <p>Cada sensor es sondeado cada 10 segundos. Ping, señal wireless, tráfico ethernet, CPU, RAM y temperatura — todo en tiempo real en tu dashboard.</p>
+            <h3>Monitoreo continuo cada 10 s</h3>
+            <p>MonitorWISP interroga a cada sensor cada 10 segundos: ping y pérdida de paquetes, calidad de señal wireless, tráfico de interfaces, CPU, RAM y temperatura. Todo aparece en el dashboard en tiempo real, agrupado por sitio, torre o cliente para que encuentres lo que buscás de un vistazo.</p>
           </div>
           <div class="l-step">
             <div class="l-step-number">3</div>
@@ -408,7 +526,7 @@
               <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M14 4a8 8 0 0 1 8 8v4l2 3H4l2-3v-4a8 8 0 0 1 8-8z" stroke="#fbbf24" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 22a3 3 0 0 0 6 0" stroke="#fbbf24" stroke-width="1.8"/></svg>
             </div>
             <h3>Recibís alertas al instante</h3>
-            <p>Cuando un sensor supera el umbral, llega la notificación a tu Telegram o Webhook antes de que lo note un cliente. Historial completo y silenciado granular.</p>
+            <p>Cuando un sensor cruza el umbral que vos definiste, la alerta llega a tu Telegram (o al canal que prefieras) con toda la info del evento: dispositivo, sensor afectado, métricas exactas y grupo. Y cuando el problema se resuelve, te avisa también — con la duración total de la caída.</p>
           </div>
         </div>
       </div>
@@ -508,8 +626,89 @@
         </div>
         <p class="l-showcase-caption">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="#5372f0" stroke-width="1.3"/><path d="M7 5v3l2 1" stroke="#5372f0" stroke-width="1.3" stroke-linecap="round"/></svg>
-          El dashboard se actualiza en tiempo real vía WebSocket. Los colores reflejan el peor estado de los sensores del dispositivo.
+          El dashboard se actualiza en tiempo real sin refrescar la página. Los colores reflejan el peor estado de los sensores del dispositivo.
         </p>
+      </div>
+    </section>
+
+    <!-- ======================== TERMINAL + AI COPILOT ======================== -->
+    <section class="l-section l-terminal">
+      <div class="l-container">
+        <div class="l-split">
+          <div class="l-split-text">
+            <div class="l-section-eyebrow">Terminal + IA</div>
+            <h2 class="l-section-title">Un copiloto RouterOS dentro del navegador</h2>
+            <p class="l-split-desc">Abrí una sesión en cualquier MikroTik desde el mismo panel. Y si no te acordás la sintaxis exacta, pedísela a la IA en lenguaje natural — te responde con el comando listo para ejecutar.</p>
+            <div class="l-term-features">
+              <div class="l-term-feature">
+                <div class="l-tf-icon">
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="1" y="3" width="16" height="12" rx="2" stroke="#5372f0" stroke-width="1.4"/><path d="M5 8l2 2-2 2M9 12h4" stroke="#5372f0" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div>
+                  <strong>Sin instalar clientes SSH</strong>
+                  <p>La terminal vive en el navegador. No necesitás Winbox ni PuTTY — incluso funciona desde el celular.</p>
+                </div>
+              </div>
+              <div class="l-term-feature">
+                <div class="l-tf-icon">
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5l1.8 3.7 4 .6-2.9 2.8.7 4L9 10.7l-3.6 1.9.7-4L3.2 5.8l4-.6z" stroke="#5372f0" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </div>
+                <div>
+                  <strong>Copiloto con contexto real</strong>
+                  <p>La IA lee la configuración del equipo conectado y te responde sobre tu red, no con respuestas genéricas de manual.</p>
+                </div>
+              </div>
+              <div class="l-term-feature">
+                <div class="l-tf-icon">
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="#5372f0" stroke-width="1.4"/><path d="M9 5v4l2.5 1.5" stroke="#5372f0" stroke-width="1.4" stroke-linecap="round"/></svg>
+                </div>
+                <div>
+                  <strong>Funciona incluso detrás de NAT</strong>
+                  <p>Si el equipo está conectado por VPN, la terminal lo encuentra. No importa dónde esté el router físicamente.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="l-split-visual">
+            <div class="l-term-mock">
+              <div class="l-term-topbar">
+                <div class="l-term-dots"><span></span><span></span><span></span></div>
+                <div class="l-term-title">Router-Core-01 · terminal</div>
+              </div>
+              <div class="l-term-body">
+                <div class="l-term-line"><span class="l-term-prompt">[admin@Router-Core-01] &gt;</span> <span class="l-term-cmd">/interface/print where running=yes</span></div>
+                <div class="l-term-line output">Flags: R - RUNNING</div>
+                <div class="l-term-line output"> #   NAME         TYPE        ACTUAL-MTU  MAC-ADDRESS</div>
+                <div class="l-term-line output"> 0 R ether1       ether       1500        E4:8D:8C:11:22:33</div>
+                <div class="l-term-line output"> 1 R wlan1        wlan        1500        E4:8D:8C:11:22:34</div>
+                <div class="l-term-line output"> 2 R bridge-lan   bridge      1500        E4:8D:8C:11:22:35</div>
+                <div class="l-term-spacer"></div>
+                <div class="l-term-ai-prompt">
+                  <div class="l-term-ai-label">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1l1.5 3H11L8.5 6l1 3L6 7.5 2.5 9l1-3L1 4h3.5z" fill="#3ddc84"/></svg>
+                    Pedile a la IA
+                  </div>
+                  <div class="l-term-ai-question">"¿Cómo bloqueo la IP 1.2.3.4 en el firewall input?"</div>
+                </div>
+                <div class="l-term-ai-answer">
+                  <div class="l-term-ai-answer-label">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="#5372f0" stroke-width="1.2"/><path d="M4 6l1.5 1.5L8 5" stroke="#5372f0" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Comando sugerido
+                  </div>
+                  <div class="l-term-ai-code">/ip/firewall/filter/add chain=input src-address=1.2.3.4 action=drop comment="Bloqueo manual"</div>
+                  <div class="l-term-ai-actions">
+                    <span class="l-term-ai-btn primary">▶ Ejecutar</span>
+                    <span class="l-term-ai-btn">Copiar</span>
+                  </div>
+                </div>
+              </div>
+              <div class="l-term-footer">
+                <span class="l-term-cursor"></span>
+                Conectado vía VPN · Sesión activa
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -591,6 +790,98 @@
       </div>
     </section>
 
+    <!-- ======================== AUTOMATION / SCHEDULED TASKS ======================== -->
+    <section class="l-section l-automation">
+      <div class="l-container">
+        <div class="l-section-header">
+          <div class="l-section-eyebrow">Automatización</div>
+          <h2 class="l-section-title l-centered">Tareas que se ejecutan solas, mientras dormís</h2>
+          <p class="l-section-sub">Programá mantenimientos preventivos, ejecutá scripts masivos y liberá a tu equipo de las tareas repetitivas.</p>
+        </div>
+
+        <div class="l-auto-grid">
+
+          <!-- Tarea 1 -->
+          <div class="l-auto-card">
+            <div class="l-auto-card-head">
+              <div class="l-auto-icon blue">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 3v3l2 1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/></svg>
+              </div>
+              <div>
+                <div class="l-auto-card-title">Reinicio preventivo mensual</div>
+                <div class="l-auto-card-sub">Domingo 03:00 AM · Uptime &gt; 30 días</div>
+              </div>
+            </div>
+            <p class="l-auto-card-desc">Reiniciás toda la flota una vez al mes para liberar memoria, pero solo los equipos que llevan más de 30 días encendidos. El resto se ignoran automáticamente.</p>
+            <div class="l-auto-card-stat">
+              <span class="l-auto-stat-dot ok"></span>
+              <span>120 equipos programados · 4 ignorados (sin credencial)</span>
+            </div>
+          </div>
+
+          <!-- Tarea 2 -->
+          <div class="l-auto-card">
+            <div class="l-auto-card-head">
+              <div class="l-auto-icon green">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 10l3 3 8-8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 15h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+              </div>
+              <div>
+                <div class="l-auto-card-title">Cambio de DNS masivo</div>
+                <div class="l-auto-card-sub">Script personalizado · 200 equipos</div>
+              </div>
+            </div>
+            <p class="l-auto-card-desc">Cargás el bloque de comandos RouterOS una vez, seleccionás los equipos y MonitorWISP los ejecuta uno por uno, guardando el resultado de cada ejecución.</p>
+            <div class="l-auto-card-stat">
+              <span class="l-auto-stat-dot ok"></span>
+              <span>Ejecución en 12 min · Logs por equipo</span>
+            </div>
+          </div>
+
+          <!-- Tarea 3 -->
+          <div class="l-auto-card">
+            <div class="l-auto-card-head">
+              <div class="l-auto-icon purple">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 8h12M4 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><rect x="2" y="4" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.6"/></svg>
+              </div>
+              <div>
+                <div class="l-auto-card-title">Actualización de firmware</div>
+                <div class="l-auto-card-sub">Por grupo · Fuera de horario</div>
+              </div>
+            </div>
+            <p class="l-auto-card-desc">Agendás la actualización de firmware por grupo de dispositivos, en la ventana horaria que menos impacta a tus clientes. Si algo falla, te enterás en el log.</p>
+            <div class="l-auto-card-stat">
+              <span class="l-auto-stat-dot ok"></span>
+              <span>Ventana configurable · Reintentos automáticos</span>
+            </div>
+          </div>
+
+          <!-- Tarea 4 -->
+          <div class="l-auto-card">
+            <div class="l-auto-card-head">
+              <div class="l-auto-icon orange">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2a8 8 0 0 1 8 8v4l2 3H0l2-3v-4a8 8 0 0 1 8-8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 17a3 3 0 0 0 6 0" stroke="currentColor" stroke-width="1.6"/></svg>
+              </div>
+              <div>
+                <div class="l-auto-card-title">Silenciado por mantenimiento</div>
+                <div class="l-auto-card-sub">Grupo · Ventana horaria</div>
+              </div>
+            </div>
+            <p class="l-auto-card-desc">Vas a hacer mantenimiento en un sitio entero. Silenciás el grupo durante 4 horas — nadie recibe falsas alarmas, el dashboard sigue midiendo, y el silenciado se levanta solo.</p>
+            <div class="l-auto-card-stat">
+              <span class="l-auto-stat-dot ok"></span>
+              <span>Sin falsas alarmas · Auto-reactivación</span>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="l-auto-footer-note">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="#3ddc84" stroke-width="1.4"/><path d="M5 8l2 2 4-4" stroke="#3ddc84" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Todas las tareas quedan registradas equipo por equipo, con el output exacto de lo que devolvió cada dispositivo.
+        </div>
+      </div>
+    </section>
+
     <!-- ======================== AI REPORTS ======================== -->
     <section class="l-section l-reports">
       <div class="l-container">
@@ -657,6 +948,57 @@
                   <strong>Tono profesional</strong>
                   <p>Balance entre detalle técnico y claridad. Para equipos NOC y técnicos senior.</p>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== SECURITY ======================== -->
+    <section class="l-section l-security">
+      <div class="l-container">
+        <div class="l-security-band">
+          <div class="l-security-head">
+            <div class="l-section-eyebrow">Seguridad</div>
+            <h2 class="l-section-title">Tu red sigue siendo tuya</h2>
+            <p class="l-security-sub">Construido con los estándares de seguridad que esperás de una plataforma que tiene acceso a toda tu infraestructura.</p>
+          </div>
+          <div class="l-security-grid">
+            <div class="l-security-item">
+              <div class="l-sec-icon">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="4" y="9" width="14" height="10" rx="2" stroke="#3ddc84" stroke-width="1.6"/><path d="M7 9V6a4 4 0 0 1 8 0v3" stroke="#3ddc84" stroke-width="1.6"/><circle cx="11" cy="14" r="1.5" fill="#3ddc84"/></svg>
+              </div>
+              <div>
+                <strong>Contraseñas encriptadas en reposo</strong>
+                <p>Ningún administrador de MonitorWISP puede ver tus credenciales de router, ni siquiera nosotros. Se encriptan antes de guardarse y se desencriptan solo en el momento de la conexión.</p>
+              </div>
+            </div>
+            <div class="l-security-item">
+              <div class="l-sec-icon">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 2L3 6v6c0 5 4 8 8 8s8-3 8-8V6l-8-4z" stroke="#3ddc84" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 11l2 2 4-4" stroke="#3ddc84" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div>
+                <strong>Aislamiento total por cuenta</strong>
+                <p>Cada operador ve únicamente sus propios dispositivos, credenciales y alertas. Aislamiento completo a nivel base de datos, no solo a nivel de interfaz.</p>
+              </div>
+            </div>
+            <div class="l-security-item">
+              <div class="l-sec-icon">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9" stroke="#3ddc84" stroke-width="1.6"/><path d="M11 6v5l3.5 2" stroke="#3ddc84" stroke-width="1.6" stroke-linecap="round"/></svg>
+              </div>
+              <div>
+                <strong>Sesiones y tokens con expiración</strong>
+                <p>Autenticación moderna con tokens que rotan y caducan. Si alguien intenta usar una sesión vieja, el sistema la rechaza automáticamente.</p>
+              </div>
+            </div>
+            <div class="l-security-item">
+              <div class="l-sec-icon">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 2v18M2 11h18" stroke="#3ddc84" stroke-width="1.6" stroke-linecap="round"/><circle cx="11" cy="11" r="4" stroke="#3ddc84" stroke-width="1.6"/></svg>
+              </div>
+              <div>
+                <strong>Comunicación cifrada de punta a punta</strong>
+                <p>Tráfico TLS obligatorio desde tu navegador hasta nuestros servidores, y desde nuestros servidores hasta tus dispositivos vía SSH y WireGuard.</p>
               </div>
             </div>
           </div>
@@ -744,6 +1086,109 @@
       </div>
     </section>
 
+    <!-- ======================== FAQ ======================== -->
+    <section class="l-section l-faq">
+      <div class="l-container">
+        <div class="l-section-header">
+          <div class="l-section-eyebrow">Preguntas frecuentes</div>
+          <h2 class="l-section-title l-centered">Todo lo que querés saber antes de empezar</h2>
+        </div>
+        <div class="l-faq-grid">
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Necesito abrir puertos en mis routers para que MonitorWISP los pueda monitorear?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>No. MonitorWISP tiene VPN WireGuard integrada: generás un bloque de comandos, lo pegás en el MikroTik, y el router se conecta desde adentro hacia afuera. No hay que abrir puertos, ni exponer servicios, ni configurar NAT. Funciona incluso con IP dinámica.</p>
+            </div>
+          </details>
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Puedo monitorear equipos que no son MikroTik?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>Sí. MonitorWISP soporta MikroTik con API nativa, Ubiquiti vía SSH y cualquier equipo Linux o que acepte conexión SSH estándar. Y próximamente SNMP para equipos legacy.</p>
+            </div>
+          </details>
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Qué pasa si tengo 200 o 500 equipos? ¿Es mucho trabajo configurar uno por uno?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>No hace falta cargar uno por uno. Usás el descubrimiento automático: ingresás el rango de red, MonitorWISP escanea, detecta los equipos, prueba las credenciales y te los muestra listos para adoptar en bloque. Configuraciones masivas como renombrar, silenciar o aplicar plantillas de sensores también se hacen con un clic.</p>
+            </div>
+          </details>
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Mis contraseñas de admin están seguras?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>Las credenciales se encriptan antes de guardarse. Ni siquiera nuestro equipo puede verlas en claro. Se desencriptan solo en el momento exacto de conectarse al equipo, y nunca se loguean ni aparecen en reportes. Además, cada cuenta está aislada de las demás a nivel de base de datos.</p>
+            </div>
+          </details>
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Cómo funciona el copiloto de IA? ¿Ve toda mi red?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>La IA solo ve el contexto del equipo donde estás trabajando en ese momento, y solo cuando vos le hacés una pregunta explícita. No monitorea en background, no manda datos sin tu acción. Y los comandos que sugiere nunca se ejecutan solos — siempre decidís vos si los ejecutás o no.</p>
+            </div>
+          </details>
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Qué pasa si se cae la conexión entre mi red y MonitorWISP?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>MonitorWISP te avisa inmediatamente cuando pierde contacto con un equipo o con un grupo entero. Los datos históricos siguen disponibles para revisión, y cuando la conexión vuelve, los sensores retoman el monitoreo automáticamente.</p>
+            </div>
+          </details>
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Puedo probar la plataforma antes de decidir?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>Sí. Te registrás sin tarjeta, conectás tus primeros dispositivos y evaluás la plataforma con tu red real. Si después querés escalar, elegís el plan que se ajuste a tu cantidad de equipos.</p>
+            </div>
+          </details>
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Puedo subir o bajar de plan después?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>Siempre. Desde el panel de facturación ajustás la cantidad de dispositivos y perfiles VPN con dos sliders, y el precio se recalcula en vivo. Los cambios se aplican en segundos, sin interrupciones ni migraciones.</p>
+            </div>
+          </details>
+
+          <details class="l-faq-item">
+            <summary>
+              <span>¿Dónde se guardan los datos? ¿Hay límite de retención?</span>
+              <span class="l-faq-chev">+</span>
+            </summary>
+            <div class="l-faq-answer">
+              <p>Tus datos y métricas se guardan en nuestra infraestructura cloud con respaldos diarios. El historial detallado está disponible durante meses, suficiente para análisis de tendencias, reportes de SLA y auditorías retroactivas.</p>
+            </div>
+          </details>
+
+        </div>
+      </div>
+    </section>
+
     <!-- ======================== CTA FINAL ======================== -->
     <section class="l-cta-banner">
       <div class="l-container">
@@ -805,7 +1250,7 @@
         <div class="l-footer-bottom">
           <p>&copy; 2026 MonitorWISP. Todos los derechos reservados.</p>
           <div class="l-footer-tech">
-            Construido con TimescaleDB · WireGuard · Redis · WebSockets · IA
+            Monitoreo inteligente con IA · WireGuard integrado · Tiempo real
           </div>
         </div>
       </div>
@@ -2415,5 +2860,758 @@ onBeforeUnmount(() => {
   .l-report-stats { grid-template-columns: repeat(3, 1fr); }
   .l-plan-price-value { font-size: 1.6rem; }
   .l-cta-text h2 { font-size: 1.3rem; }
+}
+
+/* ============================================================
+   HERO BULLETS (nuevo)
+   ============================================================ */
+.l-hero-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.l-hero-bullets li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+  color: #cfd3d9;
+}
+
+.l-hero-bullets li svg {
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   SCENARIOS
+   ============================================================ */
+.l-scenarios {
+  background: linear-gradient(180deg, transparent 0%, rgba(15, 52, 96, 0.12) 50%, transparent 100%);
+}
+
+.l-scenarios-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+.l-scenario {
+  background: #16213e;
+  border: 1px solid rgba(83, 114, 240, 0.2);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: transform 0.25s, border-color 0.25s, box-shadow 0.25s;
+}
+
+.l-scenario:hover {
+  transform: translateY(-4px);
+  border-color: rgba(83, 114, 240, 0.5);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.l-scenario-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(83, 114, 240, 0.12);
+  border: 1px solid rgba(83, 114, 240, 0.3);
+  color: #5372f0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 0.3rem 0.7rem;
+  border-radius: 20px;
+  align-self: flex-start;
+  margin-bottom: 1rem;
+}
+
+.l-scenario h3 {
+  font-size: 1.15rem;
+  color: #fff;
+  margin: 0 0 0.35rem;
+  font-weight: 700;
+}
+
+.l-scenario-sub {
+  font-size: 0.78rem;
+  color: #9aa0a6;
+  margin: 0 0 1.1rem;
+}
+
+.l-scenario-body {
+  flex: 1;
+}
+
+.l-scenario-body p {
+  font-size: 0.88rem;
+  color: #cfd3d9;
+  line-height: 1.6;
+  margin: 0 0 0.9rem;
+}
+
+.l-scenario-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* Scenario 1 — chat mock */
+.l-scenario-chat {
+  background: #0b1220;
+  border-radius: 8px;
+  padding: 0.85rem;
+  margin: 0.9rem 0;
+  border: 1px solid rgba(233, 69, 96, 0.25);
+}
+
+.l-sc-msg {
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.l-sc-msg.critical {
+  color: #fff;
+  font-weight: 600;
+}
+
+.l-sc-msg.critical span {
+  display: block;
+  margin-top: 3px;
+  color: #e94560;
+  font-weight: 500;
+  font-size: 0.75rem;
+  font-family: 'Courier New', monospace;
+}
+
+/* Scenario 2 — progress bar */
+.l-scenario-progress {
+  background: #0b1220;
+  border-radius: 8px;
+  padding: 0.85rem;
+  margin: 0.9rem 0;
+  border: 1px solid rgba(83, 114, 240, 0.2);
+}
+
+.l-sc-prog-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: #cfd3d9;
+  margin-bottom: 0.45rem;
+}
+
+.l-sc-prog-label strong {
+  color: #3ddc84;
+}
+
+.l-sc-prog-bar {
+  height: 6px;
+  background: rgba(83, 114, 240, 0.12);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.6rem;
+}
+
+.l-sc-prog-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #5372f0, #3ddc84);
+  border-radius: 3px;
+  animation: l-prog-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes l-prog-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.l-sc-prog-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: #9aa0a6;
+}
+
+.l-sc-prog-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.l-sc-prog-dot.ok { background: #3ddc84; }
+.l-sc-prog-dot.critical { background: #e94560; margin-left: 0.35rem; }
+
+/* Scenario 3 — discovery list */
+.l-scenario-discovery {
+  background: #0b1220;
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem;
+  margin: 0.9rem 0;
+  border: 1px solid rgba(61, 220, 132, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.l-sc-disc-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.75rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px dashed rgba(83, 114, 240, 0.08);
+}
+
+.l-sc-disc-row:last-child {
+  border-bottom: none;
+}
+
+.l-sc-disc-row.ghost {
+  opacity: 0.55;
+  font-style: italic;
+}
+
+.l-sc-disc-ip {
+  color: #9aa0a6;
+  font-family: 'Courier New', monospace;
+}
+
+.l-sc-disc-vendor {
+  color: #cfd3d9;
+  font-weight: 600;
+}
+
+.l-sc-disc-vendor.mikrotik { color: #5372f0; }
+.l-sc-disc-vendor.ubnt { color: #3ddc84; }
+
+.l-sc-disc-status {
+  color: #3ddc84;
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+
+.l-scenario-outcome {
+  margin-top: 1.1rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid rgba(83, 114, 240, 0.15);
+  font-size: 0.83rem;
+  color: #cfd3d9;
+  line-height: 1.55;
+}
+
+.l-scenario-outcome strong {
+  color: #3ddc84;
+  font-weight: 700;
+}
+
+/* ============================================================
+   TERMINAL + AI COPILOT
+   ============================================================ */
+.l-terminal {
+  background: linear-gradient(180deg, transparent 0%, rgba(15, 52, 96, 0.1) 100%);
+}
+
+.l-term-features {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  margin-top: 1.5rem;
+}
+
+.l-term-feature {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+}
+
+.l-tf-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  background: rgba(83, 114, 240, 0.12);
+  border: 1px solid rgba(83, 114, 240, 0.3);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.l-term-feature strong {
+  display: block;
+  color: #fff;
+  font-size: 0.95rem;
+  margin-bottom: 0.2rem;
+}
+
+.l-term-feature p {
+  font-size: 0.85rem;
+  color: #9aa0a6;
+  margin: 0;
+  line-height: 1.55;
+}
+
+/* Terminal mock */
+.l-term-mock {
+  background: #0a0f1a;
+  border-radius: 10px;
+  border: 1px solid rgba(83, 114, 240, 0.25);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font-family: 'Courier New', 'Monaco', monospace;
+}
+
+.l-term-topbar {
+  background: #16213e;
+  padding: 0.6rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid rgba(83, 114, 240, 0.2);
+}
+
+.l-term-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.l-term-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2a3a5a;
+}
+
+.l-term-dots span:nth-child(1) { background: #e94560; }
+.l-term-dots span:nth-child(2) { background: #fbbf24; }
+.l-term-dots span:nth-child(3) { background: #3ddc84; }
+
+.l-term-title {
+  font-size: 0.78rem;
+  color: #9aa0a6;
+  letter-spacing: 0.3px;
+  font-family: -apple-system, sans-serif;
+}
+
+.l-term-body {
+  padding: 1rem 1.1rem;
+  font-size: 0.78rem;
+  color: #e0e0e0;
+  line-height: 1.55;
+}
+
+.l-term-line {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.l-term-prompt {
+  color: #3ddc84;
+  font-weight: 700;
+}
+
+.l-term-cmd {
+  color: #fff;
+}
+
+.l-term-line.output {
+  color: #9aa0a6;
+  font-size: 0.74rem;
+}
+
+.l-term-spacer {
+  height: 0.8rem;
+}
+
+.l-term-ai-prompt {
+  background: rgba(61, 220, 132, 0.06);
+  border-left: 2px solid #3ddc84;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 0.7rem;
+}
+
+.l-term-ai-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #3ddc84;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-family: -apple-system, sans-serif;
+  margin-bottom: 0.3rem;
+}
+
+.l-term-ai-question {
+  color: #cfd3d9;
+  font-family: -apple-system, sans-serif;
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.l-term-ai-answer {
+  background: rgba(83, 114, 240, 0.07);
+  border-left: 2px solid #5372f0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0 6px 6px 0;
+}
+
+.l-term-ai-answer-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #5372f0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-family: -apple-system, sans-serif;
+  margin-bottom: 0.5rem;
+}
+
+.l-term-ai-code {
+  background: #0b1220;
+  padding: 0.55rem 0.7rem;
+  border-radius: 5px;
+  color: #3ddc84;
+  font-size: 0.74rem;
+  margin-bottom: 0.55rem;
+  word-break: break-all;
+}
+
+.l-term-ai-actions {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.l-term-ai-btn {
+  font-family: -apple-system, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.3rem 0.7rem;
+  border-radius: 5px;
+  border: 1px solid rgba(83, 114, 240, 0.35);
+  color: #5372f0;
+  cursor: pointer;
+}
+
+.l-term-ai-btn.primary {
+  background: linear-gradient(135deg, #5372f0 0%, #3b5bdb 100%);
+  color: #fff;
+  border-color: transparent;
+}
+
+.l-term-footer {
+  background: #16213e;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid rgba(83, 114, 240, 0.2);
+  font-size: 0.72rem;
+  color: #9aa0a6;
+  font-family: -apple-system, sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.l-term-cursor {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3ddc84;
+  animation: l-pulse-dot 1.1s infinite;
+}
+
+/* ============================================================
+   AUTOMATION
+   ============================================================ */
+.l-auto-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+}
+
+.l-auto-card {
+  background: #16213e;
+  border: 1px solid rgba(83, 114, 240, 0.18);
+  border-radius: 11px;
+  padding: 1.4rem;
+  transition: transform 0.25s, border-color 0.25s;
+}
+
+.l-auto-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(83, 114, 240, 0.45);
+}
+
+.l-auto-card-head {
+  display: flex;
+  gap: 0.85rem;
+  align-items: center;
+  margin-bottom: 0.9rem;
+}
+
+.l-auto-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.l-auto-icon.blue {
+  background: rgba(83, 114, 240, 0.12);
+  border: 1px solid rgba(83, 114, 240, 0.3);
+  color: #5372f0;
+}
+
+.l-auto-icon.green {
+  background: rgba(61, 220, 132, 0.1);
+  border: 1px solid rgba(61, 220, 132, 0.3);
+  color: #3ddc84;
+}
+
+.l-auto-icon.purple {
+  background: rgba(167, 139, 250, 0.1);
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  color: #a78bfa;
+}
+
+.l-auto-icon.orange {
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+}
+
+.l-auto-card-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+}
+
+.l-auto-card-sub {
+  font-size: 0.78rem;
+  color: #9aa0a6;
+  margin-top: 0.15rem;
+}
+
+.l-auto-card-desc {
+  font-size: 0.88rem;
+  color: #cfd3d9;
+  line-height: 1.6;
+  margin: 0 0 1rem;
+}
+
+.l-auto-card-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: #0b1220;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: #9aa0a6;
+}
+
+.l-auto-stat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.l-auto-stat-dot.ok {
+  background: #3ddc84;
+  box-shadow: 0 0 6px rgba(61, 220, 132, 0.5);
+}
+
+.l-auto-footer-note {
+  margin-top: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  justify-content: center;
+  font-size: 0.85rem;
+  color: #9aa0a6;
+  text-align: center;
+}
+
+/* ============================================================
+   SECURITY
+   ============================================================ */
+.l-security {
+  padding: 3rem 0;
+}
+
+.l-security-band {
+  background: linear-gradient(135deg, rgba(61, 220, 132, 0.04) 0%, rgba(83, 114, 240, 0.06) 100%);
+  border: 1px solid rgba(61, 220, 132, 0.18);
+  border-radius: 14px;
+  padding: 2.5rem 2rem;
+}
+
+.l-security-head {
+  text-align: center;
+  max-width: 620px;
+  margin: 0 auto 2.5rem;
+}
+
+.l-security-head .l-section-title {
+  text-align: center;
+}
+
+.l-security-sub {
+  color: #9aa0a6;
+  font-size: 0.95rem;
+  margin: 0.5rem 0 0;
+}
+
+.l-security-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+}
+
+.l-security-item {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  background: rgba(11, 18, 32, 0.5);
+  border: 1px solid rgba(83, 114, 240, 0.1);
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem;
+}
+
+.l-sec-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  background: rgba(61, 220, 132, 0.08);
+  border: 1px solid rgba(61, 220, 132, 0.25);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.l-security-item strong {
+  display: block;
+  color: #fff;
+  font-size: 0.95rem;
+  margin-bottom: 0.3rem;
+}
+
+.l-security-item p {
+  color: #9aa0a6;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* ============================================================
+   FAQ
+   ============================================================ */
+.l-faq {
+  background: linear-gradient(180deg, transparent 0%, rgba(15, 52, 96, 0.1) 100%);
+}
+
+.l-faq-grid {
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.l-faq-item {
+  background: #16213e;
+  border: 1px solid rgba(83, 114, 240, 0.18);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.l-faq-item[open] {
+  border-color: rgba(83, 114, 240, 0.45);
+}
+
+.l-faq-item summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 1rem 1.3rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.95rem;
+  user-select: none;
+}
+
+.l-faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.l-faq-chev {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(83, 114, 240, 0.3);
+  color: #5372f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  font-weight: 400;
+  transition: transform 0.3s, background 0.2s;
+  line-height: 1;
+}
+
+.l-faq-item[open] .l-faq-chev {
+  transform: rotate(45deg);
+  background: rgba(83, 114, 240, 0.12);
+}
+
+.l-faq-answer {
+  padding: 0 1.3rem 1.15rem;
+  color: #cfd3d9;
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.l-faq-answer p {
+  margin: 0;
+}
+
+/* ============================================================
+   RESPONSIVE — NEW SECTIONS
+   ============================================================ */
+@media (max-width: 960px) {
+  .l-scenarios-grid { grid-template-columns: 1fr; }
+  .l-auto-grid { grid-template-columns: 1fr; }
+  .l-security-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .l-security-band { padding: 1.75rem 1.25rem; }
+  .l-term-mock { font-size: 0.72rem; }
+  .l-term-body { padding: 0.8rem 0.85rem; }
+  .l-faq-item summary { font-size: 0.9rem; padding: 0.85rem 1rem; }
+  .l-faq-answer { padding: 0 1rem 1rem; font-size: 0.86rem; }
+  .l-scenario { padding: 1.2rem; }
 }
 </style>
