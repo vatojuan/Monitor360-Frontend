@@ -1028,10 +1028,23 @@ const onLogout = () => {
   }
 }
 
-@media (max-width: 400px) {
+@media (max-width: 640px) {
   .notif-pop {
-    width: calc(100vw - 2rem);
-    max-width: 340px;
+    position: fixed;
+    top: 48px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+  }
+  .notif-pop .sys-item,
+  .notif-pop .notif-item {
+    flex-wrap: wrap;
+  }
+  .notif-pop .view-details-btn {
+    font-size: 11px;
   }
 }
 </style>
