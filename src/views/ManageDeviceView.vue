@@ -679,7 +679,12 @@ const filteredDevices = computed(() => {
 })
 
 function onVendorChange() {
-  if (addForm.value.vendor === 'Mikrotik') {
+  if (addForm.value.vendor === 'Generic') {
+    addForm.value.connection_method = 'maestro'
+    addForm.value.api_port = null
+    addForm.value.ssh_port = null
+    addForm.value.credential_id = null
+  } else if (addForm.value.vendor === 'Mikrotik') {
     addForm.value.api_port = 8728
     addForm.value.ssh_port = 22
   } else if (addForm.value.vendor === 'Ubiquiti' || addForm.value.vendor === 'Mimosa') {
@@ -1460,7 +1465,7 @@ onUnmounted(() => {
             <input type="text" v-model="addForm.ip_address" placeholder="192.168.88.1" required />
           </div>
           <div class="ip-port-grid">
-            <div v-if="['Mikrotik', 'SNMP', 'Generic'].includes(addForm.vendor)" style="flex: 1;">
+            <div v-if="['Mikrotik', 'SNMP'].includes(addForm.vendor)" style="flex: 1;">
               <label>{{ addForm.vendor === 'SNMP' ? 'Puerto SNMP' : 'Puerto API' }}</label>
               <input
                 type="number"
@@ -1469,7 +1474,7 @@ onUnmounted(() => {
                 required
               />
             </div>
-            <div v-if="['Mikrotik', 'Ubiquiti', 'Mimosa', 'Generic'].includes(addForm.vendor)" style="flex: 1;">
+            <div v-if="['Mikrotik', 'Ubiquiti', 'Mimosa'].includes(addForm.vendor)" style="flex: 1;">
               <label>Puerto SSH</label>
               <input
                 type="number"
@@ -1478,17 +1483,20 @@ onUnmounted(() => {
                 :required="['Mikrotik', 'Ubiquiti', 'Mimosa'].includes(addForm.vendor)"
               />
             </div>
+            <div v-if="addForm.vendor === 'Generic'" class="generic-hint">
+              <span>📡 Solo Ping — sin API ni SSH</span>
+            </div>
           </div>
         </div>
 
         <div class="grid-2">
-          <div>
+          <div v-if="addForm.vendor !== 'Generic'">
             <label>Método de conexión</label>
             <select v-model="addForm.connection_method">
               <option value="vpn">A través de Perfil VPN</option>
               <option value="maestro">A través de Maestro existente</option>
             </select>
-            
+
             <label style="margin-top: 0.8rem">Perfil de Credenciales</label>
             <select v-model="addForm.credential_id">
               <option :value="null">-- Auto-detectar (Lento) --</option>
@@ -1497,8 +1505,12 @@ onUnmounted(() => {
               </option>
             </select>
           </div>
-          
-          <div v-if="addForm.connection_method === 'vpn'">
+
+          <div v-if="addForm.vendor === 'Generic'" class="generic-maestro-info">
+            <p>Un dispositivo genérico solo puede monitorearse mediante ping desde un Maestro.</p>
+          </div>
+
+          <div v-if="addForm.connection_method === 'vpn' && addForm.vendor !== 'Generic'">
             <label>Perfil VPN</label>
             <select v-model="addForm.vpn_profile_id" required>
               <option :value="null" disabled>-- Selecciona VPN --</option>
@@ -1508,8 +1520,8 @@ onUnmounted(() => {
             </select>
           </div>
 
-          <div v-if="addForm.connection_method === 'maestro'">
-            <label>Maestro</label>
+          <div v-if="addForm.connection_method === 'maestro' || addForm.vendor === 'Generic'">
+            <label>Maestro <span v-if="addForm.vendor === 'Generic'" style="color: var(--red);">*</span></label>
             <select v-model="addForm.maestro_id" required>
               <option :value="null" disabled>-- Selecciona Maestro --</option>
               <option v-for="m in maestros" :key="m.id" :value="m.id">{{ m.client_name }}</option>
@@ -1530,21 +1542,24 @@ onUnmounted(() => {
             class="btn-secondary"
             type="button"
             @click="handleTestReachability"
-            :disabled="isTesting"
+            :disabled="isTesting || (addForm.vendor === 'Generic' && !addForm.maestro_id)"
+            :title="addForm.vendor === 'Generic' && !addForm.maestro_id ? 'Seleccioná un Maestro primero' : ''"
           >
-            {{ isTesting ? 'Probando...' : 'Probar conexión' }}
+            {{ isTesting ? 'Probando...' : (addForm.vendor === 'Generic' ? 'Probar Ping desde Maestro' : 'Probar conexión') }}
           </button>
         </div>
 
         <div v-if="testResult" class="test-box" :class="testResult.reachable ? 'ok' : 'error'">
           <div style="font-weight: bold;">
-            {{ testResult.reachable ? '✅ Alcanzable y Autenticado' : '❌ Fallo en la prueba' }}
+            {{ testResult.reachable
+              ? (addForm.vendor === 'Generic' ? '✅ Ping OK desde Maestro' : '✅ Alcanzable y Autenticado')
+              : '❌ Fallo en la prueba' }}
           </div>
           <div v-if="!testResult.reachable && testResult.detail" class="text-dim" style="margin-top: 5px;">
             {{ testResult.detail }}
           </div>
-          <div v-if="testResult.reachable && (testResult.api_port || testResult.ssh_port)" class="text-dim" style="margin-top: 5px;">
-            Puertos confirmados: 
+          <div v-if="testResult.reachable && (testResult.api_port || testResult.ssh_port) && addForm.vendor !== 'Generic'" class="text-dim" style="margin-top: 5px;">
+            Puertos confirmados:
             <span v-if="testResult.api_port" style="color: var(--blue);">API ({{testResult.api_port}}) </span>
             <span v-if="testResult.ssh_port" style="color: var(--green);">SSH ({{testResult.ssh_port}})</span>
           </div>
@@ -1651,6 +1666,7 @@ onUnmounted(() => {
               </td>
               <td>
                 {{ device.vendor || 'Generico' }}
+                <span v-if="device.vendor === 'Generic'" class="badge device" style="margin-left:4px;font-size:0.68rem;">Solo Ping</span>
               </td>
               <td>
                 <span :class="['badge', getDeviceRole(device).class]">{{
@@ -1686,24 +1702,24 @@ onUnmounted(() => {
                     <button class="dropdown-item" @click="openCommentsModal(device)">
                       <span class="icon">📝</span> Bitácora
                     </button>
-                    
-                    <button class="dropdown-item" @click="openTerminalSetup(device)">
+
+                    <button v-if="device.vendor !== 'Generic'" class="dropdown-item" @click="openTerminalSetup(device)">
                       <span class="icon">💻</span> Smart Terminal
                     </button>
 
-                    <button 
-                      v-if="!device.is_maestro && device.credential_id" 
-                      class="dropdown-item" 
+                    <button
+                      v-if="!device.is_maestro && device.credential_id"
+                      class="dropdown-item"
                       @click="promoteToMaestro(device)"
                     >
                       <span class="icon">⬆️</span> Promover Maestro
                     </button>
 
-                    <button class="dropdown-item text-warning" @click="openRotateCredentialsModal(device)">
+                    <button v-if="device.vendor !== 'Generic'" class="dropdown-item text-warning" @click="openRotateCredentialsModal(device)">
                       <span class="icon">🔑</span> Rotar Credenciales
                     </button>
 
-                    <button class="dropdown-item text-danger" @click="requestReboot(device)" :disabled="isRebooting">
+                    <button v-if="device.vendor !== 'Generic'" class="dropdown-item text-danger" @click="requestReboot(device)" :disabled="isRebooting">
                       <span class="icon">🔄</span> Reiniciar Equipo
                     </button>
 
@@ -2380,7 +2396,29 @@ onUnmounted(() => {
 .ip-port-grid {
   display: flex;
   gap: 1rem;
+  align-items: flex-end;
 }
+.generic-hint {
+  flex: 1;
+  padding: 0.55rem 0.75rem;
+  background: rgba(83, 130, 240, 0.07);
+  border: 1px solid rgba(83, 130, 240, 0.2);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: var(--text-dim, #9aa0a6);
+  display: flex;
+  align-items: center;
+}
+.generic-maestro-info {
+  padding: 0.65rem 0.9rem;
+  background: rgba(83, 130, 240, 0.07);
+  border: 1px solid rgba(83, 130, 240, 0.2);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: var(--text-dim, #9aa0a6);
+  line-height: 1.5;
+}
+.generic-maestro-info p { margin: 0; }
 .form-group {
   margin-bottom: 1rem;
 }

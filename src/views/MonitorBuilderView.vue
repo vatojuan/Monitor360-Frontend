@@ -798,31 +798,38 @@ watch(searchQuery, (newQuery) => {
         <div v-if="!currentMonitor">
           <h2><span class="step-number">2</span> Crear Tarjeta de Monitoreo</h2>
 
-          <div class="form-group" style="margin-bottom: 1rem">
-            <label>Asignar Grupo</label>
-            <select v-model="selectedGroupOption" class="search-input">
-              <option value="">-- Grupo General / Sin Grupo --</option>
-              <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
-              <option disabled>──────────────────</option>
-              <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
-            </select>
+          <div v-if="selectedDevice?.vendor === 'Generic'" class="generic-block-notice">
+            <strong>⚠️ Dispositivo genérico (Solo Ping)</strong>
+            <p>No se pueden crear monitores en dispositivos genéricos. Este equipo solo puede ser destino de sensores de ping configurados en su Maestro.</p>
           </div>
 
-          <div
-            v-if="selectedGroupOption === '__NEW__'"
-            class="form-group"
-            style="margin-bottom: 1rem"
-          >
-            <label>Nombre del Nuevo Grupo</label>
-            <input
-              type="text"
-              v-model="customGroupName"
-              placeholder="Ej: Sucursal Norte"
-              class="search-input"
-            />
-          </div>
+          <template v-else>
+            <div class="form-group" style="margin-bottom: 1rem">
+              <label>Asignar Grupo</label>
+              <select v-model="selectedGroupOption" class="search-input">
+                <option value="">-- Grupo General / Sin Grupo --</option>
+                <option v-for="g in availableGroups" :key="g" :value="g">{{ g }}</option>
+                <option disabled>──────────────────</option>
+                <option value="__NEW__">➕ Crear Nuevo Grupo...</option>
+              </select>
+            </div>
 
-          <button @click="createMonitorCard" class="btn-create">Crear Tarjeta</button>
+            <div
+              v-if="selectedGroupOption === '__NEW__'"
+              class="form-group"
+              style="margin-bottom: 1rem"
+            >
+              <label>Nombre del Nuevo Grupo</label>
+              <input
+                type="text"
+                v-model="customGroupName"
+                placeholder="Ej: Sucursal Norte"
+                class="search-input"
+              />
+            </div>
+
+            <button @click="createMonitorCard" class="btn-create">Crear Tarjeta</button>
+          </template>
         </div>
         <div v-else>
           <h2><span class="step-number">2</span> Gestionar Sensores</h2>
@@ -1049,6 +1056,25 @@ h4 {
   cursor: pointer;
   border-radius: 6px;
   flex-shrink: 0;
+}
+
+.generic-block-notice {
+  background: rgba(233, 69, 96, 0.07);
+  border: 1px solid rgba(233, 69, 96, 0.3);
+  border-radius: 8px;
+  padding: 0.9rem 1.1rem;
+  color: #e0e0e0;
+}
+.generic-block-notice strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #e94560;
+}
+.generic-block-notice p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #9aa0a6;
+  line-height: 1.5;
 }
 
 .btn-create {
