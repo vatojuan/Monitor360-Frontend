@@ -17,8 +17,10 @@ const session = ref(null)
 const userEmail = ref('')
 const userAvatar = ref('')
 
-// Ocultar chrome en rutas que lo pidan (Ej: Login)
+// Ocultar chrome en rutas que lo pidan (Ej: Login, Landing)
 const hideChrome = computed(() => route.meta?.hideChrome === true)
+const hideFooter = computed(() => route.meta?.hideFooter === true)
+const noMainPadding = computed(() => route.meta?.noMainPadding === true)
 
 // ===== Estado de tiempo real / WS =====
 const live = reactive({
@@ -214,11 +216,11 @@ onBeforeUnmount(() => {
     </AppLayout>
 
     <div v-else class="bare-layout">
-      <main class="main-content">
+      <main :class="noMainPadding ? 'main-content-bare' : 'main-content'">
         <RouterView />
       </main>
 
-      <footer class="main-footer">
+      <footer v-if="!hideFooter" class="main-footer">
         <div class="footer-content">
           <p class="copyright">&copy; 2026 MonitorWISP. Todos los derechos reservados.</p>
           <div class="footer-links">
@@ -281,6 +283,12 @@ body {
 .main-content {
   width: 100%;
   padding: 16px;
+  flex-grow: 1;
+}
+
+.main-content-bare {
+  width: 100%;
+  padding: 0;
   flex-grow: 1;
 }
 

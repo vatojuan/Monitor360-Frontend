@@ -1,6 +1,7 @@
 // src/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
 import DashboardView from '../views/DashboardView.vue'
+import LandingView from '../views/LandingView.vue'
 import MonitorBuilderView from '../views/MonitorBuilderView.vue'
 import ManageDeviceView from '../views/ManageDeviceView.vue'
 import CredentialsView from '../views/CredentialsView.vue'
@@ -23,24 +24,27 @@ import PrivacyView from '../views/PrivacyView.vue'
 import { getSession, supabase } from '@/lib/supabase'
 
 const routes = [
+  // Landing page pública
+  { path: '/', name: 'landing', component: LandingView, meta: { hideChrome: true, noMainPadding: true, hideFooter: true } },
+
   // Login oculta el chrome
   { path: '/login', name: 'login', component: LoginView, meta: { hideChrome: true } },
 
   // RUTAS PÚBLICAS
-  { 
-    path: '/terms', 
-    name: 'terms', 
-    component: TermsView, 
-    meta: { hideChrome: true } 
+  {
+    path: '/terms',
+    name: 'terms',
+    component: TermsView,
+    meta: { hideChrome: true }
   },
-  { 
-    path: '/privacy', 
-    name: 'privacy', 
-    component: PrivacyView, 
-    meta: { hideChrome: true } 
+  {
+    path: '/privacy',
+    name: 'privacy',
+    component: PrivacyView,
+    meta: { hideChrome: true }
   },
 
-  { path: '/', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true } },
+  { path: '/dashboard', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true } },
   {
     path: '/monitor-builder',
     name: 'monitor-builder',
@@ -101,7 +105,7 @@ const routes = [
   },
 
   // Fallback
-  { path: '/:pathMatch(.*)*', redirect: '/' },
+  { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
 ]
 
 const router = createRouter({
@@ -122,10 +126,15 @@ router.beforeEach(async (to) => {
   const { data: sessionData } = await getSession()
   const hasSession = !!sessionData?.session
 
-  // 1. Si ya estoy logueado e intento ir a /login → redirigir a destino (o /)
+  // 1a. Si ya estoy logueado e intento ver la landing → ir al dashboard
+  if (to.name === 'landing' && hasSession) {
+    return { name: 'dashboard' }
+  }
+
+  // 1b. Si ya estoy logueado e intento ir a /login → redirigir a destino (o /dashboard)
   if (to.name === 'login' && hasSession) {
     const dest =
-      typeof to.query.redirect === 'string' && to.query.redirect ? to.query.redirect : '/'
+      typeof to.query.redirect === 'string' && to.query.redirect ? to.query.redirect : '/dashboard'
     if (to.fullPath === dest) return true
     return { path: dest }
   }
