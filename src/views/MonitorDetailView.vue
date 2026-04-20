@@ -260,7 +260,29 @@ const chartOption = computed(() => {
   // Extraer timestamps y valores
   const timestamps = data.map((d) => d._ms)
 
-  // Configuración base (Tema oscuro manual para coincidir con CSS)
+  // Helpers de leyenda y grid para móvil
+  const mobileLegend = (data) => ({
+    data,
+    type: 'scroll',
+    textStyle: { color: '#ccc', fontSize: mobile ? 10 : 12 },
+    itemWidth: mobile ? 14 : 25,
+    itemHeight: mobile ? 8 : 14,
+    pageIconSize: mobile ? 10 : 15,
+    // En móvil la leyenda va ABAJO para liberar el área del gráfico
+    top: mobile ? 'auto' : 0,
+    bottom: mobile ? 28 : 'auto',
+  })
+
+  const mobileGrid = (opts = {}) => ({
+    left: '2%',
+    right: mobile ? '2%' : (opts.rightDesktop ?? opts.right ?? '3%'),
+    // En móvil: slider(5+18=23px) + gap + leyenda(14px) + padding = 55px
+    bottom: mobile ? 55 : (opts.bottomDesktop ?? 75),
+    // Con leyenda abajo no necesitamos top grande
+    top: mobile ? '4%' : (opts.topDesktop ?? '10%'),
+    containLabel: true,
+  })
+
   const baseOption = {
     backgroundColor: 'transparent',
     tooltip: {
@@ -270,9 +292,10 @@ const chartOption = computed(() => {
       borderColor: '#333',
       textStyle: { color: '#fff', fontSize: mobile ? 11 : 13 },
       confine: true,
+      // En móvil posicionar tooltip en esquina superior para no tapar el gráfico
+      position: mobile ? (point) => [point[0] < 160 ? point[0] + 8 : point[0] - 120, 4] : undefined,
     },
-    // Bottom reducido en móvil para que el área de gráfico sea mayor
-    grid: { left: '2%', right: '3%', bottom: mobile ? 50 : 75, top: mobile ? '8%' : '10%', containLabel: true },
+    grid: mobileGrid(),
     dataZoom: [
       { type: 'inside', start: zoomStart.value, end: zoomEnd.value },
       {
@@ -284,18 +307,22 @@ const chartOption = computed(() => {
         handleSize: '100%',
         showDetail: false,
         fillerColor: 'rgba(83, 114, 240, 0.2)',
+        borderColor: 'transparent',
       },
     ],
     xAxis: {
       type: 'category',
-      data: timestamps.map((ts) =>
-        new Date(ts).toLocaleString('es-AR', {
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-      ),
+      data: timestamps.map((ts) => {
+        const d = new Date(ts)
+        // En móvil: solo hora:min para rangos cortos, fecha+hora para largos
+        if (mobile) {
+          const h = hoursMap[timeRange.value] ?? 24
+          return h <= 24
+            ? d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+            : d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })
+        }
+        return d.toLocaleString('es-AR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      }),
       boundaryGap: false,
       axisLine: { lineStyle: { color: '#555' } },
       axisLabel: { color: '#888', fontSize: mobile ? 10 : 12, hideOverlap: true },
@@ -374,7 +401,7 @@ const chartOption = computed(() => {
 
     return {
       ...baseOption,
-      legend: { data: ['Descarga', 'Subida'], textStyle: { color: '#ccc', fontSize: mobile ? 11 : 12 }, top: 0, type: 'scroll' },
+      legend: mobileLegend(['Descarga', 'Subida']),
       yAxis: { ...baseOption.yAxis, name: 'Mbps' },
       series: [
         {
@@ -554,24 +581,10 @@ const chartOption = computed(() => {
 
     return {
       ...baseOption,
-      legend: {
-        data: legendData,
-        textStyle: { color: '#ccc', fontSize: mobile ? 10 : 12 },
-        top: 0,
-        type: 'scroll',
-        itemWidth: mobile ? 14 : 25,
-        itemHeight: mobile ? 8 : 14,
-        pageIconSize: mobile ? 10 : 15,
-      },
-      grid: {
-        left: '2%',
-        right: mobile ? '2%' : (isAP ? '18%' : '10%'),
-        bottom: mobile ? 50 : 75,
-        top: mobile ? '22%' : '15%',
-        containLabel: true,
-      },
+      legend: mobileLegend(legendData),
+      grid: mobileGrid({ rightDesktop: isAP ? '18%' : '10%', topDesktop: '15%' }),
       yAxis: yAxes.map((axis) =>
-        mobile ? { ...axis, name: '', offset: axis.offset ?? 0 } : axis
+        mobile ? { ...axis, name: '', offset: 0 } : axis
       ),
       series: series
     }
@@ -682,24 +695,10 @@ const chartOption = computed(() => {
 
     return {
       ...baseOption,
-      legend: {
-        data: legendData,
-        textStyle: { color: '#ccc', fontSize: mobile ? 10 : 12 },
-        top: 0,
-        type: 'scroll',
-        itemWidth: mobile ? 14 : 25,
-        itemHeight: mobile ? 8 : 14,
-        pageIconSize: mobile ? 10 : 15,
-      },
-      grid: {
-        left: '2%',
-        right: mobile ? '2%' : (rightOffset > 0 ? `${rightOffset + 30}px` : '5%'),
-        bottom: mobile ? 50 : 75,
-        top: mobile ? '18%' : '15%',
-        containLabel: true,
-      },
+      legend: mobileLegend(legendData),
+      grid: mobileGrid({ rightDesktop: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', topDesktop: '15%' }),
       yAxis: yAxes.map((axis) =>
-        mobile ? { ...axis, name: '', offset: axis.offset ?? 0 } : axis
+        mobile ? { ...axis, name: '', offset: 0 } : axis
       ),
       series: series
     }
@@ -1279,7 +1278,22 @@ watch(timeRange, async (r) => {
     grid-template-columns: repeat(2, 1fr);
   }
   .chart-wrapper {
-    height: 460px;
+    height: clamp(340px, calc(100svh - 280px), 520px);
+  }
+  .top-bar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .left-group {
+    gap: 0.5rem;
+  }
+  .back-btn {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+  }
+  .info h1 {
+    font-size: 1.1rem;
   }
   .toolbar {
     flex-wrap: wrap;
@@ -1307,7 +1321,7 @@ watch(timeRange, async (r) => {
     grid-template-columns: 1fr;
   }
   .chart-wrapper {
-    height: 420px;
+    height: clamp(300px, calc(100svh - 320px), 420px);
   }
 }
 </style>
