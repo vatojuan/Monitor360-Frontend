@@ -777,6 +777,7 @@ async function ensureChannelsLoaded() {
 // BUZÓN TEMPORAL Y LÓGICA DE ESCALADA DE ALERTAS
 let pendingWsUpdates = {}
 let wsBufferTimer = null
+let monitorPollTimer = null
 
 function flushWsUpdates() {
   if (Object.keys(pendingWsUpdates).length === 0) return
@@ -943,6 +944,10 @@ onMounted(async () => {
   wireWsSyncAndSubs()
 
   wsBufferTimer = setInterval(flushWsUpdates, 500)
+  monitorPollTimer = setInterval(async () => {
+    if (document.visibilityState !== 'visible') return
+    await fetchAllMonitors()
+  }, 30000)
   window.addEventListener("resize", resizeAllGridItems)
   window.addEventListener('adoption_complete', handleAdoptionComplete)
   window.addEventListener('discovery_scan_finished', handleDiscoveryScanFinished)
@@ -962,6 +967,7 @@ onUnmounted(() => {
   if (typeof wsOpenUnbind === 'function') wsOpenUnbind()
   if (typeof directMsgUnbind === 'function') directMsgUnbind()
   if (wsBufferTimer) clearInterval(wsBufferTimer)
+  if (monitorPollTimer) clearInterval(monitorPollTimer)
 
   if (typeof audioLoopTimer !== 'undefined' && audioLoopTimer) clearInterval(audioLoopTimer)
 

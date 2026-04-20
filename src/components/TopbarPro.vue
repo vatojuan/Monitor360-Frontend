@@ -484,41 +484,16 @@ const handleGlobalNotificationEvent = () => {
   setTimeout(fetchAllNotifications, 15000)
 }
 
-// Recibe el payload completo del WS vía CustomEvent.detail (system_notification)
-const handleSystemNotificationWS = async (event) => {
-  const msg = event?.detail
-  if (msg?.title || msg?.message) {
-    // Construir meta_data desde todas las ubicaciones posibles del mensaje WS:
-    // el backend puede enviar los datos dentro de meta_data o al nivel raíz del mensaje.
-    let baseMeta = {}
-    if (msg.meta_data) {
-      baseMeta = typeof msg.meta_data === 'string'
-        ? (() => { try { return JSON.parse(msg.meta_data) } catch { return {} } })()
-        : msg.meta_data
-    }
-    const mergedMeta = {
-      ...baseMeta,
-      successful_count: baseMeta.successful_count ?? msg.successful_count ?? msg.num_candidates,
-      adopted_devices:  baseMeta.adopted_devices  ?? msg.adopted_devices  ?? [],
-      failed_devices:   baseMeta.failed_devices   ?? msg.failed_devices   ?? [],
-    }
-
-    const synthetic = {
-      id: `ws-${Date.now()}`,
-      title: msg.title || 'Aviso del sistema',
-      message: msg.message || '',
-      type: msg.level || 'info',
-      meta_data: mergedMeta,
-      created_at: new Date().toISOString(),
-      _synthetic: true,
-    }
-    sysNotifications.value = [synthetic, ...sysNotifications.value.filter(n => !n._synthetic)]
-    if (showNotif.value) activeNotifTab.value = 'system'
-  }
-  // Sincronizar con REST en varias pasadas: el backend puede persistir los datos con delay
-  setTimeout(fetchSystemNotifications, 1500)
-  setTimeout(fetchSystemNotifications, 5000)
-  setTimeout(fetchSystemNotifications, 12000)
+// Recibe system_notification vía WS. NO usamos synthetic: siempre mostramos datos reales de BD.
+// El backend persiste la notificación antes de enviar el WS, así que el fetch inmediato la encuentra.
+const handleSystemNotificationWS = async () => {
+  // Cambiar a la pestaña de avisos si el panel está abierto
+  if (showNotif.value) activeNotifTab.value = 'system'
+  // Fetch inmediato desde REST (datos reales con adopted_devices/failed_devices completos)
+  await fetchSystemNotifications()
+  // Retries por si el backend persiste con leve delay
+  setTimeout(fetchSystemNotifications, 2000)
+  setTimeout(fetchSystemNotifications, 6000)
 }
 
 const handleDiscoveryDeviceDismissed = (event) => {
