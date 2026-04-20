@@ -883,6 +883,8 @@ const handleAdoptionComplete = async () => {
   await fetchAllMonitors()
   await fetchAllDevices()
   wireWsSyncAndSubs()
+  setTimeout(() => fetchAllMonitors(), 4000)
+  setTimeout(() => fetchAllMonitors(), 12000)
 }
 
 const handleDeviceDeleted = (event) => {
@@ -900,33 +902,32 @@ const handleBulkDeleteCompleted = (event) => {
   refreshGroupedMonitors()
 }
 
-// El backend envía discovery_scan_finished como ÚLTIMO evento, después de que
-// la adopción ya está completa. Fetch inmediato + un reintento de seguridad.
+// Fetch inmediato al terminar el escaneo + retries escalonados para cubrir
+// el tiempo que tarda el backend en confirmar los nuevos monitores en la DB.
 const handleDiscoveryScanFinished = async () => {
   await fetchAllMonitors()
   await fetchAllDevices()
   wireWsSyncAndSubs()
-  setTimeout(async () => {
-    await fetchAllMonitors()
-    wireWsSyncAndSubs()
-  }, 6000)
+  // Retries escalonados: 3s / 8s / 18s / 35s
+  for (const delay of [3000, 8000, 18000, 35000]) {
+    setTimeout(() => fetchAllMonitors(), delay)
+  }
 }
 
 // Polling de monitores atado al primer evento de adopción (system_notification).
-// Garantiza la actualización del dashboard aunque los eventos WS posteriores se pierdan.
+// No se resetea si ya está corriendo — múltiples new_notification no lo interrumpen.
 let _adoptionPollInterval = null
 const startAdoptionPolling = () => {
-  if (_adoptionPollInterval) clearInterval(_adoptionPollInterval)
+  if (_adoptionPollInterval) return // ya corriendo, no resetear
   let ticks = 0
   _adoptionPollInterval = setInterval(async () => {
     await fetchAllMonitors()
-    wireWsSyncAndSubs()
     ticks++
-    if (ticks >= 6) {
+    if (ticks >= 10) { // 10 × 4s = 40s de cobertura
       clearInterval(_adoptionPollInterval)
       _adoptionPollInterval = null
     }
-  }, 4000) // 6 × 4s = 24s de cobertura
+  }, 4000)
 }
 
 onMounted(async () => {
