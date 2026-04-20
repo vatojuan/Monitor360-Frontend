@@ -938,14 +938,11 @@ watch(timeRange, async (r) => {
 <template>
   <div class="detail-view">
     <div class="top-bar">
-      <div class="left-group">
-        <button @click="router.push('/')" class="back-btn">‹ Dashboard</button>
-        <div v-if="sensorInfo" class="info">
-          <h1>{{ sensorInfo.name }}</h1>
-          <small>{{ sensorInfo.client_name }} — {{ sensorInfo.ip_address }}</small>
-        </div>
+      <button @click="router.push('/')" class="back-btn">‹ Dashboard</button>
+      <div v-if="sensorInfo" class="info">
+        <h1>{{ sensorInfo.name }}</h1>
+        <small>{{ sensorInfo.client_name }} — {{ sensorInfo.ip_address }}</small>
       </div>
-
       <button @click="openCommentsModal" class="btn-action">📝 Bitácora</button>
     </div>
 
@@ -1036,12 +1033,12 @@ watch(timeRange, async (r) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 1rem;
   margin-bottom: 1.5rem;
 }
-.left-group {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+.top-bar .info {
+  flex: 1;
+  min-width: 0;
 }
 
 .back-btn {
@@ -1289,15 +1286,28 @@ watch(timeRange, async (r) => {
     height: clamp(380px, calc(100svh - 240px), 600px);
   }
   .top-bar {
-    flex-wrap: wrap;
-    gap: 0.5rem;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "info   info"
+      "back   action";
+    gap: 0.75rem;
     margin-bottom: 0.75rem;
   }
-  .left-group {
-    gap: 0.5rem;
+  .top-bar .info {
+    grid-area: info;
+    text-align: center;
   }
-  .back-btn {
-    padding: 0.35rem 0.75rem;
+  .top-bar .back-btn {
+    grid-area: back;
+    justify-self: start;
+    padding: 0.4rem 0.85rem;
+    font-size: 0.85rem;
+  }
+  .top-bar .btn-action {
+    grid-area: action;
+    justify-self: end;
+    padding: 0.4rem 0.85rem;
     font-size: 0.85rem;
   }
   .info h1 {
