@@ -122,7 +122,7 @@
                       <button
                         v-if="getFailedDevices(sys).length > 0"
                         @click.stop="openDetails(getFailedDevices(sys), 'Detalles de fallo', 'error')"
-                        class="btn-text-small view-details-btn"
+                        class="btn-text-small view-details-btn error"
                       >
                         Ver detalles de fallo ({{ getFailedDevices(sys).length }})
                       </button>
@@ -310,10 +310,9 @@ const formatDeviceItem = (item) => {
   if (typeof item === 'string') return item
   const name = item.name || item.hostname || item.host || item.device_name || ''
   const ip = item.ip_address || item.ip || ''
-  if (name && ip) return `${name} — ${ip}`
-  if (ip) return ip
-  if (name) return name
-  return JSON.stringify(item)
+  const reason = item.reason || item.error || item.error_message || item.failure_reason || item.detail || ''
+  const base = name && ip ? `${name} — ${ip}` : (ip || name || JSON.stringify(item))
+  return reason ? `${base}  ·  ${reason}` : base
 }
 
 const parseMeta = (sys) => {
@@ -850,6 +849,14 @@ const onLogout = () => {
 }
 .view-details-btn:hover {
   background: rgba(100, 255, 218, 0.2);
+}
+.view-details-btn.error {
+  background: rgba(233, 69, 96, 0.12);
+  color: #ff9a9a;
+  border: 1px solid rgba(233, 69, 96, 0.3);
+}
+.view-details-btn.error:hover {
+  background: rgba(233, 69, 96, 0.22);
 }
 
 .notif-footer {
