@@ -641,6 +641,17 @@ function getDeviceRole(device) {
 
 const maestros = computed(() => allDevices.value.filter((d) => d.is_maestro))
 
+function getVpnName(vpnId) {
+  if (!vpnId) return null
+  const vpn = vpnProfiles.value.find((v) => v.id === vpnId)
+  return vpn ? vpn.name : null
+}
+
+function getMaestroById(maestroId) {
+  if (!maestroId) return null
+  return allDevices.value.find((d) => d.id === maestroId) || null
+}
+
 const uniqueVendors = computed(() => {
   const vendors = allDevices.value.map(d => d.vendor || 'Generico')
   return [...new Set(vendors)].sort()
@@ -1675,18 +1686,37 @@ onUnmounted(() => {
               </td>
               <td>
                 <div v-if="device.is_maestro">
-                  <select
-                    v-model="device.vpn_profile_id"
-                    @change="handleVpnAssociation(device)"
-                    class="mini-select"
-                  >
-                    <option :value="null">Sin VPN</option>
-                    <option v-for="vpn in vpnProfiles" :key="vpn.id" :value="vpn.id">
-                      {{ vpn.name }}
-                    </option>
-                  </select>
+                  <div class="conn-line">
+                    <span class="conn-tag vpn-tag">VPN</span>
+                    <select
+                      v-model="device.vpn_profile_id"
+                      @change="handleVpnAssociation(device)"
+                      class="mini-select"
+                    >
+                      <option :value="null">Sin VPN</option>
+                      <option v-for="vpn in vpnProfiles" :key="vpn.id" :value="vpn.id">
+                        {{ vpn.name }}
+                      </option>
+                    </select>
+                  </div>
                 </div>
-                <div v-else class="text-dim">-</div>
+                <div v-else-if="device.maestro_id" class="conn-line">
+                  <span class="conn-tag maestro-tag">Maestro</span>
+                  <div class="conn-info">
+                    <strong>{{ getMaestroById(device.maestro_id)?.client_name || 'Desconocido' }}</strong>
+                    <div class="text-dim small font-mono" v-if="getMaestroById(device.maestro_id)?.ip_address">
+                      {{ getMaestroById(device.maestro_id).ip_address }}
+                    </div>
+                    <div class="text-dim small" v-if="getVpnName(device.vpn_profile_id)">
+                      vía VPN: {{ getVpnName(device.vpn_profile_id) }}
+                    </div>
+                  </div>
+                </div>
+                <div v-else-if="device.vpn_profile_id" class="conn-line">
+                  <span class="conn-tag vpn-tag">VPN</span>
+                  <strong>{{ getVpnName(device.vpn_profile_id) || 'Desconocida' }}</strong>
+                </div>
+                <div v-else class="text-dim">Sin conexión</div>
               </td>
               
               <td style="text-align: right; position: relative;">
@@ -2721,6 +2751,38 @@ label {
   background-color: var(--bg-color);
   border: 1px solid var(--primary-color);
   color: white;
+}
+
+.conn-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.conn-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.conn-tag {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.conn-tag.vpn-tag {
+  background: rgba(52, 152, 219, 0.18);
+  color: #5dade2;
+  border: 1px solid rgba(52, 152, 219, 0.4);
+}
+.conn-tag.maestro-tag {
+  background: rgba(241, 196, 15, 0.15);
+  color: #f1c40f;
+  border: 1px solid rgba(241, 196, 15, 0.4);
 }
 
 /* =========================================
