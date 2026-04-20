@@ -64,6 +64,8 @@ const allDevicesList = ref([])
 const inventoryFilter = ref({
   search: '',
   vendor: '',
+  vpn_profile_id: '',
+  maestro_id: '',
   role: 'all' // 'all', 'maestro', 'managed', 'generic'
 })
 
@@ -652,6 +654,14 @@ function getMaestroById(maestroId) {
   return allDevices.value.find((d) => d.id === maestroId) || null
 }
 
+function clearInventoryFilters() {
+  inventoryFilter.value.search = ''
+  inventoryFilter.value.vendor = ''
+  inventoryFilter.value.vpn_profile_id = ''
+  inventoryFilter.value.maestro_id = ''
+  inventoryFilter.value.role = 'all'
+}
+
 const uniqueVendors = computed(() => {
   const vendors = allDevices.value.map(d => d.vendor || 'Generico')
   return [...new Set(vendors)].sort()
@@ -683,6 +693,17 @@ const filteredDevices = computed(() => {
       if (inventoryFilter.value.role === 'maestro' && roleClass !== 'maestro') return false
       if (inventoryFilter.value.role === 'managed' && roleClass !== 'managed') return false
       if (inventoryFilter.value.role === 'generic' && roleClass !== 'device') return false
+    }
+
+    // 4. VPN
+    if (inventoryFilter.value.vpn_profile_id) {
+      if (d.vpn_profile_id !== inventoryFilter.value.vpn_profile_id) return false
+    }
+
+    // 5. Maestro (incluye al propio maestro y sus dispositivos vinculados)
+    if (inventoryFilter.value.maestro_id) {
+      const mId = inventoryFilter.value.maestro_id
+      if (d.id !== mId && d.maestro_id !== mId) return false
     }
 
     return true
@@ -1611,6 +1632,27 @@ onUnmounted(() => {
             <option value="">Todo Fabricante</option>
             <option v-for="v in uniqueVendors" :key="v" :value="v">{{ v }}</option>
           </select>
+
+          <select v-model="inventoryFilter.vpn_profile_id" class="filter-select">
+            <option value="">Toda VPN</option>
+            <option v-for="vpn in vpnProfiles" :key="vpn.id" :value="vpn.id">{{ vpn.name }}</option>
+          </select>
+
+          <select v-model="inventoryFilter.maestro_id" class="filter-select">
+            <option value="">Todo Maestro</option>
+            <option v-for="m in maestros" :key="m.id" :value="m.id">
+              {{ m.client_name }}{{ m.ip_address ? ` (${m.ip_address})` : '' }}
+            </option>
+          </select>
+
+          <button
+            v-if="inventoryFilter.vendor || inventoryFilter.vpn_profile_id || inventoryFilter.maestro_id || inventoryFilter.role !== 'all' || inventoryFilter.search"
+            class="btn-clear-filters"
+            @click="clearInventoryFilters"
+            title="Limpiar filtros"
+          >
+            ✕ Limpiar
+          </button>
 
           <div class="toggle-group">
             <button :class="{ active: inventoryFilter.role === 'all' }" @click="inventoryFilter.role = 'all'">Todos</button>
@@ -2632,6 +2674,19 @@ label {
   outline: none;
   font-size: 0.9rem;
   min-width: 150px;
+}
+.btn-clear-filters {
+  background: transparent;
+  color: #e74c3c;
+  border: 1px solid #e74c3c;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-clear-filters:hover {
+  background: rgba(231, 76, 60, 0.15);
 }
 .toggle-group {
   display: flex;

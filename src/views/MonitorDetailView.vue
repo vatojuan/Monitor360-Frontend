@@ -583,8 +583,12 @@ const chartOption = computed(() => {
       ...baseOption,
       legend: mobileLegend(legendData),
       grid: mobileGrid({ rightDesktop: isAP ? '18%' : '10%', topDesktop: '15%' }),
-      yAxis: yAxes.map((axis) =>
-        mobile ? { ...axis, name: '', offset: 0 } : axis
+      yAxis: yAxes.map((axis, idx) =>
+        mobile
+          ? (idx === 0
+              ? { ...axis, name: '', offset: 0 }
+              : { ...axis, name: '', offset: 0, show: false })
+          : axis
       ),
       series: series
     }
@@ -697,8 +701,12 @@ const chartOption = computed(() => {
       ...baseOption,
       legend: mobileLegend(legendData),
       grid: mobileGrid({ rightDesktop: rightOffset > 0 ? `${rightOffset + 30}px` : '5%', topDesktop: '15%' }),
-      yAxis: yAxes.map((axis) =>
-        mobile ? { ...axis, name: '', offset: 0 } : axis
+      yAxis: yAxes.map((axis, idx) =>
+        mobile
+          ? (idx === 0
+              ? { ...axis, name: '', offset: 0 }
+              : { ...axis, name: '', offset: 0, show: false })
+          : axis
       ),
       series: series
     }
@@ -1278,7 +1286,7 @@ watch(timeRange, async (r) => {
     grid-template-columns: repeat(2, 1fr);
   }
   .chart-wrapper {
-    height: clamp(340px, calc(100svh - 280px), 520px);
+    height: clamp(380px, calc(100svh - 240px), 600px);
   }
   .top-bar {
     flex-wrap: wrap;
@@ -1321,7 +1329,7 @@ watch(timeRange, async (r) => {
     grid-template-columns: 1fr;
   }
   .chart-wrapper {
-    height: clamp(300px, calc(100svh - 320px), 420px);
+    height: clamp(360px, calc(100svh - 260px), 560px);
   }
 }
 </style>
